@@ -35,6 +35,9 @@ export const MotionPriority = {
 
 export class Live2DUserModel extends CubismUserModel {
   readonly updateScheduler = new CubismUpdateScheduler();
+  /** View integrasi mematikan ini: app.js punya idle scheduler sendiri
+   * (startIdleMotion, interval 7 dtk) — dua idle = dua sumber motion. */
+  autoIdle = true;
   private _setting: CubismModelSettingJson | null = null;
   private _baseUrl = "";
   private _motionCache = new Map<string, CubismMotion>();
@@ -63,12 +66,16 @@ export class Live2DUserModel extends CubismUserModel {
 
   /** Daftarkan updater efek ke scheduler (urut execution order).
    * Dipanggil SETELAH role map siap karena look/breath diskalakan dari
-   * range aktual model (role-space), bukan angka std ±30/±1. */
+   * range aktual model (role-space), bukan angka std ±30/±1. Opsi enabled
+   * untuk integrasi view: fitur yang app.js miliki (blink/look/breath
+   * driver lama) TIDAK didaftarkan — satu fitur satu pemilik. */
   registerEffectUpdaters(opts: {
     look: LookParameterData[];
     breath: BreathParameterData[];
+    enabled?: { blink?: boolean; look?: boolean; breath?: boolean };
   }): void {
-    if (this._eyeBlink) {
+    const en = { blink: true, look: true, breath: true, ...(opts.enabled ?? {}) };
+    if (this._eyeBlink && en.blink) {
       this.updateScheduler.addUpdatableList(
         new CubismEyeBlinkUpdater(() => this._motionUpdated, this._eyeBlink),
       );
@@ -76,14 +83,18 @@ export class Live2DUserModel extends CubismUserModel {
     this.updateScheduler.addUpdatableList(
       new CubismExpressionUpdater(this._expressionManager),
     );
-    this._look = CubismLook.create();
-    if (opts.look.length) this._look.setParameters(opts.look);
-    this.updateScheduler.addUpdatableList(
-      new CubismLookUpdater(this._look, this._dragManager),
-    );
-    this._breath = CubismBreath.create();
-    if (opts.breath.length) this._breath.setParameters(opts.breath);
-    this.updateScheduler.addUpdatableList(new CubismBreathUpdater(this._breath));
+    if (en.look) {
+      this._look = CubismLook.create();
+      if (opts.look.length) this._look.setParameters(opts.look);
+      this.updateScheduler.addUpdatableList(
+        new CubismLookUpdater(this._look, this._dragManager),
+      );
+    }
+    if (en.breath) {
+      this._breath = CubismBreath.create();
+      if (opts.breath.length) this._breath.setParameters(opts.breath);
+      this.updateScheduler.addUpdatableList(new CubismBreathUpdater(this._breath));
+    }
     if (this._physics) {
       this.updateScheduler.addUpdatableList(new CubismPhysicsUpdater(this._physics));
     }

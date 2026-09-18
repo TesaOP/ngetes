@@ -44,8 +44,31 @@ export class Live2DRenderer {
   private textures: WebGLTexture[] = [];
   private roleCtrl: RoleController | null = null;
   private arbiter = new ParameterArbiter();
+  private officialGroups = { eyeBlinkIds: [] as string[], lipSyncIds: [] as string[] };
   private frameBuffer: WebGLFramebuffer | null = null;
   private lastFrameMs: number | null = null;
+  private mvpProvider: (() => Float32Array) | null = null;
+  private clearColor: [number, number, number, number] | null = [0.909, 0.909, 0.909, 1.0];
+
+  /** Integrasi view: mvp dihitung facade (x/y/scale/anchor → matriks),
+   * bukan framing bawaan proof. Null = kembali framing proof. */
+  setMvpProvider(fn: (() => Float32Array) | null): void {
+    this.mvpProvider = fn;
+  }
+
+  /** Integrasi view: null = jangan clear (latar dari CSS #stage, canvas
+   * transparan — proof pages tetap pakai clear abu untuk readPixels). */
+  setClear(color: [number, number, number, number] | null): void {
+    this.clearColor = color;
+  }
+
+  /** Ukuran canvas model (unit canvas Cubism) — dasar lebar/tinggi facade. */
+  getModelCanvasSize(): { width: number; height: number } {
+    return this.modelMatrix
+      ? { width: this.canvasInfo.width, height: this.canvasInfo.height }
+      : { width: 1, height: 1 };
+  }
+  private canvasInfo = { width: 1, height: 1 };
 
   constructor(canvas: HTMLCanvasElement, gl?: WebGL2RenderingContext | WebGLRenderingContext) {
     this.canvas = canvas;
@@ -57,7 +80,15 @@ export class Live2DRenderer {
     ensureFramework();
   }
 
-  async loadModel(model3Path: string): Promise<{ mocVersion: number; drawable: number; offscreen: number }> {
+  async loadModel(model3Path: string, opts?: {
+    /** efek yang TIDAK didaftarkan — dipunyai driver app.js (integrasi view) */
+    effects?: { blink?: boolean; look?: boolean; breath?: boolean };
+    /** false = tanpa idle otomatis framework (app.js punya scheduler idle sendiri) */
+    autoIdle?: boolean;
+  }): Promise<{ mocVersion: number; drawable: number; offscreen: number }> {
+    const trace: string[] = ((globalThis as any).__loadSteps ??= []);
+    const step = (m: string) => { trace.push(`${performance.now().toFixed(0)}ms ${m}`); };
+    step(`loadModel mulai ${model3Path}`);
     const res = await fetch(model3Path);
     if (!res.ok) throw new Error(`fetch model3 ${res.status} ${model3Path}`);
     const buf = await res.arrayBuffer();
@@ -82,6 +113,7 @@ export class Live2DRenderer {
     for (let i = 0; i < ec; i++) eyeBlinkIds.push(s.getEyeBlinkParameterId(i).getString());
     const lc = s.getLipSyncParameterCount?.() ?? 0;
     for (let i = 0; i < lc; i++) lipSyncIds.push(s.getLipSyncParameterId(i).getString());
+    this.officialGroups = { eyeBlinkIds: [...eyeBlinkIds], lipSyncIds: [...lipSyncIds] };
     this.userModel.attachSetting(this.setting, this.baseDir, eyeBlinkIds, lipSyncIds);
 
     // physics / pose
@@ -111,18 +143,31 @@ export class Live2DRenderer {
     renderer.loadShaders(this.shaderPath);
 
     // textures — premultiplied (pasangan setIsPremultipliedAlpha(true)) +
-    // mipmap seperti sample resmi
+    // mipmap seperti sample resmi. Via createImageBitmap: img.decode()
+    // pernah diantre 94 dtk di webview sibuk-GPU (decoder starved oleh loop
+    // render) — bitmap path decode-nya tidak lewat antrean itu.
     const texCount = this.setting.getTextureCount();
     for (let i = 0; i < texCount; i++) {
       const texPath = this.baseDir + this.setting.getTextureFileName(i);
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.src = texPath;
-      try { await img.decode(); } catch (e) { console.warn(`[Live2DRenderer] img decode gagal ${texPath}`, e); }
+      let source: ImageBitmap | HTMLImageElement;
+      try {
+        const res = await fetch(texPath);
+        if (!res.ok) throw new Error(`HTTP ${res.status} ${texPath}`);
+        source = await createImageBitmap(await res.blob());
+        step(`tex${i} bitmap ok`);
+      } catch (e) {
+        console.warn(`[Live2DRenderer] bitmap gagal ${texPath}, fallback <img>`, e);
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.src = texPath;
+        try { await img.decode(); } catch (e2) { console.warn(`[Live2DRenderer] img decode gagal ${texPath}`, e2); }
+        source = img;
+      }
       const tex = this.gl.createTexture()!;
+      step(`tex${i} createTexture`);
       this.gl.bindTexture(this.gl.TEXTURE_2D, tex);
       this.gl.pixelStorei(this.gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 1);
-      this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, img);
+      this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, source);
       this.gl.generateMipmap(this.gl.TEXTURE_2D);
       this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.LINEAR_MIPMAP_LINEAR);
       this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.LINEAR);
@@ -132,15 +177,18 @@ export class Live2DRenderer {
       if (err) console.warn(`[Live2DRenderer] glError setelah tex ${i}: ${err}`);
       renderer.bindTexture(i, tex);
       this.textures.push(tex);
+      step(`tex${i} bound`);
     }
 
-    // model matrix
+    // model matrix + info canvas (untuk facade transform)
     const model = this.userModel.getModel();
     if (model) {
+      this.canvasInfo = { width: model.getCanvasWidth(), height: model.getCanvasHeight() };
       this.modelMatrix = new CubismModelMatrix(model.getCanvasWidth(), model.getCanvasHeight());
     } else {
       this.modelMatrix = new CubismModelMatrix(1, 1);
     }
+    this.userModel.autoIdle = opts?.autoIdle ?? true;
 
     const drawable = model?.getDrawableCount?.() ?? 0;
     const offscreen = (model as any)?.getOffscreenCount?.() ?? 0;
@@ -157,9 +205,11 @@ export class Live2DRenderer {
     // Daftarkan updater efek (blink/expr/look/breath/physics/pose) dengan
     // look & breath diskalakan dari range aktual model (role-space), lalu
     // arbiter sebagai updater manual order 900 — setelah semua efek.
+    // View integrasi menonaktifkan blink/look/breath (driver app.js pemiliknya).
     this.userModel.registerEffectUpdaters({
       look: this.buildLookData(),
       breath: this.buildBreathData(),
+      enabled: opts?.effects,
     });
     this.userModel.updateScheduler.addUpdatableList(new ArbiterUpdater(this.arbiter));
     this.userModel.updateScheduler.sortUpdatableList();
@@ -232,12 +282,14 @@ export class Live2DRenderer {
 
       const w = (this.gl as any).drawingBufferWidth ?? this.canvas.width;
       const h = (this.gl as any).drawingBufferHeight ?? this.canvas.height;
-      // clear default framebuffer ke warna latar Pixi (232,232,232) — biar
-      // readPixels proof bisa membedakan background vs model
-      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
-      this.gl.viewport(0, 0, w, h);
-      this.gl.clearColor(0.909, 0.909, 0.909, 1.0);
-      this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
+      if (this.clearColor) {
+        // proof pages: clear abu supaya readPixels bisa beda latar vs model.
+        // View: setClear(null) — latar dari CSS #stage, canvas transparan.
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+        this.gl.viewport(0, 0, w, h);
+        this.gl.clearColor(...this.clearColor);
+        this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
+      }
 
       // drawModel tidak mengembalikan state GL host — save/restore wajib
       // begitu context dibagi dengan Pixi 8. saveProfile/restoreProfile
@@ -247,24 +299,35 @@ export class Live2DRenderer {
       drawRenderer.saveProfile?.();
       renderer.setRenderState(this.frameBuffer as WebGLFramebuffer, [0, 0, w, h]);
 
-      this.proj.loadIdentity();
-      // framing mirip LAppView: scale agar tinggi model ~80% canvas, center
-      const scale = 1.45;
-      this.proj.scale(scale, scale * (this.canvas.width / this.canvas.height));
-      this.proj.translateY(-0.12);
-      if (this.modelMatrix) {
-        this.mvp.loadIdentity();
-        this.mvp.multiplyByMatrix(this.proj);
-        this.mvp.multiplyByMatrix(this.modelMatrix);
-        renderer.setMvpMatrix(this.mvp);
+      if (this.mvpProvider) {
+        const mvp = new CubismMatrix44();
+        mvp.setMatrix(this.mvpProvider());
+        renderer.setMvpMatrix(mvp);
       } else {
-        renderer.setMvpMatrix(this.proj);
+        this.proj.loadIdentity();
+        // framing mirip LAppView: scale agar tinggi model ~80% canvas, center
+        const scale = 1.45;
+        this.proj.scale(scale, scale * (this.canvas.width / this.canvas.height));
+        this.proj.translateY(-0.12);
+        if (this.modelMatrix) {
+          this.mvp.loadIdentity();
+          this.mvp.multiplyByMatrix(this.proj);
+          this.mvp.multiplyByMatrix(this.modelMatrix);
+          renderer.setMvpMatrix(this.mvp);
+        } else {
+          renderer.setMvpMatrix(this.proj);
+        }
       }
       renderer.drawModel(this.shaderPath);
       drawRenderer.restoreProfile?.();
     } finally {
       offscreenMgr.endFrameProcess(this.gl);
     }
+  }
+
+  /** Grup resmi manifest (EyeBlink/LipSync) — untuk facade view. */
+  getOfficialGroups(): { eyeBlinkIds: string[]; lipSyncIds: string[] } {
+    return { eyeBlinkIds: [...this.officialGroups.eyeBlinkIds], lipSyncIds: [...this.officialGroups.lipSyncIds] };
   }
 
   getDrawableCount(): number {
