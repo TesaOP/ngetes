@@ -4,6 +4,53 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-19 (33) — FASE B: FLIP KEPEMILIKAN BLINK → BREATH → GAZE SELESAI (3 COMMIT)
+
+Tiga flip "satu fitur satu pemilik" selesai (permintaan user: "lanjut").
+Kini framework memutar SEMUA efek standar (blink/breath/gaze/motion/
+ekspresi/physics/pose) dan app.js menyumbang komposisi jiwa (liveliness,
+emosi, lipsync) secara ADITIF di stack baru — pola komposisi resmi official
+sample. Stack lama tidak tersentuh (semua cabang RENDERER_PIXI8).
+
+- **#1 blink (928b909)**: CubismEyeBlinkUpdater order 200; driver tickBlink
+  dilewati di pixi8. Gate: `setBlinkGate(() => blinkEnabled && !frozen)`
+  menumpang callback `_motionUpdated` resmi — kedip mundur otomatis saat
+  motion menganimasikan mata (wink) dan saat gate ditutup (tulisan efek
+  frame-transien, tanpa restore manual). Verifikasi: gate ON = 2 kedipan/
+  8 dtk (min 0 = tertutup penuh); gate OFF = kurva mata motion tampil
+  (min 0,8) — kepemilikan berpindah bersih.
+- **#2 breath (235c648)**: CubismBreath (addParameterValueById — aditif
+  resmi) dalam GatedUpdater (class pembungkus gate + order). Driver breath
+  app.js dilewati di pixi8. Gate: hasBreath + frozen + motion-layer (kurva
+  klip yang membawa breath sendiri tetap berdaulat). Verifikasi: gate ON
+  osilasi 0→0,499 (~2,5 siklus/8 dtk); gate OFF datar di base (0).
+- **#3 gaze (257c778)**: CubismLook (aditif, di-ease CubismTargetPoint)
+  order Drag; mousemove app.js di pixi8 meneruskan target ±1 ke
+  `setLookTarget` (renderer sudah punya). Liveliness jadi tulisan ADITIF:
+  `pokeAddParam` (backend coreModel dapat `addParameterValueById`;
+  AppWriteUpdater flush SET dulu lalu ADD) di luar aiLock, tanpa term gaze
+  (bAx = A1·0.5 saja) — lerp absolut lama akan mengikis kontribusi gaze.
+  mouthForm tetap SET-lerp. Cabang aiLock/motion-layer tetap SET (pose
+  dimiliki otak/motion); `setLookGate(() => !aiLock && !frozen &&
+  !motionLayer)` meredam gaze framework agar tidak dobel. dblclick reset
+  ikut mereset target gaze framework. Verifikasi: gaze kanan/kiri = angleX
+  median +23,1/−23,9 (range ±30, terkomposisi sway); sway hidup di atas
+  gaze penuh (spread 4,2°); gate OFF = kembali sway (−2,6°).
+- **Keputusan komposisi yang terkunci (jangan dibalik tanpa alasan)**:
+  tulisan pose app.js di stack baru ADITIF di luar aiLock (offset sway di
+  atas motion+gaze+breath), SET absolut hanya untuk aiLock/motion-layer/
+  mouthForm/emosi/rawDrive. Komponen angle framework breath kini hidup
+  (tidak lagi tertutup liveliness).
+- Gate per flip: tsc bersih; 454 unit (3 gagal env data backup —
+  pre-existing); guard 450/451 (1 gagal env probe — pre-existing).
+- **Belum (Fase B lanjutan)**: lipsync updater (IParameterProvider TTS —
+  saat ini lipsync app.js tulis overrides di 900, masih jalan), uji jalur
+  chat/brain end-to-end di stack baru (aiLock + ekspresi per teks),
+  bersihkan instrumentasi debug (`__loadSteps`, `__l2dDebug`), fade-out
+  loader (kosmetik), rolePoke gagal (`undefined setParameter` — periksa),
+  verifikasi multi-model (Cubism 4/5 lain), baru flip default & pensiunkan
+  stack lama.
+
 ## UPDATE 2026-09-18 (32) — CATATAN USER + STATUS DEFAULT & MODEL-AGNOSTIC (COMMIT)
 
 Feedback user setelah mencoba hasil entri (30)+(31): **stack baru masih
