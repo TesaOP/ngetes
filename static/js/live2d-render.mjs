@@ -9558,6 +9558,297 @@ function inspectModel(model, setting) {
   };
 }
 
+// src/client/engine/role-mapping.ts
+var ROLE_KEYWORDS = Object.freeze({
+  angleX: [
+    "ParamAngleX",
+    "AngleX",
+    "angle_x",
+    "yaw",
+    "turnx",
+    "rotx",
+    "頭",
+    "头",
+    "横向",
+    "左右",
+    "朝向x",
+    "方向x"
+  ],
+  angleY: [
+    "ParamAngleY",
+    "AngleY",
+    "angle_y",
+    "pitch",
+    "turny",
+    "roty",
+    "縦",
+    "纵向",
+    "上下",
+    "朝向y",
+    "方向y"
+  ],
+  angleZ: [
+    "ParamAngleZ",
+    "AngleZ",
+    "angle_z",
+    "roll",
+    "tilt",
+    "傾",
+    "倾",
+    "回転z",
+    "旋转z",
+    "歪"
+  ],
+  eyeBallX: [
+    "ParamEyeBallX",
+    "EyeBallX",
+    "eyeball_x",
+    "lookx",
+    "瞳X",
+    "瞳",
+    "眼球",
+    "目玉",
+    "视x"
+  ],
+  eyeBallY: [
+    "ParamEyeBallY",
+    "EyeBallY",
+    "eyeball_y",
+    "looky",
+    "瞳Y",
+    "瞳",
+    "眼球",
+    "目玉",
+    "视y"
+  ],
+  eyeLOpen: ["ParamEyeLOpen", "EyeLOpen", "eye_l_open", "左目", "左眼"],
+  eyeROpen: ["ParamEyeROpen", "EyeROpen", "eye_r_open", "右目", "右眼"],
+  eyeLSmile: ["ParamEyeLSmile", "EyeLSmile", "eye_l_smile", "左目笑", "左眼笑"],
+  eyeRSmile: ["ParamEyeRSmile", "EyeRSmile", "eye_r_smile", "右目笑", "右眼笑"],
+  eyeForm: ["ParamEyeForm", "EyeForm", "eye_form", "目形", "眼形"],
+  mouthOpenY: [
+    "ParamMouthOpenY",
+    "MouthOpenY",
+    "mouth_open",
+    "口開",
+    "张口",
+    "张嘴"
+  ],
+  mouthForm: [
+    "ParamMouthForm",
+    "MouthForm",
+    "mouth_form",
+    "口角",
+    "口形",
+    "嘴形",
+    "口型"
+  ],
+  mouthOpenX: ["ParamMouthOpenX", "MouthOpenX", "mouth_wide", "口幅", "嘴宽"],
+  bodyAngleX: [
+    "ParamBodyAngleX",
+    "BodyAngleX",
+    "body_angle_x",
+    "bodyx",
+    "体",
+    "胴",
+    "躯"
+  ],
+  bodyAngleY: [
+    "ParamBodyAngleY",
+    "BodyAngleY",
+    "body_angle_y",
+    "bodyy",
+    "体",
+    "胴",
+    "躯"
+  ],
+  bodyAngleZ: [
+    "ParamBodyAngleZ",
+    "BodyAngleZ",
+    "body_angle_z",
+    "bodyz",
+    "体",
+    "胴",
+    "躯"
+  ],
+  breath: ["ParamBreath", "Breath", "breath", "呼吸", "breathe", "息"],
+  browLForm: ["ParamBrowLForm", "BrowLForm", "brow_l", "左眉", "眉"],
+  browRForm: ["ParamBrowRForm", "BrowRForm", "brow_r", "右眉", "眉"],
+  browLY: ["ParamBrowLY", "BrowLY", "brow_l_y", "左眉Y", "左眉上下"],
+  browRY: ["ParamBrowRY", "BrowRY", "brow_r_y", "右眉Y", "右眉上下"],
+  browLAngle: ["ParamBrowLAngle", "BrowLAngle", "brow_l_angle", "左眉角"],
+  browRAngle: ["ParamBrowRAngle", "BrowRAngle", "brow_r_angle", "右眉角"],
+  blush: [
+    "ParamBlush",
+    "Blush",
+    "blush",
+    "ParamCheekRed",
+    "CheekRed",
+    "頬紅",
+    "ほお染め",
+    "照れ",
+    "脸红",
+    "腮红",
+    "害羞"
+  ]
+});
+var GROUP_PATTERNS = Object.freeze({
+  mouthOpenY: [
+    /openy$/i,
+    /mouthopen/i,
+    /open/i,
+    /口開|開口|口を開/,
+    /张口|张嘴|开口/
+  ],
+  eyeLOpen: [
+    /eyelopen/i,
+    /^parameyel.*open/i,
+    /_l_?open/i,
+    /left.*open/i,
+    /左目|左眼/
+  ],
+  eyeROpen: [
+    /eyeropen/i,
+    /^parameyer.*open/i,
+    /_r_?open/i,
+    /right.*open/i,
+    /右目|右眼/
+  ]
+});
+function pickFromGroup(list, patterns) {
+  if (!Array.isArray(list) || !list.length)
+    return null;
+  for (const re of patterns) {
+    const hit = list.find((id) => typeof id === "string" && re.test(id));
+    if (hit)
+      return hit;
+  }
+  return null;
+}
+function mapRoles(paramSet, official) {
+  const ids = {};
+  if (!paramSet || !paramSet.size)
+    return ids;
+  const list = Array.from(paramSet).map((id) => id.toLowerCase());
+  const lowerToReal = {};
+  Array.from(paramSet).forEach((id) => {
+    lowerToReal[id.toLowerCase()] = id;
+  });
+  for (const role in ROLE_KEYWORDS) {
+    if (official && GROUP_PATTERNS[role]) {
+      const pool = role === "mouthOpenY" ? official.lipSyncIds : official.eyeBlinkIds;
+      const owned = (pool || []).filter((id) => paramSet.has(id));
+      const picked = pickFromGroup(owned, GROUP_PATTERNS[role]);
+      if (picked) {
+        ids[role] = picked;
+        continue;
+      }
+      if (owned.length === 1) {
+        ids[role] = owned[0];
+        continue;
+      }
+    }
+    const canonical = "Param" + role.charAt(0).toUpperCase() + role.slice(1);
+    if (paramSet.has(canonical)) {
+      ids[role] = canonical;
+      continue;
+    }
+    let foundLower = null;
+    for (const kw of ROLE_KEYWORDS[role]) {
+      const lk = kw.toLowerCase();
+      const hit = list.find((x) => x.includes(lk));
+      if (hit) {
+        foundLower = hit;
+        break;
+      }
+    }
+    if (foundLower)
+      ids[role] = lowerToReal[foundLower];
+  }
+  if (ids.mouthOpenY && ids.mouthOpenY === ids.mouthForm) {
+    const alt = Array.from(paramSet).find((id) => /open/i.test(id) && /mouth|口|嘴/i.test(id) && id !== ids.mouthForm);
+    if (alt)
+      ids.mouthOpenY = alt;
+    else
+      delete ids.mouthOpenY;
+  }
+  return ids;
+}
+var REF_HALF = 30;
+var DEGREE_ROLES = Object.freeze(new Set([
+  "angleX",
+  "angleY",
+  "angleZ",
+  "bodyAngleX",
+  "bodyAngleY",
+  "bodyAngleZ"
+]));
+function refHalfFor(role) {
+  return DEGREE_ROLES.has(role) ? REF_HALF : 1;
+}
+var clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+function toActual(role, vRef, r) {
+  const RH = refHalfFor(role);
+  if (!r)
+    return clamp(vRef, -RH, RH);
+  const mid = (r.max + r.min) / 2;
+  const half = (r.max - r.min) / 2;
+  return mid + vRef / RH * (half || RH);
+}
+function roleClampActual(role, v, r) {
+  if (!r)
+    return clamp(v, -42, 42);
+  return clamp(v, r.min, r.max);
+}
+function roleDefaultOf(r) {
+  return r && typeof r.def === "number" ? r.def : 0;
+}
+function writeRef(role, vRef, r) {
+  return roleClampActual(role, toActual(role, vRef, r), r);
+}
+
+// src/live2d/RoleController.ts
+class RoleController {
+  model;
+  roleToId = {};
+  rangeByRole = {};
+  paramCtrl;
+  constructor(model, paramSet, official) {
+    this.model = model;
+    this.paramCtrl = new ParameterController(model);
+    this.roleToId = mapRoles(paramSet, official);
+    for (const role in this.roleToId) {
+      const id = this.roleToId[role];
+      const info = this.paramCtrl.getParameterInfo(id);
+      this.rangeByRole[role] = info ? { min: info.min, max: info.max, def: info.default } : null;
+    }
+  }
+  getRoleMap() {
+    return { ...this.roleToId };
+  }
+  setRole(role, vRef) {
+    const id = this.roleToId[role];
+    if (!id)
+      return false;
+    const r = this.rangeByRole[role];
+    const actual = writeRef(role, vRef, r);
+    return this.paramCtrl.setParameter(id, actual);
+  }
+  getRole(role) {
+    const id = this.roleToId[role];
+    if (!id)
+      return null;
+    return this.paramCtrl.getParameter(id);
+  }
+  resetRole(role) {
+    const id = this.roleToId[role];
+    if (!id)
+      return false;
+    const r = this.rangeByRole[role];
+    return this.paramCtrl.setParameter(id, roleDefaultOf(r));
+  }
+}
+
 // src/live2d/Live2DRenderer.ts
 var frameworkStarted = false;
 function ensureFramework() {
@@ -9582,6 +9873,7 @@ class Live2DRenderer {
   mvp = new CubismMatrix44;
   shaderPath = "/shaders/cubism/WebGL/";
   textures = [];
+  roleCtrl = null;
   constructor(canvas, gl) {
     this.canvas = canvas;
     this.gl = gl ?? canvas.getContext("webgl2") ?? canvas.getContext("webgl");
@@ -9670,6 +9962,31 @@ class Live2DRenderer {
     }
     const drawable = model?.getDrawableCount?.() ?? model?.drawables?.count ?? 0;
     const offscreen = model?.getOffscreenCount?.() ?? model?.offscreens?.count ?? 0;
+    try {
+      const paramSet = new Set;
+      const pc = model.getParameterCount?.() ?? 0;
+      for (let i = 0;i < pc; i++)
+        paramSet.add(model.getParameterId(i).getString());
+      const eyeBlinkIds = [];
+      const lipSyncIds = [];
+      const s = this.setting;
+      if (s) {
+        const ec = s.getEyeBlinkParameterCount?.() ?? 0;
+        for (let i = 0;i < ec; i++)
+          try {
+            eyeBlinkIds.push(s.getEyeBlinkParameterId(i).getString());
+          } catch {}
+        const lc = s.getLipSyncParameterCount?.() ?? 0;
+        for (let i = 0;i < lc; i++)
+          try {
+            lipSyncIds.push(s.getLipSyncParameterId(i).getString());
+          } catch {}
+      }
+      this.roleCtrl = new RoleController(model, paramSet, { eyeBlinkIds, lipSyncIds });
+      console.log(`[Live2DRenderer] role map`, this.roleCtrl.getRoleMap());
+    } catch (e) {
+      console.warn("[Live2DRenderer] role map gagal", e);
+    }
     return { mocVersion, drawable, offscreen };
   }
   draw() {
@@ -9736,6 +10053,15 @@ class Live2DRenderer {
     if (!m || !this.setting)
       return null;
     return inspectModel(m, this.setting);
+  }
+  getRoleMap() {
+    return this.roleCtrl ? this.roleCtrl.getRoleMap() : null;
+  }
+  setRole(role, vRef) {
+    return this.roleCtrl ? this.roleCtrl.setRole(role, vRef) : false;
+  }
+  getRole(role) {
+    return this.roleCtrl ? this.roleCtrl.getRole(role) : null;
   }
   destroy() {
     try {
@@ -9814,5 +10140,9 @@ export {
   Live2DModel,
   Live2DRenderer,
   ParameterController,
-  inspectModel
+  RoleController,
+  inspectModel,
+  mapRoles,
+  roleDefaultOf,
+  writeRef
 };

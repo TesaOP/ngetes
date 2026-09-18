@@ -3,3 +3,5 @@ export { Live2DModel } from "./Live2DModel";
 export { ParameterController } from "./ParameterController";
 export { inspectModel } from "./ModelInspector";
 export type { ModelProfile } from "./ModelInspector";
+export { mapRoles, writeRef, roleDefaultOf } from "../client/engine/role-mapping";
+export { RoleController } from "./RoleController";

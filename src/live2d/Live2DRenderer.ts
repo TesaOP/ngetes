@@ -6,6 +6,7 @@ import { CubismMatrix44 } from "./cubism/math/cubismmatrix44";
 import { CubismModelMatrix } from "./cubism/math/cubismmodelmatrix";
 import { ParameterController, type ParamInfo } from "./ParameterController";
 import { inspectModel, type ModelProfile } from "./ModelInspector";
+import { RoleController } from "./RoleController";
 
 let frameworkStarted = false;
 function ensureFramework() {
@@ -29,6 +30,7 @@ export class Live2DRenderer {
   private mvp = new CubismMatrix44();
   private shaderPath = "/shaders/cubism/WebGL/";
   private textures: WebGLTexture[] = [];
+  private roleCtrl: RoleController | null = null;
 
   constructor(canvas: HTMLCanvasElement, gl?: WebGL2RenderingContext | WebGLRenderingContext) {
     this.canvas = canvas;
@@ -129,6 +131,25 @@ export class Live2DRenderer {
 
     const drawable = (model as any)?.getDrawableCount?.() ?? (model as any)?.drawables?.count ?? 0;
     const offscreen = (model as any)?.getOffscreenCount?.() ?? (model as any)?.offscreens?.count ?? 0;
+
+    // Fase 10: bangun RoleController (model-agnostic)
+    try {
+      const paramSet = new Set<string>();
+      const pc = (model as any).getParameterCount?.() ?? 0;
+      for (let i = 0; i < pc; i++) paramSet.add((model as any).getParameterId(i).getString());
+      const eyeBlinkIds: string[] = [];
+      const lipSyncIds: string[] = [];
+      const s: any = this.setting;
+      if (s) {
+        const ec = s.getEyeBlinkParameterCount?.() ?? 0;
+        for (let i = 0; i < ec; i++) try { eyeBlinkIds.push(s.getEyeBlinkParameterId(i).getString()); } catch {}
+        const lc = s.getLipSyncParameterCount?.() ?? 0;
+        for (let i = 0; i < lc; i++) try { lipSyncIds.push(s.getLipSyncParameterId(i).getString()); } catch {}
+      }
+      this.roleCtrl = new RoleController(model, paramSet, { eyeBlinkIds, lipSyncIds });
+      console.log(`[Live2DRenderer] role map`, this.roleCtrl.getRoleMap());
+    } catch (e) { console.warn("[Live2DRenderer] role map gagal", e); }
+
     return { mocVersion, drawable, offscreen };
   }
 
@@ -203,6 +224,17 @@ export class Live2DRenderer {
     const m: any = (this.userModel as any)?.getModel?.() ?? (this.userModel as any)?._model;
     if (!m || !this.setting) return null;
     return inspectModel(m, this.setting);
+  }
+
+  // Fase 10 — Role API (model-agnostic)
+  getRoleMap(): Record<string, string> | null {
+    return this.roleCtrl ? this.roleCtrl.getRoleMap() : null;
+  }
+  setRole(role: string, vRef: number): boolean {
+    return this.roleCtrl ? this.roleCtrl.setRole(role, vRef) : false;
+  }
+  getRole(role: string): number | null {
+    return this.roleCtrl ? this.roleCtrl.getRole(role) : null;
   }
 
   destroy() {
