@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="id">
+<meta charset="utf-8">
+<title>Param API — Fase 8 proof</title>
+<style>html,body{margin:0;background:#e8e8e8}canvas{display:block}</style>
+<script src="js/live2dcubismcore.min.js"></script>
+<script type="importmap">{"imports":{"pixi.js":"./js/pixi8.mjs"}}</script>
+<script type="module">
+import * as PIXI from 'pixi.js';
+import { Live2DRenderer } from './js/live2d-render.mjs';
+
+const app = new PIXI.Application();
+await app.init({ width: 420, height: 640, background: '#e8e8e8', backgroundAlpha: 1 });
+document.body.appendChild(app.canvas);
+const gl = app.canvas.getContext('webgl2') || app.canvas.getContext('webgl');
+const renderer = new Live2DRenderer(app.canvas, gl);
+await renderer.loadModel('/model/ren_official_cubism/runtime/ren.model3.json');
+console.log('[fase8] params', renderer.getParameters().slice(0,5), 'total', renderer.getParameters().length);
+const info = renderer.getParameterInfo('ParamAngleX');
+console.log('[fase8] ParamAngleX info', info);
+console.log('[fase8] get before', renderer.getParameter('ParamAngleX'));
+const miss = renderer.setParameter('Param_NOT_EXIST', 1);
+console.log('[fase8] set missing (harus false)', miss, 'get missing', renderer.getParameter('Param_NOT_EXIST'));
+let frames=0;
+let ok=false;
+function frame(){
+  // set tiap frame setelah loadParameters — biar tidak tertimpa save/load
+  if(frames===2) { ok = renderer.setParameter('ParamAngleX', 15); console.log('[fase8] set ParamAngleX=15', ok, 'get after', renderer.getParameter('ParamAngleX')); }
+  renderer.draw();
+  frames++;
+  if(frames===5){
+    const px=new Uint8Array(4);
+    gl.readPixels(210,320,1,1,gl.RGBA,gl.UNSIGNED_BYTE,px);
+    console.log('[fase8] pixel after set 15', px.join(','), 'param', renderer.getParameter('ParamAngleX'));
+    window.__fase8={ok, info, after: renderer.getParameter('ParamAngleX'), pixel: Array.from(px), hasCanvas: !!app.canvas, miss};
+  }
+  if(frames<10) requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</html>

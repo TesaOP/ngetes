@@ -9450,6 +9450,58 @@ var Live2DCubismFramework37;
 
 // src/live2d/Live2DRenderer.ts
 init_cubismmatrix44();
+
+// src/live2d/ParameterController.ts
+init_live2dcubismframework();
+
+class ParameterController {
+  model;
+  constructor(model) {
+    this.model = model;
+  }
+  idHandle(id) {
+    return CubismFramework.getIdManager().getId(id);
+  }
+  getParameters() {
+    const n = this.model.getParameterCount();
+    const out = [];
+    for (let i = 0;i < n; i++)
+      out.push(this.model.getParameterId(i).getString());
+    return out;
+  }
+  isExistIndex(idx) {
+    return idx >= 0 && idx < this.model.getParameterCount();
+  }
+  getParameterInfo(id) {
+    const h = this.idHandle(id);
+    const idx = this.model.getParameterIndex(h);
+    if (!this.isExistIndex(idx))
+      return null;
+    return {
+      id,
+      min: this.model.getParameterMinimumValue(idx),
+      max: this.model.getParameterMaximumValue(idx),
+      default: this.model.getParameterDefaultValue(idx)
+    };
+  }
+  getParameter(id) {
+    const h = this.idHandle(id);
+    const idx = this.model.getParameterIndex(h);
+    if (!this.isExistIndex(idx))
+      return null;
+    return this.model.getParameterValueByIndex(idx);
+  }
+  setParameter(id, value) {
+    const h = this.idHandle(id);
+    const idx = this.model.getParameterIndex(h);
+    if (!this.isExistIndex(idx))
+      return false;
+    this.model.setParameterValueById(h, value, 1);
+    return true;
+  }
+}
+
+// src/live2d/Live2DRenderer.ts
 var frameworkStarted = false;
 function ensureFramework() {
   if (frameworkStarted)
@@ -9569,9 +9621,7 @@ class Live2DRenderer {
     const model = this.userModel.getModel?.() ?? this.userModel._model;
     if (!model)
       return;
-    model.loadParameters?.();
     model.update?.();
-    model.saveParameters?.();
     const renderer = this.userModel.getRenderer();
     if (!renderer)
       return;
@@ -9599,6 +9649,30 @@ class Live2DRenderer {
   getDrawableCount() {
     const m = this.userModel?.getModel?.() ?? this.userModel?._model;
     return m?.getDrawableCount?.() ?? m?.drawables?.count ?? 0;
+  }
+  getParameters() {
+    const m = this.userModel?.getModel?.() ?? this.userModel?._model;
+    if (!m)
+      return [];
+    return new ParameterController(m).getParameters();
+  }
+  getParameterInfo(id) {
+    const m = this.userModel?.getModel?.() ?? this.userModel?._model;
+    if (!m)
+      return null;
+    return new ParameterController(m).getParameterInfo(id);
+  }
+  getParameter(id) {
+    const m = this.userModel?.getModel?.() ?? this.userModel?._model;
+    if (!m)
+      return null;
+    return new ParameterController(m).getParameter(id);
+  }
+  setParameter(id, value) {
+    const m = this.userModel?.getModel?.() ?? this.userModel?._model;
+    if (!m)
+      return false;
+    return new ParameterController(m).setParameter(id, value);
   }
   destroy() {
     try {
@@ -9675,5 +9749,6 @@ class Live2DModel {
 }
 export {
   Live2DModel,
-  Live2DRenderer
+  Live2DRenderer,
+  ParameterController
 };

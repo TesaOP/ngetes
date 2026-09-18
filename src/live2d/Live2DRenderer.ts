@@ -4,6 +4,7 @@ import { CubismUserModel } from "./cubism/model/cubismusermodel";
 import { CubismModelSettingJson } from "./cubism/cubismmodelsettingjson";
 import { CubismMatrix44 } from "./cubism/math/cubismmatrix44";
 import { CubismModelMatrix } from "./cubism/math/cubismmodelmatrix";
+import { ParameterController, type ParamInfo } from "./ParameterController";
 
 let frameworkStarted = false;
 function ensureFramework() {
@@ -130,14 +131,14 @@ export class Live2DRenderer {
     return { mocVersion, drawable, offscreen };
   }
 
-  /** Gambar satu frame — dipanggil dari rAF. */
+  /** Gambar satu frame — dipanggil dari rAF. Fase 8: manual setParameter harus survive — update saja, tanpa load/save. */
   draw() {
     if (!this.userModel) return;
     const model: any = (this.userModel as any).getModel?.() ?? (this.userModel as any)._model;
     if (!model) return;
-    model.loadParameters?.();
+    // Fase 8: jangan loadParameters di sini (akan menimpa setParameter manual).
+    // Untuk motion/physics nanti, panggil update saja.
     model.update?.();
-    model.saveParameters?.();
 
     const renderer: any = (this.userModel as any).getRenderer();
     if (!renderer) return;
@@ -172,6 +173,28 @@ export class Live2DRenderer {
   getDrawableCount(): number {
     const m: any = (this.userModel as any)?.getModel?.() ?? (this.userModel as any)?._model;
     return m?.getDrawableCount?.() ?? m?.drawables?.count ?? 0;
+  }
+
+  // Fase 8 — Parameter API (tanpa AI, model-agnostic: id dicek via model, bukan hardcode)
+  getParameters(): string[] {
+    const m: any = (this.userModel as any)?.getModel?.() ?? (this.userModel as any)?._model;
+    if (!m) return [];
+    return new ParameterController(m).getParameters();
+  }
+  getParameterInfo(id: string): ParamInfo | null {
+    const m: any = (this.userModel as any)?.getModel?.() ?? (this.userModel as any)?._model;
+    if (!m) return null;
+    return new ParameterController(m).getParameterInfo(id);
+  }
+  getParameter(id: string): number | null {
+    const m: any = (this.userModel as any)?.getModel?.() ?? (this.userModel as any)?._model;
+    if (!m) return null;
+    return new ParameterController(m).getParameter(id);
+  }
+  setParameter(id: string, value: number): boolean {
+    const m: any = (this.userModel as any)?.getModel?.() ?? (this.userModel as any)?._model;
+    if (!m) return false;
+    return new ParameterController(m).setParameter(id, value);
   }
 
   destroy() {
