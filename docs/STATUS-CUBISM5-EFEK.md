@@ -4,6 +4,40 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-19 (38) — PET.HTML DIMIGRASI KE STACK BARU (COMMIT)
+
+Item terakhir yang bisa dikerjakan sebelum flip default: jendela Pet
+(pet.html, halaman mandiri untuk shell Tauri/Chrome) pindah dari
+Pixi 6 + pixi-live2d ke adapter view (importmap pixi8.mjs +
+js/live2d-view.mjs — pola index.html). Dengan ini TIDAK ADA lagi halaman
+yang bergantung stack lama.
+
+- Driver pet: tandai `__live2dRendererRequested` + `__live2dStageSize`,
+  tunggu `__live2dViewWait`, `loadModel(path)` lewat adapter; framing via
+  facade getBounds/scale/x/y (math lama); goyangan rotasi halus tetap;
+  tombol/ganti model/integrasi Tauri (klik-tembus/close/Esc) tak berubah.
+- Gaze kursor kini `setLookTarget(±1)` — framework look menggerakkan SEMUA
+  sendi ter-skala range model; hardcode ParamAngleX/Y & ParamEyeBallX/Y
+  (pelanggaran model-agnostic di pet) dihapus. Blink/breath framework
+  aktif (dulu tidak ada di pet).
+- **Dua bug lama pet ikut ketemu & diperbaiki**:
+  1. i18n-entry tidak pernah mengekspos `window.__i18n` — SEMUA `t()` di
+     pet.html sejak awal selalu mengembalikan kunci mentah (i18n pet mati
+     senyap). i18n.js kini mengekspos runtime `{t,getLang,setLang}` —
+     kontrak sama dengan bundle.js.
+  2. startIdleLife: `let t = 0` menimpa fungsi penerjemah `t()` — sapaan
+     berkala selalu melempar "t is not a function" sejak stack lama;
+     variabel diganti `tm`. boot catch kini fail-loud (`__petBootError` +
+     console.error).
+- Verifikasi (/pet.html, browser): status "pet aktif", i18n ter-translate,
+  gaze kiri −26°/kanan +24° terukur, blink/breath hidup, screenshot model
+  utuh (神宫白子 — model pertama di list, perilaku default sama).
+- Gate: 457 unit + 461 guard hijau penuh, tsc bersih (98ea4b5).
+- **Belum (menuju flip default)**: uji rasa user via A/B berdampingan
+  (zoom/drag/kelembutan + slider gaze), uji pet di shell Tauri nyata
+  (klik-tembus), lalu flip default & pensiunkan stack lama (satu commit,
+  setelah user setuju).
+
 ## UPDATE 2026-09-19 (37) — SLIDER KEEKSPRESIVAN GAZE PER GRUP SENDI (COMMIT)
 
 Lanjutan keluhan user (entri 36): "keekspresivan sendinya harusnya bisa
