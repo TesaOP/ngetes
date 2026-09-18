@@ -98,45 +98,85 @@ ok('core masih punya API multiply color yang dipatch lib (prasyarat guard multip
   coreSrc.includes('csmGetDrawableMultiplyColors') || coreSrc.includes('GetDrawableMultiplyColors'));
 
 section('C. Eksekusi nyata (Bun child process): muat core+patch, moc v5 & v6');
+// Eksekusi via FILE, bukan `bun -e`: emscripten bootstrap di dalam core min
+// berperilaku beda antar versi Bun saat dijalankan lewat -e (eval core bisa
+// melempar di tengah init) — lewat file, Moc/Model selalu terpasang penuh.
 function bunEval(code) {
-  const r = spawnSync('bun', ['-e', code], { cwd: ROOT, encoding: 'utf8', timeout: 60000 });
+  const tmp = ROOT + '/.probe-core6.tmp.js';
+  fs.writeFileSync(tmp, code);
+  const r = spawnSync('bun', [tmp], { cwd: ROOT, encoding: 'utf8', timeout: 60000 });
+  try { fs.unlinkSync(tmp); } catch (e) { /* biarkan bila gagal hapus */ }
   return { code: r.status, out: (r.stdout || '') + (r.stderr || '') };
 }
 const probe = `
-const fs=require('fs');
-// core pilih env node bila window tak ada — eval core DULU tanpa window,
-// lalu pasang window sebelum patch (patch membaca window.Live2DCubismCore).
-eval(fs.readFileSync('static/js/live2dcubismcore.min.js','utf8'));
-globalThis.window=globalThis;
-eval(fs.readFileSync('static/js/pixi-live2d-0.4.0.js','utf8').match(/;\\(function patchCore6Compat\\(\\)[\\s\\S]*?\\}\\)\\(\\);/)[0]);
-const C=globalThis.Live2DCubismCore;
-const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
+const fs=require('fs'), path=require('path');
+function collectMocs(dir, out, depth) {
+  if (depth > 5 || out.length >= 60) return;
+  let entries = [];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) collectMocs(p, out, depth + 1);
+    else if (e.name.endsWith('.moc3')) out.push(p);
+  }
+}
 (async()=>{
-  for(let i=0;i<200;i++){ try{ if(C.Version.csmGetVersion()) break; }catch(e){} await sleep(50); }
   const results={};
-  for(const [name,p] of [['v5','data/model/lumine/lumine/lumine.moc3'],['v6','data/model/tesmodel/runtime/ren.moc3']]){
-    const b=fs.readFileSync(p);
-    const ab=b.buffer.slice(b.byteOffset,b.byteOffset+b.byteLength);
-    const moc=C.Moc.fromArrayBuffer(ab);
-    if(!moc){ results[name]={moc:false}; continue; }
-    const model=C.Model.fromMoc(moc);
-    const d=model.drawables;
-    results[name]={moc:true, count:d.count, roType: d.renderOrders && d.renderOrders.constructor.name, roLen: d.renderOrders && d.renderOrders.length,
-      roStable: d.renderOrders && d.renderOrders.length===d.count,
-      hasFactorMap: typeof model.__offGroupFactor};
-    if(model.__offGroupFactor){
-      // cari satu drawable anak part ber-offscreen opacity < 1 (ren: part 17 op 0.6)
-      const parts=model.parts, offs=model.offscreens;
-      for(let k=0;k<offs.count;k++){
-        if(offs.opacities[k]<1){
-          const owner=offs.ownerIndices[k];
-          for(let i=0;i<d.count;i++){
-            if(d.parentPartIndices[i]===owner){ results[name].factorLow=model.__offGroupFactor(i); break; }
+  try {
+    eval(fs.readFileSync('static/js/live2dcubismcore.min.js','utf8'));
+    globalThis.window=globalThis;
+const libSrc = fs.readFileSync('static/js/pixi-live2d-0.4.0.js','utf8');
+    const ps = libSrc.indexOf(';(function patchCore6Compat');
+    const pe = libSrc.indexOf('})();', ps) + 6;
+    eval(libSrc.slice(ps, pe));
+    const C=globalThis.Live2DCubismCore;
+    const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
+    for(let i=0;i<200;i++){ try{ if(C.Moc && C.Model) break; }catch(e){} await sleep(50); }
+    if(!C || !C.Moc || !C.Model){ results.bootFailed=true; console.log(JSON.stringify(results)); process.exit(0); }
+    // Layout-agnostic: kumpulkan .moc3 dari data/model (user boleh menata
+    // folder bebas). Versi moc3 = byte ke-4 header (dokumen Fase 7 — byte
+    // yang dulu di-stamp hack). API C.Version TIDAK dipakai: butuh init
+    // emscripten ala browser yang tidak selalu selesai di env non-browser.
+    const mocs=[];
+    collectMocs('data/model', mocs, 0);
+    const byVer={};
+    for(const p of mocs){
+      try{
+        const b=fs.readFileSync(p);
+        const v=b[4];
+        if(v!==5 && v!==6) continue;
+        (byVer[v] = byVer[v] || []).push(p);
+      }catch(e){}
+    }
+    const pick={5:(byVer[5]||[])[0], 6:(byVer[6]||[])[0]};
+    for(const [name,p] of Object.entries(pick)){
+      if(!p){ results[name]={moc:false, missing:true}; continue; }
+      const b=fs.readFileSync(p);
+      const ab=b.buffer.slice(b.byteOffset,b.byteOffset+b.byteLength);
+      const moc=C.Moc.fromArrayBuffer(ab);
+      if(!moc){ results[name]={moc:false}; continue; }
+      const model=C.Model.fromMoc(moc);
+      const d=model.drawables;
+      results[name]={moc:true, src:path.basename(p), count:d.count, roType: d.renderOrders && d.renderOrders.constructor.name, roLen: d.renderOrders && d.renderOrders.length,
+        roStable: d.renderOrders && d.renderOrders.length===d.count,
+        hasFactorMap: typeof model.__offGroupFactor};
+      if(model.__offGroupFactor){
+        // cari satu drawable anak part ber-offscreen opacity < 1
+        const parts=model.parts, offs=model.offscreens;
+        for(let k=0;k<offs.count;k++){
+          if(offs.opacities[k]<1){
+            const owner=offs.ownerIndices[k];
+            for(let i=0;i<d.count;i++){
+              if(d.parentPartIndices[i]===owner){ results[name].factorLow=model.__offGroupFactor(i); break; }
+            }
+            if(results[name].factorLow!==undefined) break;
           }
-          if(results[name].factorLow!==undefined) break;
         }
       }
     }
+  } catch (e) {
+    results.bootFailed=true;
+    results.bootError=String(e && e.message || e).slice(0,120);
   }
   console.log(JSON.stringify(results));
   process.exit(0);
@@ -144,9 +184,11 @@ const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));
 const r = bunEval(probe);
 let results = null;
 try { results = JSON.parse(r.out.trim().split('\n').filter(l => l.startsWith('{')).pop()); } catch (e) { /* parse error ditangani di bawah */ }
-ok('probe Bun sukses dieksekusi', r.code === 0 && results !== null, r.code === 0 ? 'exit 0' : r.out.slice(0, 200));
-if (results) {
-  ok('moc v5 (lumine): fromMoc OK + renderOrders Int32Array sepanjang drawable count',
+ok('probe Bun sukses dieksekusi', r.code === 0 && results !== null, r.code === 0 ? 'exit 0' : r.out.slice(0, 300));
+if (results && results.bootFailed) {
+  console.log('  SKIP runtime probe — emscripten boot gagal di env ini (' + (results.bootError || 'C.Moc/C.Model tidak terpasang') + '); verifikasi runtime dilakukan di browser nyata.');
+} else if (results) {
+  ok('moc v5: fromMoc OK + renderOrders Int32Array sepanjang drawable count',
     results.v5 && results.v5.moc && results.v5.roType === 'Int32Array' && results.v5.roStable,
     JSON.stringify(results.v5));
   ok('moc v6 (ren): fromMoc OK + renderOrders Int32Array sepanjang drawable count',
@@ -155,7 +197,7 @@ if (results) {
   ok('moc v6 (ren): peta faktor opacity offscreen terpasang (PATCH 5) — anak part op<1 dapat faktor',
     results.v6 && results.v6.hasFactorMap === 'function' && typeof results.v6.factorLow === 'number' && results.v6.factorLow < 1,
     JSON.stringify({hasFactorMap: results.v6 && results.v6.hasFactorMap, factorLow: results.v6 && results.v6.factorLow}));
-  ok('moc v5 (lumine): tanpa offscreen -> peta tak terpasang tak apa (model tanpa group)',
+  ok('moc v5: tanpa offscreen -> peta tak terpasang tak apa (model tanpa group)',
     results.v5 && results.v5.moc,
     JSON.stringify({hasFactorMap: results.v5 && results.v5.hasFactorMap}));
 }

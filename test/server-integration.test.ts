@@ -41,6 +41,23 @@ async function withMockLLM<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/** Layout-agnostic: temukan model dengan path non-ASCII (uji penanganan
+ * CJK) dari data yang ADA — layout data/user boleh berbeda antar mesin
+ * (mis. data/model/神宫白子/ atau data/model/_/神宫白子模型/). Null =
+ * tidak ada model CJK di data (env tanpa data lengkap). */
+async function findCjkModel(): Promise<{ name: string; path: string } | null> {
+  const res = await call("GET", "/api/models");
+  if (!res) return null;
+  const json = await (res as Response).json();
+  for (const name of json.models ?? []) {
+    const r = await call("GET", "/api/model/path?name=" + encodeURIComponent(name));
+    if (!r || !r.ok) continue;
+    const d = await (r as Response).json();
+    if (d.path && /[^\x00-\x7F]/.test(d.path)) return { name, path: d.path as string };
+  }
+  return null;
+}
+
 describe("server API parity (dispatcher-level)", () => {
   // Endpoints the legacy client (static/js/app.js, agent.js, motion-editor.js) calls.
   const clientEndpoints = [
@@ -154,14 +171,14 @@ describe("server API parity (dispatcher-level)", () => {
     const json = await (res as Response).json();
     expect(Array.isArray(json.models)).toBe(true);
     expect(json.models.length).toBeGreaterThan(0);
-    // CJK-named models must be handled (no 404 on decode)
-    expect(json.models).toContain("神宫白子");
   });
 
   it("/api/model/motion-taxonomy works standalone (self-contained)", async () => {
     // The server imports its own TS module (src/client/engine/motion-taxonomy.ts)
     // — no external repo copies. If this resolves, the module is bundled in.
-    const res = await call("GET", "/api/model/motion-taxonomy?name=" + encodeURIComponent("神宫白子"));
+    const cjk = await findCjkModel();
+    expect(cjk).not.toBeNull();
+    const res = await call("GET", "/api/model/motion-taxonomy?name=" + encodeURIComponent(cjk!.name));
     expect(res).not.toBeNull();
     const json = await (res as Response).json();
     expect(json).toHaveProperty("clips");
@@ -204,8 +221,10 @@ describe("static serving security", () => {
     expect(serveStatic("/js/bundle.js")?.status).toBe(200);
   });
 
-  it("model CJK tersajikan lewat fallback DATA", () => {
-    const res = serveStatic("/model/" + encodeURIComponent("神宫白子") + "/" + encodeURIComponent("面饼0.model3.json"));
+  it("model CJK tersajikan lewat fallback DATA", async () => {
+    const cjk = await findCjkModel();
+    expect(cjk).not.toBeNull();
+    const res = serveStatic("/" + cjk!.path.split("/").map(encodeURIComponent).join("/"));
     expect(res?.status).toBe(200);
   });
 
