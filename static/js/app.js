@@ -5,53 +5,8 @@
   // (memuat core i18n) SEBELUM app.js dieksekusi.
   const __t = (key, vars) => (window.__i18n ? window.__i18n.t(key, vars) : key);
 
-  (function patchCubismCore() {
-    const core = window.Live2DCubismCore;
-    if (!core || !core.Moc || !core.Moc.fromArrayBuffer) return;
-    const orig = core.Moc.fromArrayBuffer.bind(core.Moc);
-    core.Moc.fromArrayBuffer = function (buf) {
-      const ab = buf instanceof ArrayBuffer ? buf : (buf && buf.buffer) || buf;
-      const direct = orig(ab);
-      if (direct) return direct;
-      // Fail-loud, bukan stamp buta. Dulu versi >4 di-stamp ke 4 supaya
-      // core lama tetap "memuat" — hasilnya layout moc salah dibaca:
-      // mask/clip/physics rusak SENYAP. Stamp hanya masih masuk akal untuk
-      // v5 (subsedia, makna identik v4-era); v6+ HARUS dimuat core yang
-      // mengenalnya — kalau gagal, core-nya basi, bukan moc-nya.
-      try {
-        const u8 = new Uint8Array(ab);
-        if (u8.length > 8) {
-          const v = u8[4] | (u8[5] << 8) | (u8[6] << 16) | (u8[7] << 24);
-          if (v > 5) {
-            console.error(
-              "[core] moc3 versi " + v + " tidak dikenal core " +
-                "(getLatestMocVersion=" +
-                (core.Version && core.Version.getLatestMocVersion
-                  ? core.Version.getLatestMocVersion()
-                  : "?") +
-                "). Update static/js/live2dcubismcore.min.js dari SDK resmi — " +
-                "JANGAN stamp versi: layout moc salah dibaca = mask/clip/physics rusak senyap.",
-            );
-            return null;
-          }
-          if (v === 5) {
-            u8[4] = 4;
-            u8[5] = 0;
-            u8[6] = 0;
-            u8[7] = 0;
-            console.warn(
-              "[core] moc3 v5 gagal dimuat core ini — dicoba stamp ke v4 (subsedia). " +
-                "Kalau model tampil salah, update live2dcubismcore.min.js.",
-            );
-            return orig(ab);
-          }
-        }
-      } catch (e) {
-        /* fall through to null result */
-      }
-      return direct;
-    };
-  })();
+  // Fase 7: MOC version hack dihapus — Core 6.0.1 (SDK 5-r.5) memuat moc v4/v5/v6 native.
+  // .model3.json → Cubism Core native → PixiJS 8. Tidak ada byte-stamp lagi.
 
   // server.js honours process.env.PORT, so a hardcoded :8310 silently breaks every
   // fetch the moment the server runs on any other port. The page is always served
