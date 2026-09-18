@@ -4,6 +4,20 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-19 (36) — GAZE VERTIKAL BADAN HILANG SAAT FLIP — DIPULIHKAN (COMMIT)
+
+Laporan user: karakter mengikuti mouse hanya kiri-kanan, sendi atas-bawah
+mati ("harusnya kek stack lama semua persendian aktif"). Akar: SPEC look
+framework (buildLookData) tidak punya **bodyAngleY** — stack lama menulisnya
+via `tby = ny·REF_HALF·0.25` (±0.75 half-range) dan flip gaze (entri 33 #3)
+menghapus jalur itu tanpa pengganti; kepala (angleY) & mata (eyeBallY)
+sebenarnya sudah terdaftar benar (fy 30/1) dan terukur bergerak, tapi sendi
+badan vertikal benar-benar mati. Perbaikan: SPEC += bodyAngleY
+{ stdHalf: 10, fy: 7.5 } — diskalakan role-space (ren ±10 → ±7.5°, paritas
+eksak tby lama). Verifikasi: enam sendi × lima arah — angleY ±28, eyeBallY
+±0.99, bodyAngleY ±7.45, angleX ±30, eyeBallX ±1, bodyAngleX +10/−7.8.
+Gate: 457 unit + 461 guard hijau penuh, tsc bersih (ca3931b).
+
 ## UPDATE 2026-09-19 (35) — VERIFIKASI MULTI-MODEL + SUITE HIJAU PENUH (COMMIT)
 
 User menambah model ke mesin backup (lumine + 神宫白子/面饼0 di layout
