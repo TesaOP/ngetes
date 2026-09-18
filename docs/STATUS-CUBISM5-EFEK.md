@@ -4,6 +4,29 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-19 (41) — MATRIKS VERIFIKASI SEMUA MODE DI STACK BARU (COMMIT)
+
+Sweep verifikasi lintas mode setelah pensiunan penuh (tanpa perubahan kode):
+
+- **Panggung** ✅: load/framing/blink/breath/gaze/lipsync/slider/zoom/bg DOM.
+- **Chat → brain → aksi** ✅: pesan nyata → balasan multi-bubble + aiLock
+  pose + TTS (teruji entri 34, diulang saat flip).
+- **VTuber** ✅: mode pindah via activity bar, provider mock jalan, feed
+  ter-render (50 node; donasi masuk), AI MEMBALAS di feed ("Siap, Kevin!"),
+  teardown aman. Catatan: perpindahan mode via API saja TIDAK mengaktifkan
+  runtime klien — harus klik tombol activity bar (perilaku lama, bukan
+  regresi).
+- **Assistant** ✅: mode pindah, panel wide + composer, 21 tool terdaftar,
+  agent loop jalan nyata (LLM → tool list_dir → transcript). Run contoh
+  berakhir "Selesai dengan error" karena workDir sesi menunjuk folder temp
+  — perilaku agent, bukan regresi renderer.
+- **Pet** ✅ (browser): pet aktif, gaze kursor, i18n; ⚠️ klik-tembus Tauri
+  belum diuji (butuh build Rust `bun run build:pet`).
+- **Motion Studio** ✅ dasar: Registry/Runtime hidup, playEmotionClip
+  memutar klip (swing angleY 9,1°) — UI studio visual belum diuji penuh.
+- Gate: 457 unit + 416 guard + tsc — hijau penuh (tanpa perubahan kode di
+  entri ini).
+
 ## UPDATE 2026-09-19 (40) — PENSIUNAN PENUH STACK LAMA (COMMIT)
 
 `?renderer=legacy` tidak ada lagi: SATU jalur render — adapter
