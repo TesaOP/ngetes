@@ -366,6 +366,27 @@
               <input id="cfg-idle" type="checkbox" /> <span data-i18n="cfg.idleMotion">Gerak idle otomatis</span>
             </label>
 
+            <div id="cfg-gaze">
+              <label class="cfg-row" for="cfg-gaze-head">
+                <span class="cfg-label" data-i18n="cfg.gazeHead">Ekspresif kepala (gaze)</span>
+                <input id="cfg-gaze-head" type="range" min="0" max="2" step="0.05"
+                  aria-describedby="cfg-hint" />
+                <output id="cfg-gaze-head-out" class="cfg-out" for="cfg-gaze-head"></output>
+              </label>
+              <label class="cfg-row" for="cfg-gaze-eyes">
+                <span class="cfg-label" data-i18n="cfg.gazeEyes">Ekspresif mata (gaze)</span>
+                <input id="cfg-gaze-eyes" type="range" min="0" max="2" step="0.05"
+                  aria-describedby="cfg-hint" />
+                <output id="cfg-gaze-eyes-out" class="cfg-out" for="cfg-gaze-eyes"></output>
+              </label>
+              <label class="cfg-row" for="cfg-gaze-body">
+                <span class="cfg-label" data-i18n="cfg.gazeBody">Ekspresif badan (gaze)</span>
+                <input id="cfg-gaze-body" type="range" min="0" max="2" step="0.05"
+                  aria-describedby="cfg-hint" />
+                <output id="cfg-gaze-body-out" class="cfg-out" for="cfg-gaze-body"></output>
+              </label>
+            </div>
+
             <label class="cfg-row" for="cfg-framing">
               <span class="cfg-label" data-i18n="cfg.framing">Framing</span>
               <select id="cfg-framing">

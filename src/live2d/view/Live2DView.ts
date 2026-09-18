@@ -129,6 +129,12 @@ export class Live2DView {
     this.renderer?.setLookTarget(x, y);
   }
 
+  /** Gain keekspresivan gaze per grup sendi (kepala/mata/badan), 0..2 —
+   * dipasang dari config user; renderer membangun ulang data look. */
+  setGazeGain(gain: { head?: number; eyes?: number; body?: number } | null | undefined): void {
+    this.renderer?.setGazeGain(gain);
+  }
+
   /** Flip kepemilikan lipsync (Fase B #4): app.js memasang penyedia nilai
    * 0..1 (sumber analisis audio TTS lokal tetap milik driver); framework
    * menulis param mulut (role-resolved, skala range aktual). */

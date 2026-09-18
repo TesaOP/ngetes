@@ -57,6 +57,8 @@ export class Live2DRenderer {
   private mvpTmp = new CubismMatrix44();
   /** Controller parameter di-cache (wraps model — dibuat sekali per model). */
   private paramCtrl: ParameterController | null = null;
+  /** Gain keekspresivan gaze per grup sendi (0..2; 1 = netral). */
+  private gazeGain: { head: number; eyes: number; body: number } = { head: 1, eyes: 1, body: 1 };
 
   /** Integrasi view: mvp dihitung facade (x/y/scale/anchor → matriks),
    * bukan framing bawaan proof. Null = kembali framing proof. */
@@ -267,16 +269,20 @@ export class Live2DRenderer {
    * diskalakan proporsional ke range aktual model. bodyAngleY ikut
    * (Fase B #3 lanjutan): stack lama menulis badan atas-bawah via
    * tby = ny·REF_HALF·0.25 → ±0,75 half-range — fy 7.5 dengan
-   * stdHalf 10 mereproduksi tepat besaran itu. */
+   * stdHalf 10 mereproduksi tepat besaran itu. Gain keekspresivan
+   * per grup (kepala/mata/badan) dikalikan saat build. */
   private buildLookData(): LookParameterData[] {
-    const SPEC: Record<string, { stdHalf: number; fx: number; fy: number; fxy: number }> = {
-      angleX: { stdHalf: 30, fx: 30, fy: 0, fxy: 0 },
-      angleY: { stdHalf: 30, fx: 0, fy: 30, fxy: 0 },
-      angleZ: { stdHalf: 30, fx: 0, fy: 0, fxy: -30 },
-      bodyAngleX: { stdHalf: 10, fx: 10, fy: 0, fxy: 0 },
-      bodyAngleY: { stdHalf: 10, fx: 0, fy: 7.5, fxy: 0 },
-      eyeBallX: { stdHalf: 1, fx: 1, fy: 0, fxy: 0 },
-      eyeBallY: { stdHalf: 1, fx: 0, fy: 1, fxy: 0 },
+    const SPEC: Record<string, {
+      stdHalf: number; fx: number; fy: number; fxy: number;
+      group: "head" | "eyes" | "body";
+    }> = {
+      angleX: { stdHalf: 30, fx: 30, fy: 0, fxy: 0, group: "head" },
+      angleY: { stdHalf: 30, fx: 0, fy: 30, fxy: 0, group: "head" },
+      angleZ: { stdHalf: 30, fx: 0, fy: 0, fxy: -30, group: "head" },
+      bodyAngleX: { stdHalf: 10, fx: 10, fy: 0, fxy: 0, group: "body" },
+      bodyAngleY: { stdHalf: 10, fx: 0, fy: 7.5, fxy: 0, group: "body" },
+      eyeBallX: { stdHalf: 1, fx: 1, fy: 0, fxy: 0, group: "eyes" },
+      eyeBallY: { stdHalf: 1, fx: 0, fy: 1, fxy: 0, group: "eyes" },
     };
     const idMgr = CubismFramework.getIdManager();
     const out: LookParameterData[] = [];
@@ -285,9 +291,30 @@ export class Live2DRenderer {
       if (!info) continue;
       const spec = SPEC[role];
       const scale = ((info.max - info.min) / 2) / spec.stdHalf;
-      out.push(new LookParameterData(idMgr.getId(info.id), spec.fx * scale, spec.fy * scale, spec.fxy * scale));
+      const g = this.gazeGain[spec.group] ?? 1;
+      out.push(new LookParameterData(
+        idMgr.getId(info.id),
+        spec.fx * scale * g,
+        spec.fy * scale * g,
+        spec.fxy * scale * g,
+      ));
     }
     return out;
+  }
+
+  /** Gain keekspresivan gaze per grup sendi (0..2; 1 = netral) — dipasang
+   * dari config user via view. Membangun ulang data look tanpa membuat
+   * ulang updater. */
+  setGazeGain(gain: { head?: number; eyes?: number; body?: number } | null | undefined): void {
+    const g = gain ?? {};
+    const cl = (v: unknown) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? Math.max(0, Math.min(2, n)) : 1;
+    };
+    this.gazeGain = { head: cl(g.head), eyes: cl(g.eyes), body: cl(g.body) };
+    if (this.userModel && this.roleCtrl) {
+      this.userModel.setLookParameters(this.buildLookData());
+    }
   }
 
   /** Puncak breath std resmi diskalakan ke range aktual; offset = default. */

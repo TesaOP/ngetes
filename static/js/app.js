@@ -3726,7 +3726,18 @@
       bgPick: $("#btn-bg-pick"),
       bgClear: $("#btn-bg-clear"),
       bgReset: $("#btn-bg-reset"),
+      gazeSection: $("#cfg-gaze"),
+      gazeHead: $("#cfg-gaze-head"),
+      gazeHeadOut: $("#cfg-gaze-head-out"),
+      gazeEyes: $("#cfg-gaze-eyes"),
+      gazeEyesOut: $("#cfg-gaze-eyes-out"),
+      gazeBody: $("#cfg-gaze-body"),
+      gazeBodyOut: $("#cfg-gaze-body-out"),
     };
+    // Gain gaze hanya berlaku di stack baru (framework look) — sembunyikan
+    // di stack lama supaya tidak mengecoh.
+    if (!RENDERER_PIXI8 && cfgEls.gazeSection)
+      cfgEls.gazeSection.classList.add("hidden");
 
     let bgImageDraft;
     function setCfgStatus(msg, kind) {
@@ -3755,6 +3766,14 @@
 
       if (cfgEls.pitchOut) cfgEls.pitchOut.textContent = c.ttsPitch.toFixed(2);
       if (cfgEls.rateOut) cfgEls.rateOut.textContent = c.ttsRate.toFixed(2);
+      for (const [k, el, out] of [
+        ["gazeHead", cfgEls.gazeHead, cfgEls.gazeHeadOut],
+        ["gazeEyes", cfgEls.gazeEyes, cfgEls.gazeEyesOut],
+        ["gazeBody", cfgEls.gazeBody, cfgEls.gazeBodyOut],
+      ]) {
+        if (el) el.value = String(c[k]);
+        if (out) out.textContent = Number(c[k]).toFixed(2);
+      }
       if (cfgEls.lang) {
         const has = Array.prototype.some.call(
           cfgEls.lang.options,
@@ -3777,13 +3796,16 @@
     }
     refreshConfigForm = () => paintConfigForm(loadModelConfigLocal());
 
-    function readConfigForm() {
-      return {
-        displayName: cfgEls.displayName ? cfgEls.displayName.value : undefined,
-        blink: cfgEls.blink ? !!cfgEls.blink.checked : undefined,
-        idle: cfgEls.idle ? !!cfgEls.idle.checked : undefined,
-        framing: cfgEls.framing ? cfgEls.framing.value : undefined,
-        ttsPitch: cfgEls.pitch ? Number(cfgEls.pitch.value) : undefined,
+  function readConfigForm() {
+    return {
+      displayName: cfgEls.displayName ? cfgEls.displayName.value : undefined,
+      blink: cfgEls.blink ? !!cfgEls.blink.checked : undefined,
+      idle: cfgEls.idle ? !!cfgEls.idle.checked : undefined,
+      framing: cfgEls.framing ? cfgEls.framing.value : undefined,
+      gazeHead: cfgEls.gazeHead ? Number(cfgEls.gazeHead.value) : undefined,
+      gazeEyes: cfgEls.gazeEyes ? Number(cfgEls.gazeEyes.value) : undefined,
+      gazeBody: cfgEls.gazeBody ? Number(cfgEls.gazeBody.value) : undefined,
+      ttsPitch: cfgEls.pitch ? Number(cfgEls.pitch.value) : undefined,
         ttsRate: cfgEls.rate ? Number(cfgEls.rate.value) : undefined,
         ttsLang: cfgEls.lang ? cfgEls.lang.value : undefined,
         ttsVoiceName: cfgEls.sysVoice ? cfgEls.sysVoice.value : undefined,
@@ -3879,6 +3901,30 @@
       cfgEls.rate.addEventListener("input", () => {
         cfgEls.rateOut.textContent = Number(cfgEls.rate.value).toFixed(2);
       });
+    }
+
+    // Gain gaze: live-apply ke view saat digeser (persist lewat tombol
+    // Simpan — readConfigForm → saveModelConfig, pola sama dengan bg).
+    for (const [k, el, out] of [
+      ["gazeHead", cfgEls.gazeHead, cfgEls.gazeHeadOut],
+      ["gazeEyes", cfgEls.gazeEyes, cfgEls.gazeEyesOut],
+      ["gazeBody", cfgEls.gazeBody, cfgEls.gazeBodyOut],
+    ]) {
+      if (el && out) {
+        el.addEventListener("input", () => {
+          out.textContent = Number(el.value).toFixed(2);
+          if (state.modelConfig) {
+            state.modelConfig[k] = Number(el.value);
+            state.gazeGain = {
+              head: state.modelConfig.gazeHead,
+              eyes: state.modelConfig.gazeEyes,
+              body: state.modelConfig.gazeBody,
+            };
+            if (RENDERER_PIXI8 && window.__live2dView?.setGazeGain)
+              window.__live2dView.setGazeGain(state.gazeGain);
+          }
+        });
+      }
     }
 
     if (cfgEls.blink)
@@ -5927,6 +5973,9 @@
     blink: true,
     idle: true,
     framing: "upper",
+    gazeHead: 1,
+    gazeEyes: 1,
+    gazeBody: 1,
     ttsRate: 1,
     ttsPitch: 1.15,
     // Default "auto" = suara mengikuti bahasa teks balasan (dulu id-ID tetap
@@ -7259,6 +7308,12 @@
     if (typeof raw.idle === "boolean") c.idle = raw.idle;
     if (FRAMING_MODES.indexOf(raw.framing) !== -1) c.framing = raw.framing;
 
+    // Gain keekspresivan gaze per grup sendi (0..2; 1 = netral stack lama).
+    for (const k of ["gazeHead", "gazeEyes", "gazeBody"]) {
+      const g = Number(raw[k]);
+      if (Number.isFinite(g)) c[k] = Math.max(0, Math.min(2, g));
+    }
+
     const r = Number(raw.ttsRate);
     if (Number.isFinite(r))
       c.ttsRate = clamp(r, TTS_RATE_RANGE.min, TTS_RATE_RANGE.max);
@@ -7688,6 +7743,9 @@
     state.modelConfig = c;
     state.blinkEnabled = c.blink;
     state.idleEnabled = c.idle;
+    state.gazeGain = { head: c.gazeHead, eyes: c.gazeEyes, body: c.gazeBody };
+    if (RENDERER_PIXI8 && window.__live2dView?.setGazeGain)
+      window.__live2dView.setGazeGain(state.gazeGain);
 
     if (state.model) {
       try {

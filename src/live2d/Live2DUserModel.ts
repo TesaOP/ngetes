@@ -112,6 +112,12 @@ export class Live2DUserModel extends CubismUserModel {
     );
   }
 
+  /** Ganti data look (gain keekspresivan gaze per grup sendi) tanpa membuat
+   * ulang updater — dipanggil renderer saat config user berubah. */
+  setLookParameters(list: LookParameterData[]): void {
+    this._look?.setParameters(list);
+  }
+
   /** Fallback blink role-resolved (model-agnostic, Fase B): rig tanpa grup
    * EyeBlink di manifest (CubismEyeBlink.create → null) tetap harus kedip —
    * id mata dari role mapping, bukan grup manifest. No-op bila grup ada
