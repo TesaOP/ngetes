@@ -4,6 +4,26 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-19 (37) — SLIDER KEEKSPRESIVAN GAZE PER GRUP SENDI (COMMIT)
+
+Lanjutan keluhan user (entri 36): "keekspresivan sendinya harusnya bisa
+disetting". Tiga slider (0–2×; 1 = netral paritas stack lama) di panel
+konfigurasi per-model: **Kepala** (angleX/Y/Z), **Mata** (eyeBallX/Y),
+**Badan** (bodyAngleX/Y). Gain mengalikan faktor look per grup saat build —
+`renderer.setGazeGain()` membangun ulang data look via
+`userModel.setLookParameters()` TANPA membuat ulang updater. Config:
+`gazeHead/gazeEyes/gazeBody` di model config (normalize clamp 0..2),
+live-apply saat slider digeser, persist per-model via sheet config
+(readConfigForm → saveModelConfig — pola bg/pitch yang sama). Section
+disembunyikan di stack lama (look framework hanya ada di pixi8). i18n
+id+en: cfg.gazeHead/Eyes/Body.
+
+Verifikasi (?renderer=pixi8, ren): slider badan 2× → faktor bodyAngleX/Y
+10/7.5 → 20/15; kepala & mata 0.5× → 15 & 0.5; output live; Simpan →
+sheet config tersimpan (live2d_sheet_*), kembali terpasang saat apply.
+Config uji dikembalikan ke netral 1/1/1. Gate: 457 unit + 461 guard hijau
+penuh, tsc bersih (976dda4).
+
 ## UPDATE 2026-09-19 (36) — GAZE VERTIKAL BADAN HILANG SAAT FLIP — DIPULIHKAN (COMMIT)
 
 Laporan user: karakter mengikuti mouse hanya kiri-kanan, sendi atas-bawah
