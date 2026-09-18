@@ -4,6 +4,40 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-19 (34) — FLIP LIPSYNC + UJI CHAT END-TO-END + PEMBERSIHAN (COMMIT)
+
+Lanjutan entri (33). Tiga hal selesai:
+
+- **Flip lipsync (a8bac75, Fase B #4)**: LipsyncUpdater (order 450) menulis
+  param mulut role-resolved dari provider nilai 0..1 — diskalakan range
+  aktual (role-space); model tanpa role mulut tidak mendaftar apa pun.
+  Sumber nilai tetap di app.js (`setLipsyncProvider`: analisis audio TTS
+  lokal / pola sintetis — input jiwa tidak pindah). Blok overrides lipsync
+  app.js dilewati di pixi8; pembersihan saat bicara selesai tetap jalan
+  (no-op). Verifikasi: provider bicara = ParamMouthOpenY osilasi 0,02→1,0;
+  diam = base 0. **Dengan ini SEMUA efek standar diputar framework**
+  (blink/breath/gaze/lipsync/motion/ekspresi/physics/pose); app.js
+  menyumbang komposisi jiwa aditif (liveliness/emosi) + pintu konfigurasi.
+- **Uji chat/brain end-to-end di stack baru (browser nyata, LLM koneksi
+  user)**: pesan "lambaikan tangan + senyum" dijawab LLM dengan balasan
+  multi-bubble + aksi; `aiLock: true` menggerakkan pose (angleX 8,6°),
+  gelembung ucapan tampil, lipsync/TTS jalan — jalur brain→directive→
+  actor→AppWriteUpdater→model bekerja penuh di pixi8. Tidak ada regresi
+  arah lama.
+- **Pembersihan (a2eb7ea)**: loader hilang 200ms setelah model siap +
+  fade 300ms (dulu ~1,25 dtk menghalangi); trace `__loadSteps` dihapus
+  dari Live2DRenderer (diagnostik Fase A selesai). **`__l2dDebug`
+  DIPERTAHANKAN** — itu interface nyata (voice-input.js & emotion-overlay.js
+  membacanya), bukan sampah debug. `rolePoke` dari catatan Fase A tidak
+  pernah ada di kode — artefak perintah konsol sesi verifikasi lama.
+- Gate: tsc bersih; 454 unit (3 gagal env data backup — pre-existing);
+  guard 450/451 (1 gagal env probe — pre-existing).
+- **Belum (menuju flip default)**: verifikasi multi-model (Cubism 4/5
+  lain — TERBLOKIR di mesin backup ini: hanya ren di data/model; uji di
+  mesin data lengkap), uji manual rasa user (zoom/drag/kelembutan) via
+  A/B berdampingan, lalu flip default & pensiunkan stack lama (satu
+  commit terpisah, setelah user setuju).
+
 ## UPDATE 2026-09-19 (33) — FASE B: FLIP KEPEMILIKAN BLINK → BREATH → GAZE SELESAI (3 COMMIT)
 
 Tiga flip "satu fitur satu pemilik" selesai (permintaan user: "lanjut").
