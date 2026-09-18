@@ -4,6 +4,39 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-18 (27) — FASE PENDAHULUAN: RISET CUBISM 5-r.5 + PIXI 8 + SPIKE TERISOLASI (BELUM COMMIT)
+
+Riset wajib sebelum Fase 0. SDK `F:\CubismSdkForWeb-5-r.5.zip` diekstrak ke temp
+(`CubismSdkForWeb-5-r.5`), Pixi 8 diverifikasi dari registry, dan spike read-only
+dijalankan di env terisolasi (bukan di repo) — **tidak menyentuh kode aplikasi**,
+tidak ada branch/commit baru.
+
+- **Versi terkunci**: SDK Web **5-r.5** (2026-04-02) + Core **6.0.1** (`0x06000001`,
+  `Core/CHANGELOG.md` 2026-01-08) + Pixi **8.20.1** exact (registry shasum
+  `233621f…`). Catatan lengkap di `docs/knowledge/cubism5-pixi8-notes.md`.
+- **Keputusan adapter**: bukan `pixi-live2d-display` (Pixi 6 only) dan bukan fork
+  pihak ketiga — adapter tipis di atas **Cubism Framework renderer resmi**
+  (`CubismRenderer_WebGL`) di atas GL context milik Pixi 8. Boundary:
+  `createRenderer(w,h)` → `startUp(gl)` → `loadShaders()` → `bindTexture()` →
+  `setRenderState(null,viewport)` → `setMvpMatrix()` → `drawModel()`.
+- **Spike**: model SDK `Ren` (moc **v6**, 198 drawable / 24 offscreen,
+  `blendModeEnabled=true`, `masking=true`) dimuat **tanpa MOC hack** —
+  `C.Moc.fromArrayBuffer` mengenali v6 native. Bukti:
+  `C:\Users\Admin\AppData\Local\Temp\opencode\lumi-cubism5r5-research-20260917\spike-log.txt`
+  → `core 6000001`, `moc v6`, `drawable 198 offscreen 24`, `physics ok`,
+  `texture bound`, `grid 5x5 #####` (semua piksel tergambar, bukan latar);
+  `spike-proof.png` mengonfirmasi ada konten non-latar yang digambar.
+- **Temuan penting**: (1) `CubismFramework.startUp()` tanpa `logFunction` membungkam
+  semua log (`getLoggingLevel()=Off`) — spike sempat silent-fail; (2) shader load
+  asinkron (`fetch` 13 vert/frag) — `isShaderLoaded=false` sampai selesai, frame
+  awal hitam; (3) `app.ticker` tidak ada di build ESM Pixi 8 minimal — render
+  manual `app.render()` atau rAF sendiri; (4) headless Playwright screenshot
+  hang — bukti via `canvas.toDataURL` + `readPixels`.
+- **Belum disentuh (sengaja)**: branch `migration/pixi8-cubism` belum dibuat
+  (Fase 0), hack MOC lama belum dihapus (Fase 7), audit dependency lama belum
+  ditulis ke `audit-old-live2d.md`, model bundel `data/model/*` belum diuji.
+  Gate repo tetap hijau — verifikasi di bawah.
+
 ## UPDATE 2026-09-11 (26) — REFACTOR CLIENT: ROLE-SPACE, LIFECYCLE, KONTRAK BRIDGE, EKSPRESI TS (BELUM COMMIT)
 
 Audit maintainability client dilanjutkan dengan tranche kecil, tanpa rewrite
