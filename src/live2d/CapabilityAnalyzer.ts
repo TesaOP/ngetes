@@ -15,7 +15,7 @@ const CAPS: Record<string, { params?: string[]; roles?: string[]; expressions?: 
   bodyRotation: { roles: ['bodyAngleX', 'bodyAngleY', 'bodyAngleZ'] },
   physics: { params: ['__physics'] }, // special
   blush: { roles: ['blush'] },
-  earMovement: { params: ['ParamEarL', 'ParamEarR'] },
+  earMovement: { roles: ['ear'] },
 };
 
 export function analyzeCapabilities(profile: ModelProfile, roleMap: Record<string, string>): CapabilityProfile {

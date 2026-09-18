@@ -76,6 +76,12 @@ export const ROLE_KEYWORDS: Record<string, string[]> = Object.freeze({
     "ParamBlush", "Blush", "blush", "ParamCheekRed", "CheekRed",
     "頬紅", "ほお染め", "照れ", "脸红", "腮红", "害羞",
   ],
+  // ear: jangan pakai substring "earl" telanjang — "pearl" berisi "earl"
+  // (positif palsu senyap di rig aksesori). Patokan: keluarga kanonik
+  // ParamEar* + token terpisah + CJK.
+  ear: [
+    "ParamEar", "ear_l", "ear_r", "earleft", "earright", "_ear", "耳",
+  ],
 });
 
 // Pola pemilih anggota grup resmi. Grup model3.json (LipSync/EyeBlink)
