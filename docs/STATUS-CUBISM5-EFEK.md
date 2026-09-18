@@ -4,6 +4,34 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-18 (32) — CATATAN USER + STATUS DEFAULT & MODEL-AGNOSTIC (COMMIT)
+
+Feedback user setelah mencoba hasil entri (30)+(31): **stack baru masih
+terasa berat, tapi sudah cukup oke** — diterima untuk sekarang, TIDAK
+ditindaklanjuti lebih jauh di sesi ini. Catatan pengukuran: A/B selang-
+seling menghasilkan 5,9–7,3 ms/frame (di bawah budget vsync 16,6 ms), jadi
+"berat" yang masih terasa kemungkinan berasal dari (a) jendela interferensi
+host yang juga mengena stack lama, atau (b) beban GPU di mesin user (dpr /
+ukuran stage / iGPU) yang belum terukur — kalau keluhan berlanjut, ukur
+live rAF berdampingan dengan stack lama di menit yang sama dulu, jangan
+micro-benchmark.
+
+Status dua pertanyaan user (dicatat agar sesi berikutnya tidak menebak):
+- **Default masih stack lama** — `?renderer=pixi8` sengaja opt-in/kill-switch
+  (app.js `RENDERER_PIXI8`). Ini desain migrasi: flip default BARU boleh
+  setelah Fase B selesai (flip kepemilikan blink→breath→gaze ke framework,
+  lipsync updater TTS, uji chat/brain end-to-end, verifikasi multi-model),
+  lalu pensiunkan stack lama. Jangan flip duluan.
+- **Model-agnostic: arsitekturnya ya, buktinya baru satu model.** Sudah
+  benar: tulis param hanya lewat role space (RoleController/roleInfo —
+  look & breath diskalakan dari range aktual model), grup EyeBlink/LipSync
+  by-name dari manifest, kemampuan diukur dari disk (ModelInspector),
+  tanpa id bernomor (hardcode ParamEarL/R sudah dihapus entri (28) +
+  guard). Framing memakai canvasW/H model, MODEL_UNIT_PX bebas (terkompensasi
+  frameModel). YANG BELUM: diverifikasi visual/fungsional hanya di ren
+  (moc v6) — uji model Cubism 4/5 lain adalah bagian fase lanjutan sebelum
+  flip default.
+
 ## UPDATE 2026-09-18 (31) — ENTEng LANJUT: CACHE BUFFER INDEKS QUAD + KALIBRASI PENGUKURAN (COMMIT)
 
 Lanjutan permintaan user "buat lebih enteng lagi" setelah entri (30). Dua
