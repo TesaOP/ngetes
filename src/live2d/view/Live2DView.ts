@@ -78,6 +78,9 @@ export class Live2DView {
   /** Flip kepemilikan blink (Fase B): gate diputuskan app.js (blinkEnabled
    * sheet + frozen); framework yang memutar kedipnya. */
   private blinkGate: (() => boolean) | null = null;
+  /** Flip kepemilikan breath (Fase B #2): gate diputuskan app.js
+   * (hasBreath + frozen + motion layer). */
+  private breathGate: (() => boolean) | null = null;
 
   /** Flip kepemilikan blink (Fase B): app.js memegang pintu konfigurasi,
    * framework memutar kedipnya. fn = () => boolean; null = selalu kedip. */
@@ -85,6 +88,14 @@ export class Live2DView {
     this.blinkGate = fn;
     const um = (this.renderer as any)?.userModel as Live2DUserModel | undefined;
     if (um) um.blinkGate = fn;
+  }
+
+  /** Flip kepemilikan breath (Fase B #2): semantik sama dengan setBlinkGate
+   * — app.js memegang hasBreath/frozen/motion-layer, framework memutar. */
+  setBreathGate(fn: (() => boolean) | null): void {
+    this.breathGate = fn;
+    const um = (this.renderer as any)?.userModel as Live2DUserModel | undefined;
+    if (um) um.breathGate = fn;
   }
 
   /** Miliki canvas panggung: Pixi 8 Application di atas #live2d-canvas
@@ -159,17 +170,18 @@ export class Live2DView {
     this.facade = null;
 
     await this.renderer.loadModel(modelPath, {
-      // Flip kepemilikan efek (Fase B, satu commit per fitur): blink kini
-      // framework (dengan gate runtime dari app.js). look/breath masih
-      // driver app.js (transplant jiwa) — flip menyusul. physics/pose/
-      // ekspresi tetap framework. autoIdle=false: app.js startIdleMotion
-      // pemilik idle.
-      effects: { blink: true, look: false, breath: false },
+      // Flip kepemilikan efek (Fase B, satu commit per fitur): blink (#1)
+      // dan breath (#2) kini framework (gate runtime dari app.js). look
+      // masih driver app.js — flip menyusul (butuh komposisi aditif dengan
+      // liveliness). physics/pose/ekspresi tetap framework. autoIdle=false:
+      // app.js startIdleMotion pemilik idle.
+      effects: { blink: true, look: false, breath: true },
       autoIdle: false,
     });
 
     const userModel = (this.renderer as any).userModel as Live2DUserModel;
     userModel.blinkGate = this.blinkGate;
+    userModel.breathGate = this.breathGate;
     if (!(this.renderer as any).__writesRegistered) {
       userModel.updateScheduler.addUpdatableList(this.writes);
       userModel.updateScheduler.sortUpdatableList();

@@ -572,11 +572,18 @@
         // tetap dijalankan duluan supaya jalur rescue manifest tetap kerja.
         await window.__live2dViewWait;
         state.model = await window.__live2dView.loadModel(modelPath);
-        // Flip kepemilikan blink (Fase B): framework memutar kedip, app.js
-        // tetap pemegang pintu konfigurasi (sheet blinkEnabled + frozen) —
+        // Flip kepemilikan blink (Fase B #1) & breath (Fase B #2):
+        // framework memutar, app.js tetap pemegang pintu konfigurasi —
         // gate dibaca live updater tiap frame.
         window.__live2dView.setBlinkGate(function () {
           return state.blinkEnabled && !state.frozen;
+        });
+        window.__live2dView.setBreathGate(function () {
+          return (
+            state.hasBreath &&
+            !state.frozen &&
+            !(haveMotionSystem && motionRuntime && motionRuntime.isPlaying())
+          );
         });
       } else {
         state.model = await PIXI.live2d.Live2DModel.from(settings || modelPath, {
@@ -927,7 +934,15 @@
       // frame berarti kurva itu tak pernah terdengar. Framework bawaan
       // (updateNaturalMovements) menambahkan breath tersendiri di bawah —
       // aman karena tick menulis SETELAH framework (beforeModelUpdate).
-      if (state.hasBreath && !state.frozen && !motionLayersActive)
+      // Flip kepemilikan breath (Fase B #2): di stack baru framework yang
+      // menambah napas (aditif, gate hasBreath/frozen/motion-layer) —
+      // tulisan app.js dilewati supaya tidak menimpa kontribusi framework.
+      if (
+        state.hasBreath &&
+        !state.frozen &&
+        !motionLayersActive &&
+        !RENDERER_PIXI8
+      )
         pokeRoleNorm("breath", clamp(breath, 0, 1));
 
       if (state.emoCur) {

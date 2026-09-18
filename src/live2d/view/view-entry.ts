@@ -17,9 +17,10 @@ w.__live2dView = {
   loadModel: (p: string) => view.loadModel(p),
   resize: (cw: number, ch: number) => view.resize(cw, ch),
   setBackground: (hex: number) => view.setBackground(hex),
-  // Flip kepemilikan blink (Fase B): app.js tetap pemegang pintu
-  // konfigurasi kedip (blinkEnabled sheet + frozen), framework memutar.
+  // Flip kepemilikan blink (Fase B #1) & breath (Fase B #2): app.js tetap
+  // pemegang pintu konfigurasi, framework yang memutar.
   setBlinkGate: (fn: (() => boolean) | null) => view.setBlinkGate(fn),
+  setBreathGate: (fn: (() => boolean) | null) => view.setBreathGate(fn),
 };
 
 if (w.__live2dRendererRequested) {

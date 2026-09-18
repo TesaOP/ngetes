@@ -9,8 +9,10 @@
  * dt dalam DETIK; tiap manager meng-akumulasi userTimeSeconds sendiri.
  */
 import { CubismUserModel } from "./cubism/model/cubismusermodel";
+import type { CubismModel } from "./cubism/model/cubismmodel";
 import type { CubismModelSettingJson } from "./cubism/cubismmodelsettingjson";
 import { CubismUpdateScheduler } from "./cubism/motion/cubismupdatescheduler";
+import { ICubismUpdater, CubismUpdateOrder } from "./cubism/motion/icubismupdater";
 import { CubismEyeBlink } from "./cubism/effect/cubismeyeblink";
 import { CubismEyeBlinkUpdater } from "./cubism/motion/cubismeyeblinkupdater";
 import { CubismExpressionUpdater } from "./cubism/motion/cubismexpressionupdater";
@@ -33,6 +35,23 @@ export const MotionPriority = {
   Force: 3,
 } as const;
 
+/** Pembungkus updater dengan gate runtime (flip kepemilikan efek, Fase B).
+ * Tulisan efek bersifat frame-transien (dibuang loadParameters frame
+ * berikutnya) — gate false berarti nilai base motion yang tampil, tanpa
+ * restore manual. Dipakai breath; blink memakai callback _motionUpdated. */
+class GatedUpdater extends ICubismUpdater {
+  constructor(
+    private inner: ICubismUpdater,
+    private gate: () => boolean,
+    order: number,
+  ) {
+    super(order);
+  }
+  onLateUpdate(model: CubismModel, dt: number): void {
+    if (this.gate()) this.inner.onLateUpdate(model, dt);
+  }
+}
+
 export class Live2DUserModel extends CubismUserModel {
   readonly updateScheduler = new CubismUpdateScheduler();
   /** View integrasi mematikan ini: app.js punya idle scheduler sendiri
@@ -44,6 +63,10 @@ export class Live2DUserModel extends CubismUserModel {
    * restore. app.js (integrasi view) memutuskan dari konfigurasi sheet
    * (blinkEnabled) + state.frozen. */
   blinkGate: (() => boolean) | null = null;
+  /** Gate runtime napas (flip kepemilikan breath, Fase B): semantik sama
+   * dengan blinkGate — app.js memutuskan dari hasBreath + frozen + motion
+   * layer aktif (kurva klip bisa membawa breath sendiri). */
+  breathGate: (() => boolean) | null = null;
   private _setting: CubismModelSettingJson | null = null;
   private _baseUrl = "";
   private _motionCache = new Map<string, CubismMotion>();
@@ -106,7 +129,16 @@ export class Live2DUserModel extends CubismUserModel {
     if (en.breath) {
       this._breath = CubismBreath.create();
       if (opts.breath.length) this._breath.setParameters(opts.breath);
-      this.updateScheduler.addUpdatableList(new CubismBreathUpdater(this._breath));
+      // Flip kepemilikan breath (Fase B): framework menambah napas (aditif
+      // resmi — addParameterValueById) di atas motion; gate runtime menahan
+      // saat frozen / motion layer membawa kurva breath sendiri.
+      this.updateScheduler.addUpdatableList(
+        new GatedUpdater(
+          new CubismBreathUpdater(this._breath),
+          () => this.breathGate?.() ?? true,
+          CubismUpdateOrder.CubismUpdateOrder_Breath,
+        ),
+      );
     }
     if (this._physics) {
       this.updateScheduler.addUpdatableList(new CubismPhysicsUpdater(this._physics));
