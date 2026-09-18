@@ -1554,10 +1554,9 @@
       } catch (e) {}
     }
 
-    // Semua jalur resmi (API pixi + permukaan core) habis — blok di bawah
-    // menyelam ke private field framework yang bisa berubah kapan saja.
-    // Kalau peringatan ini muncul di console, pixi-live2d kemungkinan besar
-    // baru di-update dan pencarian param perlu disesuaikan.
+    // Semua jalur resmi habis — blok di bawah menyelam ke private field
+    // framework yang bisa berubah kapan saja. Kalau peringatan ini muncul,
+    // framework baru saja di-update dan pencarian param perlu disesuaikan.
     if (!paramIds.length)
       console.warn(
         "[cap] jalur resmi parameter habis — menyelam ke private field framework (fallback dalam, rapuh)",
@@ -2538,8 +2537,7 @@
     // "Bahasa suara" TETAP (mis. ja-JP) + balasan tetap bahasa user →
     // yang dibacakan suara adalah TERJEMAHANNYA. Keputusannya DI SERVER
     // (/api/tts menerima ttsLang): satu titik untuk semua request TTS
-    // remote, jadi ucapan TIDAK bisa berganti bahasa sendiri (dulu
-    // terjemahan di client kadang gagal/timeout → jatuh ke teks asli).
+    // remote, jadi ucapan TIDAK bisa berganti bahasa sendiri.
     // Bubble & chat log tetap menampilkan teks asli.
     const vcfgSpeak = currentModelConfig();
     const fixedLang =
@@ -5785,8 +5783,7 @@
     gazeBody: 1,
     ttsRate: 1,
     ttsPitch: 1.15,
-    // Default "auto" = suara mengikuti bahasa teks balasan (dulu id-ID tetap
-    // — teks bisa saja bukan Indonesia sementara voice selalu Indonesia).
+    // Default "auto" = suara mengikuti bahasa teks balasan.
     ttsLang: "auto",
     ttsVoiceName: "",
 
@@ -7599,8 +7596,7 @@
       return;
     }
     removeStageBgImage();
-    // Gambar latar = <img> DOM di belakang canvas (object-fit: cover);
-    // dulu sprite PIXI di stage — tidak ter-render di stack view baru.
+    // Gambar latar = <img> DOM di belakang canvas (object-fit: cover).
     const img = document.getElementById("stage-bg");
     if (!img) return;
     img.onload = () => {

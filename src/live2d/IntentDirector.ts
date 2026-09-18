@@ -1,4 +1,4 @@
-/** Fase 15 — Intent semantik → param (Director + Arbiter). LLM tidak output ParamAngleX. */
+/** Intent semantik → param (Director + Arbiter). LLM tidak output ParamAngleX. */
 import type { Live2DRenderer } from "./Live2DRenderer";
 
 export interface SemanticIntent {

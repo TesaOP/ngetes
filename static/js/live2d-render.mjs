@@ -10215,6 +10215,21 @@ class Live2DUserModel extends CubismUserModel {
   registerLipsync(id, min, max) {
     this.updateScheduler.addUpdatableList(new LipsyncUpdater(() => this.lipsyncProvider?.() ?? null, id, min, max, 450));
   }
+  setLookParameters(list) {
+    this._look?.setParameters(list);
+  }
+  ensureEyeBlink(ids) {
+    if (!ids.length)
+      return;
+    if (this._eyeBlink) {
+      if (this._eyeBlink.getParameterIds().length)
+        return;
+      this._eyeBlink.setParameterIds(ids);
+      return;
+    }
+    this._eyeBlink = new CubismEyeBlink(null);
+    this._eyeBlink.setParameterIds(ids);
+  }
   _setting = null;
   _baseUrl = "";
   _motionCache = new Map;
@@ -10431,6 +10446,7 @@ class Live2DRenderer {
   pixiStateReset = null;
   mvpTmp = new CubismMatrix44;
   paramCtrl = null;
+  gazeGain = { head: 1, eyes: 1, body: 1 };
   setMvpProvider(fn) {
     this.mvpProvider = fn;
   }
@@ -10456,13 +10472,18 @@ class Live2DRenderer {
     const res = await fetch(model3Path);
     if (!res.ok)
       throw new Error(`fetch model3 ${res.status} ${model3Path}`);
-    const buf = await res.arrayBuffer();
-    this.setting = new CubismModelSettingJson(buf, buf.byteLength);
+    let manifestBuf;
+    if (opts?.adoptedManifest && typeof opts.adoptedManifest === "object") {
+      manifestBuf = new TextEncoder().encode(JSON.stringify(opts.adoptedManifest)).buffer;
+    } else {
+      manifestBuf = await res.arrayBuffer();
+    }
+    this.setting = new CubismModelSettingJson(manifestBuf, manifestBuf.byteLength);
     this.baseDir = model3Path.slice(0, model3Path.lastIndexOf("/") + 1);
     const mocFile = this.setting.getModelFileName();
     const mocBuf = await (await fetch(this.baseDir + mocFile)).arrayBuffer();
     const core = globalThis.Live2DCubismCore;
-    const mocVersion = core ? core.Version.csmGetMocVersion(mocBuf) : -1;
+    const mocVersion = core ? core.Version.csmGetMocVersion(mocBuf, mocBuf.byteLength) : -1;
     this.userModel = new Live2DUserModel;
     this.paramCtrl = null;
     this.userModel.loadModel(mocBuf, false);
@@ -10553,6 +10574,16 @@ class Live2DRenderer {
     } catch (e) {
       console.warn("[Live2DRenderer] role map gagal", e);
     }
+    if (this.roleCtrl) {
+      const fallbackIds = [];
+      const idMgr = CubismFramework.getIdManager();
+      for (const role of ["eyeLOpen", "eyeROpen"]) {
+        const info = this.roleCtrl.roleInfo(role);
+        if (info)
+          fallbackIds.push(idMgr.getId(info.id));
+      }
+      this.userModel.ensureEyeBlink(fallbackIds);
+    }
     this.userModel.registerEffectUpdaters({
       look: this.buildLookData(),
       breath: this.buildBreathData(),
@@ -10571,12 +10602,13 @@ class Live2DRenderer {
   }
   buildLookData() {
     const SPEC = {
-      angleX: { stdHalf: 30, fx: 30, fy: 0, fxy: 0 },
-      angleY: { stdHalf: 30, fx: 0, fy: 30, fxy: 0 },
-      angleZ: { stdHalf: 30, fx: 0, fy: 0, fxy: -30 },
-      bodyAngleX: { stdHalf: 10, fx: 10, fy: 0, fxy: 0 },
-      eyeBallX: { stdHalf: 1, fx: 1, fy: 0, fxy: 0 },
-      eyeBallY: { stdHalf: 1, fx: 0, fy: 1, fxy: 0 }
+      angleX: { stdHalf: 30, fx: 30, fy: 0, fxy: 0, group: "head" },
+      angleY: { stdHalf: 30, fx: 0, fy: 30, fxy: 0, group: "head" },
+      angleZ: { stdHalf: 30, fx: 0, fy: 0, fxy: -30, group: "head" },
+      bodyAngleX: { stdHalf: 10, fx: 10, fy: 0, fxy: 0, group: "body" },
+      bodyAngleY: { stdHalf: 10, fx: 0, fy: 7.5, fxy: 0, group: "body" },
+      eyeBallX: { stdHalf: 1, fx: 1, fy: 0, fxy: 0, group: "eyes" },
+      eyeBallY: { stdHalf: 1, fx: 0, fy: 1, fxy: 0, group: "eyes" }
     };
     const idMgr = CubismFramework.getIdManager();
     const out = [];
@@ -10586,9 +10618,21 @@ class Live2DRenderer {
         continue;
       const spec = SPEC[role];
       const scale = (info.max - info.min) / 2 / spec.stdHalf;
-      out.push(new LookParameterData(idMgr.getId(info.id), spec.fx * scale, spec.fy * scale, spec.fxy * scale));
+      const g = this.gazeGain[spec.group] ?? 1;
+      out.push(new LookParameterData(idMgr.getId(info.id), spec.fx * scale * g, spec.fy * scale * g, spec.fxy * scale * g));
     }
     return out;
+  }
+  setGazeGain(gain) {
+    const g = gain ?? {};
+    const cl = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? Math.max(0, Math.min(2, n)) : 1;
+    };
+    this.gazeGain = { head: cl(g.head), eyes: cl(g.eyes), body: cl(g.body) };
+    if (this.userModel && this.roleCtrl) {
+      this.userModel.setLookParameters(this.buildLookData());
+    }
   }
   buildBreathData() {
     const SPEC = {

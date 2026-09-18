@@ -3,7 +3,7 @@
  * Dimuat sebagai module script (index.html) SETELAH skrip klasik app.js —
  * lihat catatan timing di Live2DView. app.js menandai
  * window.__live2dRendererRequested (app.js menandainya untuk semua halaman
- * kecuali mode legacy ?renderer=legacy); modul ini
+ * (app.js selalu menandainya); modul ini
  * mengambil alih canvas panggung, lalu menyelesaikan janji
  * __live2dViewWait yang ditunggu jalur init model app.js.
  */

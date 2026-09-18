@@ -1,4 +1,4 @@
-/** Fase 10 — hubungkan role-mapping (model-agnostic) ke ParameterController. */
+/** Role mapping → ParameterController (model-agnostic). */
 import { mapRoles, writeRef, roleDefaultOf, type ParamRange } from "../client/engine/role-mapping";
 import { ParameterController } from "./ParameterController";
 import type { CubismModel } from "./cubism/model/cubismmodel";
@@ -49,7 +49,7 @@ export class RoleController {
     return this.paramCtrl.setParameter(id, roleDefaultOf(r));
   }
 
-  /** Fase 13: hitung actual tanpa tulis — untuk arbiter. */
+  /** Hitung actual tanpa tulis — untuk arbiter. */
   resolveRole(role: string, vRef: number): { id: string; actual: number } | null {
     const id = this.roleToId[role];
     if (!id) return null;

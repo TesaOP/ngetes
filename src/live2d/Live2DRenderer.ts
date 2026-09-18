@@ -1,4 +1,4 @@
-/** Fase 6 — renderer nyata: Pixi 8 WebGL + Cubism Framework 5-r.5 (Core 6.0.1).
+/** Renderer: Pixi 8 WebGL + Cubism Framework 5-r.5 (Core 6.0.1).
  * Koreksi sesuai pola resmi: pipeline update dua fase di Live2DUserModel,
  * save/restore GL di sekitar drawModel (drawModel tidak mengembalikan state
  * host), frame process offscreen manager untuk model blend-enabled, shader
@@ -218,7 +218,7 @@ export class Live2DRenderer {
     const drawable = model?.getDrawableCount?.() ?? 0;
     const offscreen = (model as any)?.getOffscreenCount?.() ?? 0;
 
-    // Fase 10: bangun RoleController (model-agnostic)
+    // Bangun RoleController (model-agnostic)
     try {
       const paramSet = new Set<string>();
       const pc = model ? model.getParameterCount() : 0;
@@ -409,7 +409,7 @@ export class Live2DRenderer {
     return this.userModel?.getModel()?.getDrawableCount?.() ?? 0;
   }
 
-  // Fase 8 — Parameter API (tanpa AI, model-agnostic: id dicek via model, bukan hardcode)
+  // Parameter API (model-agnostic: id dicek via model, bukan hardcode)
   /** Controller di-cache — stateless di atas model yang sama; getParameter
    * dipanggil driver app.js ±10× per frame (lerp pose & emosi). */
   private ctrl(): ParameterController | null {
@@ -442,18 +442,18 @@ export class Live2DRenderer {
     return true;
   }
 
-  // Fase 13 helpers
+  // Helpers arbiter
   getArbiter(): ParameterArbiter { return this.arbiter; }
   hasConflict(id: string): boolean { return this.arbiter.hasConflict(id); }
 
-  // Fase 9 — Model Inspector
+  // Model Inspector
   getModelProfile(): ModelProfile | null {
     const m = this.userModel?.getModel();
     if (!m || !this.setting) return null;
     return inspectModel(m, this.setting);
   }
 
-  // Fase 10 — Role API (model-agnostic)
+  // Role API (model-agnostic)
   getRoleMap(): Record<string, string> | null {
     return this.roleCtrl ? this.roleCtrl.getRoleMap() : null;
   }

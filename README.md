@@ -201,6 +201,4 @@ identik, tidak ada konversi.
 `data/model/` **tidak di-commit**. Letakkan model Cubism 4 atau 5 sendiri di
 `data/model/<nama>/<file>.model3.json` — runtime mendukung semuanya lewat Core 6.0.1
 (moc3 v4.2, v5.0/5.3, dan v6 — native, tanpa byte-hack; sejarah migrasi:
-[`docs/STATUS-CUBISM5-EFEK.md`](docs/STATUS-CUBISM5-EFEK.md)). Catatan: model v4 tetap
-kompatibel dengan runtime Cubism 5, tapi jangan buka & re-save di Editor v5 kalau mau
-balik ke v4.
+[`docs/STATUS-CUBISM5-EFEK.md`](docs/STATUS-CUBISM5-EFEK.md)).

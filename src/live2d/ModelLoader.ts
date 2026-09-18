@@ -1,4 +1,4 @@
-/** Fase 5 — load satu golden model via Cubism Core native (tanpa byte-hack) + Pixi 8. */
+/** Loader satu model via Cubism Core native (tanpa byte-hack) — utilitas halaman proof. */
 import * as PIXI from "pixi.js";
 import type { Live2DAdapterOptions, Live2DModelLike } from "./types";
 
@@ -9,7 +9,7 @@ export async function loadLive2DModel(
   const core = (globalThis as any).Live2DCubismCore ?? (window as any)?.Live2DCubismCore;
   if (!core) throw new Error("Live2DCubismCore belum dimuat — <script src=\"js/live2dcubismcore.min.js\"> harus sebelum bundle");
 
-  // model3.json → json (pakai fetch, bukan CubismJson — cukup untuk Fase 5)
+  // model3.json → json (pakai fetch, bukan CubismJson)
   const res = await fetch(modelPath);
   if (!res.ok) throw new Error(`fetch model3.json gagal ${res.status} ${modelPath}`);
   const dir = modelPath.slice(0, modelPath.lastIndexOf("/") + 1);
@@ -31,7 +31,7 @@ export async function loadLive2DModel(
   const offscreen = (model as any).offscreens?.count ?? 0;
   const textures: number = setting.FileReferences?.Textures?.length ?? 0;
 
-  // Pixi 8 container placeholder — Fase 6 akan ganti dengan render Cubism sesungguhnya
+  // Pixi 8 container placeholder — render sesungguhnya ditangani Live2DRenderer
   const container = new PIXI.Container();
   container.label = "Live2D/Fase5";
   const bg = new PIXI.Graphics().rect(0, 0, 320, 360).fill({ color: 0x0f172a, alpha: 0.08 });

@@ -1,4 +1,4 @@
-/** Fase 13 — Parameter Arbiter: cegah dua sumber override param sama. */
+/** Parameter Arbiter: cegah dua sumber override param sama. */
 export type SourceId = 'blink' | 'gaze' | 'emotion' | 'lipsync' | 'motion' | 'raw' | 'physics' | 'manual';
 
 const PRIORITY: Record<SourceId, number> = {

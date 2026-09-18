@@ -2,7 +2,7 @@
  * framing.ts — matematika transform facade view (murni, tanpa dependensi
  * framework/pixi/GC) supaya bisa diuji bun test tanpa memuat core WASM.
  *
- * mvp paritas framing pixi-live2d 0.4.0 (column-major, p' = M·p; layout sama
+ * mvp framing warisan pixi-live2d 0.4.0 (rumus identik; column-major, p' = M·p; layout sama
  * dengan CubismMatrix44._tr):
  *   P·RES·T(x,y)·R·S(sx,sy)·T(-ax·ow,-ay·oh)·T(ow/2,oh/2)·S(1,-1)·S(ow/cw,oh/ch)
  * Titik model (unit canvas, y-up, terpusat) → box lokal y-down (0..ow, 0..oh,
@@ -72,7 +72,7 @@ export interface FacadeTransform {
   rotation: number;
   anchorX: number;
   anchorY: number;
-  /** ukuran box lokal (px CSS) — pixi-live2d: originalWidth/Height */
+  /** ukuran box lokal (px CSS) — setara originalWidth/Height pada framing warisan */
   origW: number;
   origH: number;
   /** ruang canvas model (unit Cubism, mis. ren ≈ 1.0 × 1.346) */

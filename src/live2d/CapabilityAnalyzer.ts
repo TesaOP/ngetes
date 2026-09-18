@@ -1,4 +1,4 @@
-/** Fase 14 — Semantic Analyzer: model → capability profile + fallback. */
+/** Semantic Analyzer: model → capability profile + fallback (utilitas halaman proof). */
 import type { ModelProfile } from "./ModelInspector";
 
 export interface CapabilityProfile {

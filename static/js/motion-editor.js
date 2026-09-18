@@ -11,8 +11,8 @@
  * Preview realtime adalah inti, bukan pelengkap: setiap perubahan nilai (drag
  * slider, ketik angka, geser key, scrub playhead) langsung ditulis ke model
  * lewat setRawDrive(), yang di-assert ulang SETIAP frame di app.js. Menulis
- * sekali saja tidak cukup karena internalModel.update() milik pixi-live2d
- * menimpa parameter di antara frame.
+ * sekali saja tidak cukup karena update internal model menimpa parameter di
+ * antara frame.
  */
 (function () {
   'use strict';

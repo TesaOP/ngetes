@@ -1,4 +1,4 @@
-/** Koleksi nama ekspresi native dari seluruh surface pixi-live2d yang dikenal. */
+/** Koleksi nama ekspresi native yang dikenal — lintas renderer. */
 type NamedExpression = { Name?: unknown } | null | undefined;
 type ExpressionModel = {
   expressions?: unknown;

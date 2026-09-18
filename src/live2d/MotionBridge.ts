@@ -1,4 +1,4 @@
-/** Fase 11 — bridge MotionRuntime → Live2DRenderer (Cubism). */
+/** Bridge MotionRuntime → Live2DRenderer (Cubism). */
 import type { RuntimeBridge } from "../client/animation/motion-runtime";
 import type { Live2DRenderer } from "./Live2DRenderer";
 import { MotionPriority } from "./Live2DUserModel";

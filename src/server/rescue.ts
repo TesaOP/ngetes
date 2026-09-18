@@ -198,7 +198,7 @@ export function buildRescueBlueprint(modelDir: string): RescueBlueprint | null {
   if (scan.pose) FileReferences.Pose = rel(scan.pose);
 
   // Kelompok motion: Idle dari petunjuk vtube.json ATAU pola nama /idle/i
-  // (pixi-live2d memutar grup "Idle" otomatis — sama seperti maksud
+  // (framework memutar grup "Idle" otomatis via startIdleIfAvailable — maksud
   // IdleAnimation di vtube.json). Sisanya masuk grup "Motion".
   const idleFiles = new Set<string>();
   if (scan.idleHint) idleFiles.add(scan.idleHint);
