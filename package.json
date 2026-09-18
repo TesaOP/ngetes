@@ -7,6 +7,7 @@
     "dev": "bun run src/server/index.ts",
     "start": "bun run src/server/index.ts",
     "build": "bun run src/build.ts",
+    "build:proof": "bun run src/build-proof.ts",
     "test": "bun test && bun run test/run-guards.js",
     "test:unit": "bun test",
     "test:guards": "bun run test/run-guards.js",
