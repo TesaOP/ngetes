@@ -75,6 +75,17 @@ export class Live2DView {
   private transform: FacadeTransform | null = null;
   private rafId: number | null = null;
   private initPromise: Promise<void> | null = null;
+  /** Flip kepemilikan blink (Fase B): gate diputuskan app.js (blinkEnabled
+   * sheet + frozen); framework yang memutar kedipnya. */
+  private blinkGate: (() => boolean) | null = null;
+
+  /** Flip kepemilikan blink (Fase B): app.js memegang pintu konfigurasi,
+   * framework memutar kedipnya. fn = () => boolean; null = selalu kedip. */
+  setBlinkGate(fn: (() => boolean) | null): void {
+    this.blinkGate = fn;
+    const um = (this.renderer as any)?.userModel as Live2DUserModel | undefined;
+    if (um) um.blinkGate = fn;
+  }
 
   /** Miliki canvas panggung: Pixi 8 Application di atas #live2d-canvas
    * (transparan — latar dari CSS #stage; alpha context dipertahankan
@@ -148,13 +159,17 @@ export class Live2DView {
     this.facade = null;
 
     await this.renderer.loadModel(modelPath, {
-      // blink/look/breath milik driver app.js (transplant jiwa) —
-      // physics/pose/ekspresi tetap framework
-      effects: { blink: false, look: false, breath: false },
-      autoIdle: false, // app.js startIdleMotion pemilik idle
+      // Flip kepemilikan efek (Fase B, satu commit per fitur): blink kini
+      // framework (dengan gate runtime dari app.js). look/breath masih
+      // driver app.js (transplant jiwa) — flip menyusul. physics/pose/
+      // ekspresi tetap framework. autoIdle=false: app.js startIdleMotion
+      // pemilik idle.
+      effects: { blink: true, look: false, breath: false },
+      autoIdle: false,
     });
 
     const userModel = (this.renderer as any).userModel as Live2DUserModel;
+    userModel.blinkGate = this.blinkGate;
     if (!(this.renderer as any).__writesRegistered) {
       userModel.updateScheduler.addUpdatableList(this.writes);
       userModel.updateScheduler.sortUpdatableList();

@@ -38,6 +38,12 @@ export class Live2DUserModel extends CubismUserModel {
   /** View integrasi mematikan ini: app.js punya idle scheduler sendiri
    * (startIdleMotion, interval 7 dtk) — dua idle = dua sumber motion. */
   autoIdle = true;
+  /** Gate runtime kedip (flip kepemilikan blink, Fase B): null = selalu
+   * kedip; false = updater melewatkan frame itu — tulisan blink bersifat
+   * frame-transien sehingga mata kembali ke nilai base motion tanpa
+   * restore. app.js (integrasi view) memutuskan dari konfigurasi sheet
+   * (blinkEnabled) + state.frozen. */
+  blinkGate: (() => boolean) | null = null;
   private _setting: CubismModelSettingJson | null = null;
   private _baseUrl = "";
   private _motionCache = new Map<string, CubismMotion>();
@@ -76,8 +82,15 @@ export class Live2DUserModel extends CubismUserModel {
   }): void {
     const en = { blink: true, look: true, breath: true, ...(opts.enabled ?? {}) };
     if (this._eyeBlink && en.blink) {
+      // Flip kepemilikan blink (Fase B): framework memutar kedip. Callback
+      // _motionUpdated resmi membuat kedip mundur saat motion menganimasikan
+      // param frame itu (anti tabrak wink) — gate runtime flip menumpang
+      // mekanisme skip yang sama (blinkEnabled=false / frozen → skip).
       this.updateScheduler.addUpdatableList(
-        new CubismEyeBlinkUpdater(() => this._motionUpdated, this._eyeBlink),
+        new CubismEyeBlinkUpdater(
+          () => this._motionUpdated || !(this.blinkGate?.() ?? true),
+          this._eyeBlink,
+        ),
       );
     }
     this.updateScheduler.addUpdatableList(

@@ -572,6 +572,12 @@
         // tetap dijalankan duluan supaya jalur rescue manifest tetap kerja.
         await window.__live2dViewWait;
         state.model = await window.__live2dView.loadModel(modelPath);
+        // Flip kepemilikan blink (Fase B): framework memutar kedip, app.js
+        // tetap pemegang pintu konfigurasi (sheet blinkEnabled + frozen) —
+        // gate dibaca live updater tiap frame.
+        window.__live2dView.setBlinkGate(function () {
+          return state.blinkEnabled && !state.frozen;
+        });
       } else {
         state.model = await PIXI.live2d.Live2DModel.from(settings || modelPath, {
           autoInteract: false,
@@ -679,6 +685,10 @@
   state.blinkState = null; // null=terbuka | {phase:"close"|"closed"|"open", t:number}
   state.blinkNext = 2 + Math.random() * 3; // dtk sampai kedip berikutnya
   function tickBlink(dt) {
+    // Flip kepemilikan blink (Fase B): di stack baru framework memutar
+    // kedip (updater resmi + gate konfigurasi/frozen lewat setBlinkGate).
+    // Tulisan kedip framework frame-transien — tidak perlu restore manual.
+    if (RENDERER_PIXI8) return;
     if (!state.model) return;
     const eyes = [
       roleId("eyeLOpen"),
