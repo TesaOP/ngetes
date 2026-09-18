@@ -130,6 +130,11 @@
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => document.querySelectorAll(s);
 
+  // Fase A integrasi view: ?renderer=pixi8 memakai stack baru
+  // (Pixi 8 + Cubism 5-r.5 via js/live2d-view.mjs, dibangun dari src/live2d/).
+  // Tanpa toggle, stack lama (Pixi 6 + pixi-live2d) tetap default.
+  const RENDERER_PIXI8 = /[?&]renderer=pixi8\b/.test(location.search);
+
   let refreshConfigForm = () => {};
 
   let refreshSheetUI = () => {};
@@ -262,7 +267,74 @@
     };
   }
   const _sz = stageSize();
-  const app = new PIXI.Application({
+
+  // Fase A: shim permukaan PIXI yang dipakai app.js (screen/stage/renderer/
+  // ticker — lihat audit) saat renderer Pixi 8 aktif. Canvas resmi milik
+  // modul live2d-view (dieksekusi setelah skrip klasik); shim hanya mencatat
+  // state awal lalu meneruskan begitu view siap. Logika karakter TIDAK
+  // berubah: backend tulis (coreModel()) dialihkan ke pending-flush updater
+  // order 900 di stack baru — padanan semantik beforeModelUpdate lama.
+  function makePixi8AppShim(sz) {
+    const pendingBg = { v: null };
+    const tickerFns = [];
+    const shim = {
+      __isPixi8Shim: true,
+      screen: { width: sz.w, height: sz.h },
+      stage: {
+        sortableChildren: true,
+        children: [],
+        addChild(m) { this.children.push(m); },
+        removeChild(m) {
+          const i = this.children.indexOf(m);
+          if (i >= 0) this.children.splice(i, 1);
+        },
+      },
+      renderer: {
+        resolution: Math.min(window.devicePixelRatio || 1, 2),
+        background: {
+          get color() { return pendingBg.v; },
+          set color(v) {
+            pendingBg.v = v;
+            if (window.__live2dView && window.__live2dView.ready)
+              window.__live2dView.setBackground(v);
+          },
+        },
+        resize(w, h) {
+          shim.screen.width = w;
+          shim.screen.height = h;
+          if (window.__live2dView && window.__live2dView.ready)
+            window.__live2dView.resize(w, h);
+        },
+      },
+      ticker: {
+        add(fn) { tickerFns.push(fn); },
+        remove(fn) {
+          const i = tickerFns.indexOf(fn);
+          if (i >= 0) tickerFns.splice(i, 1);
+        },
+      },
+      destroyed: false,
+    };
+    (function shimLoop() {
+      for (const fn of tickerFns) {
+        try { fn(); } catch (e) {}
+      }
+      requestAnimationFrame(shimLoop);
+    })();
+    // tanda untuk modul view + janji yang ditunggu jalur init model
+    window.__live2dRendererRequested = true;
+    window.__live2dStageSize = () => ({ w: shim.screen.width, h: shim.screen.height });
+    if (!window.__live2dViewWait) {
+      window.__live2dViewWait = new Promise(function (res) {
+        window.__live2dViewReadyResolve = res;
+      });
+    }
+    return shim;
+  }
+
+  const app = RENDERER_PIXI8
+    ? makePixi8AppShim(_sz)
+    : new PIXI.Application({
     view: $("#live2d-canvas"),
     width: _sz.w,
     height: _sz.h,
@@ -494,9 +566,17 @@
       } catch (e) {}
 
       const settings = await buildModelSettings(modelPath);
-      state.model = await PIXI.live2d.Live2DModel.from(settings || modelPath, {
-        autoInteract: false,
-      });
+      if (RENDERER_PIXI8) {
+        // Fase A: stack baru — view Pixi 8 memuat model lewat adapter
+        // src/live2d (moc native, tanpa pixi-live2d). buildModelSettings
+        // tetap dijalankan duluan supaya jalur rescue manifest tetap kerja.
+        await window.__live2dViewWait;
+        state.model = await window.__live2dView.loadModel(modelPath);
+      } else {
+        state.model = await PIXI.live2d.Live2DModel.from(settings || modelPath, {
+          autoInteract: false,
+        });
+      }
 
       app.stage.addChild(state.model);
       app.stage.sortableChildren = true;

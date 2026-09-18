@@ -2,10 +2,11 @@
 node_modules/
 
 # build output — static/js/app.js (legacy) TETAP di-track (parity guard),
-# bundle + i18n adalah hasil build dari src/
+# bundle + i18n + live2d-view adalah hasil build dari src/ (bun run build)
 dist/
 static/js/bundle.js
 static/js/i18n.js
+static/js/live2d-view.mjs
 
 # data user & aset berlisensi — tidak pernah masuk repo (privasi + lisensi;
 # lihat README "Data user"). Dulu piecemeal, _param_todo.json lolos — kini utuh.

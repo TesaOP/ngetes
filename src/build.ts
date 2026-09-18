@@ -50,4 +50,27 @@ if (!i18n.success) {
   process.exit(1);
 }
 
-console.log("✓ Client bundle built → static/js/bundle.js + static/js/i18n.js (TS is now the live client source-of-truth)");
+// Entry ketiga: integrasi view Pixi 8 (Fase A panggung+chat). ESM karena
+// harus import "pixi.js" via importmap index.html ke ./js/pixi8.mjs;
+// di-serve sebagai module (MIME .mjs sudah text/javascript di server).
+const view = await Bun.build({
+  entrypoints: ["./src/live2d/view/view-entry.ts"],
+  outdir: "./static/js",
+  naming: "live2d-view.mjs",
+  target: "browser",
+  format: "esm",
+  splitting: false,
+  minify: false,
+  sourcemap: "none",
+  external: ["pixi.js"],
+});
+
+if (!view.success) {
+  console.error("live2d-view build failed:");
+  for (const msg of view.logs) {
+    console.error(msg);
+  }
+  process.exit(1);
+}
+
+console.log("✓ Client bundle built → static/js/bundle.js + static/js/i18n.js + static/js/live2d-view.mjs (TS is now the live client source-of-truth)");
