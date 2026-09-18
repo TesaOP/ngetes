@@ -40,6 +40,10 @@ const KNOWN_ROLES = ["angleX","angleY","angleZ","eyeBallX","eyeBallY","eyeLOpen"
 
 const MIME: Record<string,string> = {
   ".html":"text/html; charset=utf-8", ".css":"text/css; charset=utf-8", ".js":"text/javascript; charset=utf-8",
+  // .mjs WAJIB text/javascript — browser menolak modul ESM dengan MIME
+  // salah ("Failed to fetch dynamically imported module", senyap di network
+  // tab). Proof page pipeline Pixi8 memuat .mjs dari static/js.
+  ".mjs":"text/javascript; charset=utf-8",
   ".json":"application/json; charset=utf-8", ".png":"image/png", ".jpg":"image/jpeg", ".jpeg":"image/jpeg",
   ".gif":"image/gif", ".svg":"image/svg+xml", ".ico":"image/x-icon", ".moc3":"application/octet-stream",
   ".woff":"font/woff", ".woff2":"font/woff2", ".mp3":"audio/mpeg", ".wav":"audio/wav",
