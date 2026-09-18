@@ -4,6 +4,28 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-19 (39) — FLIP DEFAULT: STACK BARU JADI UTAMA (COMMIT)
+
+Fase B akhir: **tanpa parameter, app jalan di stack baru** (adapter
+src/live2d/view + efek framework penuh + slider gaze). Kill-switch dibalik:
+`?renderer=legacy` = balik ke stack lama (Pixi 6 + pixi-live2d) selama masa
+transisi; `?renderer=pixi8` lama jadi no-op. Flag `RENDERER_PIXI8` tetap
+menjadi satu-satunya kunci semua cabang (load/tickBlink/breath/gaze/gate/
+slider) sehingga legacy tetap utuh 100%.
+
+Verifikasi (browser): `/` → view ready + model via facade; `/?renderer=
+legacy` → model via PIXI.live2d (jalan, view idle). Gate: 457 unit + 461
+guard hijau penuh, tsc bersih (c502e04).
+
+**Sisa (pensiunan penuh — commit terpisah, SETELAH user puas dengan uji
+rasa)**: hapus pixi.6.5.10 + pixi-live2d-0.4.0 (dan semua cabang legacy di
+app.js: Live2DModel.from, tickBlink, tulis breath/gaze lama,
+installOverrideGuard), konversi/hapus guard yang membaca lib lama
+(test-core6-compat section A/B/C membaca pixi-live2d-0.4.0.js — section D
+string-check tetap relevan), hapus `?renderer=legacy` itu sendiri.
+CATATAN uji pet: klik-tembus hanya teruji lewat polling /api/pet/state di
+shell Tauri nyata — build `bun run build:pet` butuh toolchain Rust.
+
 ## UPDATE 2026-09-19 (38) — PET.HTML DIMIGRASI KE STACK BARU (COMMIT)
 
 Item terakhir yang bisa dikerjakan sebelum flip default: jendela Pet
