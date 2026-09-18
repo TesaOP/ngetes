@@ -4,6 +4,62 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-18 (29) — FASE A INTEGRASI VIEW: PANGGUNG + CHAT DI STACK BARU (?renderer=pixi8) (COMMIT)
+
+Strategi **TRANSPLANT JIWA** — akar kegagalan integrasi-view berulang user
+(v2 stack baru selalu terasa lebih berat & fitur tidak pernah ikut): app.js
+tidak perlu ditulis ulang; SEMUA tulisan karakter bermuara di satu titik
+mati `coreModel()` (app.js:137), dan urutan tulis stack baru (updater order
+900 setelah framework) = semantik `beforeModelUpdate` lama. Jadi:
+- `src/live2d/view/Live2DView.ts` — facade `state.model` (transform
+  x/y/scale/anchor/rotation, `motion()`/`expression()`, `toGlobal`,
+  `getBounds`, `getParameterIds`) + backend `coreModel`
+  (setParameterValueById berbobot/getParameterValueById/setPartOpacityById/
+  getModel() parts+parameter min-max-def) + shim `internalModel`
+  (motionManager.definitions, expressionManager.definitions, settings,
+  eyeBlinkIds/lipSyncIds, focusController; TANPA `on` — override guard
+  dilewati, padanannya AppWriteUpdater order 900 flush per frame).
+- Framing paritas pixi-live2d dipisah murni di `view/framing.ts`
+  (column-major, layout CubismMatrix44._tr): P·RES·T·R·S·A·C·F·S(cw,ch) —
+  8 unit test `test/live2d-view.test.ts` (anchor/scale/rotasi/resolution/
+  canvas non-persegi 1.0×1.346). `origW = MODEL_UNIT_PX·canvasW` —
+  konstanta bebas, terkompensasi frameModel.
+- `?renderer=pixi8` = kill-switch: default TETAP stack lama; index.html
+  menambah importmap pixi.js→./js/pixi8.mjs + module
+  js/live2d-view.mjs (build entry ke-3, gitignored; instance ESM
+  terpisah dari global PIXI v6). app.js: shim `app` sempit
+  (screen/stage/renderer/ticker, ±30 baris) + cabang init model;
+  sisanya TIDAK disentuh — tickBlink/liveliness/gaze kursor/lipsync/
+  emosi/preset/MotionRuntime+bridge lama jalan apa adanya.
+- **Kepemilikan efek (satu fitur satu pemilik)**: view mematikan
+  blink/look/breath framework (`loadModel effects` opt) + `autoIdle=false`
+  (app.js startIdleMotion pemilik idle); physics/pose/ekspresi tetap
+  framework. Arbiter tetap terpasang (gagal-aman).
+- **Dua bug senyap ditemukan & diperbaiki saat verifikasi**: (1)
+  `img.decode()` diantre **94 detik** di webview sibuk-GPU (decoder
+  starved loop render 198-drawable) → pemuat tekstur kini
+  `fetch→blob→createImageBitmap` (fallback <img>) — bukti jejak
+  `__loadSteps`: 598ms→1270ms total; (2) draw Cubism diregistrasi ticker
+  prioritas default (0) sedangkan render Pixi di LOW(-25) → **Pixi
+  membersihkan hasil Cubism tiap frame** (canvas kosong) → prioritas -50
+  (setelah render Pixi). rAF fallback aman otomatis.
+- **Bukti (browser, server produk, ?renderer=pixi8)**: ren berdiri di
+  panggung asli (screenshot: jaket putih trim oranye, boots hitam),
+  loader hilang, framing jalan (natW/natH=400×538, scale 1.36), roleMap
+  21 role + paramRange 73 + 5 ekspresi native, tick app.js hidup
+  (angleX liveliness mengalir ke model), **motion Idle native mengubah
+  pose + ekspresi exp_04 terputar lewat jalur facade yang dipakai
+  brain**, sapaan proaktif + Mode Otak tampil. Stack lama tanpa toggle
+  tetap jalan (pixi lama + model termuat) — tanpa regresi guard.
+- Gate: tsc bersih; **438 unit (3 gagal env data backup) + guard 451
+  (1 gagal env probe)** — editan app.js tidak mematahkan guard apa pun.
+- **Belum (Fase B berikutnya)**: obrolan penuh end-to-end (brain→ekspresi
+  nyata per teks; sapaan kini statis), overlay biru di dada ren
+  (diduga gizmo/hit-area; cek `emotion-overlay.js`), pointer drag/zoom di
+  facade, flip kepemilikan blink/breath/gaze → framework (hapus driver
+  app.js satu per commit), lipsync updater (IParameterProvider TTS),
+  mode Assistant/Pet, terakhir hapus stack lama.
+
 ## UPDATE 2026-09-18 (28) — REVIEW MIGRASI F0–15 + KOREKSI RUNTIME SESUAI SKILL cubism-web (COMMIT)
 
 Review penuh branch `migration/pixi8-cubism` (16 fase, di-commit 08:34–09:51
