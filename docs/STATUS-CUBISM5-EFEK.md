@@ -4,6 +4,48 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-19 (35) — VERIFIKASI MULTI-MODEL + SUITE HIJAU PENUH (COMMIT)
+
+User menambah model ke mesin backup (lumine + 神宫白子/面饼0 di layout
+`data/model/_/神宫白子模型/`; "tesmodel" = duplikat ren yang dihapus).
+Verifikasi multi-model dijalankan dan MENEMUKAN dua kegagalan senyap —
+
+- **Gap 1 — blink mati pada rig tanpa grup EyeBlink (8be1dee)**:
+  `CubismEyeBlink.create(manifest-tanpa-grup)` → instance ber-0 id; driver
+  app.js sudah dilewati di pixi8 → 神宫白子 tidak pernah berkedip.
+  Perbaikan: `ensureEyeBlink` mengisi id mata dari ROLE MAPPING (by-name);
+  deklarasi rigger yang punya id selalu menang. Terverifikasi kedip
+  role-fallback jalan.
+- **Gap 2 — adopsi .exp3 yatim tidak diteruskan ke stack baru (8be1dee)**:
+  buildModelSettings hanya dipakai jalur lama; stack baru mem-fetch
+  manifest mentah → ekspresi yatim mati tanpa error (kelas kegagalan
+  MODEL-AGNOSTIC #7 persis). Perbaikan: manifest hasil adopsi diteruskan
+  `loadModel(modelPath, settings)` → renderer (in-memory; aturan user>ai +
+  opt-out tetap di app.js; tidak pernah ke disk). Terverifikasi: lumine
+  0→19, 神宫白子 0→8 ekspresi.
+- **Invarian lain lolos di kedua model**: roleMap 16/14 role (termasuk
+  browL/browR/eyeRSmile), paramRange 223/214 terukur, caps head/eyes/body
+  (body absent → degrade graceful), gaze ter-skala range rig (lumine
+  2,2°→28,2°), lipsync spread 0,99, zoom anchored 0 px. Regresi ren: nihil.
+- **Suite hijau penuh pertama kali di mesin ini (5bc82f3)**: 3 test
+  integrasi + probe guard ternyata mengejar path data mesin asli
+  (神宫白子/, tesmodel/runtime/ren.moc3) — kini layout-agnostic:
+  findCjkModel() dari data yang ada; probe core6 mengumpulkan .moc3
+  rekursif + bucket versi dari byte ke-4 header moc3; SKIP jujur bila
+  bootstrap emscripten gagal di env non-browser (bunEval kini via file
+  temporer — `bun -e` tidak stabil lintas versi Bun untuk init emscripten);
+  `csmGetMocVersion` di Live2DRenderer dikoreksi dua-argumen sesuai
+  wrapper core 6.0.1. Hasil: **457 unit + 461 guard + tsc — SEMUA hijau,
+  tanpa satu pun kegagalan env**.
+- Pelajaran pengukuran (catat!): tool-call layer meng-unescape backslash —
+  regex dengan `\\` di dalam template literal rawan salah-cook saat
+  ditulis lewat skrip; probe kini bebas regex (indexOf murni).
+- **Belum (menuju flip default)**: uji rasa user via A/B berdampingan
+  (zoom/drag/kelembutan), migrasi pet.html ke adapter view (jendela Pet
+  masih stack lama — mati diam-diam bila stack lama dipensiunkan tanpa
+  ini), lalu flip default & pensiunkan stack lama (satu commit, setelah
+  user setuju).
+
 ## UPDATE 2026-09-19 (34) — FLIP LIPSYNC + UJI CHAT END-TO-END + PEMBERSIHAN (COMMIT)
 
 Lanjutan entri (33). Tiga hal selesai:
