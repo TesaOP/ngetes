@@ -4,7 +4,81 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-18 (28) — REVIEW MIGRASI F0–15 + KOREKSI RUNTIME SESUAI SKILL cubism-web (COMMIT)
+
+Review penuh branch `migration/pixi8-cubism` (16 fase, di-commit 08:34–09:51
+hari yang sama), lalu perbaikan berbasis skill `cubism-web` (sumber resmi
+5-r.5/Core 6.0.1 — persis versi vendored di `src/live2d/cubism/`).
+
+- **Temuan review (utama)**: (1) guard core6 section D masih menguji shim yang
+  dihapus Fase 7 → gate merah; (2) `draw()` hanya `model.update()` mentah —
+  tanpa pipeline dua fase, physics/pose di-load tapi TIDAK PERNAH
+  dievaluasi, blink/look/breath tidak terpasang; (3) `playNative` stub;
+  (4) `clearPoseDelta`/`releaseParamDrive` menulis via source 'manual'
+  (prio 100) → mematikan motion selamanya + reset ke 0-ref salah untuk
+  eyeOpen; (5) `CapabilityAnalyzer` hardcode `ParamEarL/ParamEarR`
+  (pelanggaran model-agnostic); (6) `getSupports()` klaim "head" palsan;
+  (7) **MIME `.mjs` = application/octet-stream** → browser menolak modul
+  ESM ("Failed to fetch dynamically imported module") → SEMUA halaman proof
+  pipeline Pixi8 **tidak pernah bisa jalan di server produk** selama ini —
+  bukti fase 8–15 sebelumnya tidak terverifikasi di server asli.
+- **Koreksi runtime (pola resmi LAppModel 5-r.5)**: baru
+  `src/live2d/Live2DUserModel.ts` — `update(dt)` dua fase
+  (loadParameters → motion → saveParameters → scheduler.onLateUpdate →
+  model.update), dt DETIK + clamp; updater efek terdaftar di
+  `CubismUpdateScheduler`: EyeBlink(200, dengan callback motionUpdated),
+  Expression(300), Look(400, faktor std ±30/±10/±1 **diskalakan ke range
+  aktual model lewat roleInfo** — role-space, bukan angka literal),
+  Breath(500, idem), Physics(600 + `stabilization()` sekali), Pose(800);
+  arbiter kini `ArbiterUpdater` order 900 (titik injeksi resmi "manual
+  overrides after all effects"). `Live2DRenderer`: `saveProfile/restoreProfile`
+  di sekitar `drawModel` (drawModel tidak mengembalikan state host),
+  `CubismWebGLOffscreenManager.beginFrameProcess/endFrameProcess` (ren:
+  blend-enabled, 24 offscreen), FBO di-capture sekali untuk `setRenderState`,
+  mipmap tekstur, polling shader 4 dtk **dihapus** (pola resmi: terus menggambar,
+  frame awal hitam by design), `dispose()` menghapus cache motion/ekspresi
+  (`ACubismMotion.delete`) + scheduler sebelum `release()`.
+- **Motion native & ekspresi nyata**: `startMotionGroup(group, idx, prio)` —
+  validasi grup by-name dari manifest, lazy-fetch + cache, protokol
+  `reserveMotion`/`startMotionPriority`/reset reservasi saat gagal,
+  `setEffectIds(blinkIds, lipSyncIds)`; kontrak return diratakan jadi angka
+  (-1 gagal / 1 jalan) karena port vendored mengembalikan objek
+  `CubismMotionQueueEntry`. `playExpression(name)` — 5-r.5 ekspresi TANPA
+  prioritas; fallback blush IntentDirector kini benar-benar memutar
+  ekspresi pertama manifest, bukan `console.log`.
+- **Arbiter & bridge**: `clearPoseDelta`/`releaseParamDrive` menulis default
+  ASLI (`roleDefaultOf`, via `RoleController.roleDefaultActual`) dengan
+  source `'motion'` — anti-starvation & benar untuk rig default ≠ 0.
+  Unit test baru `test/live2d-pipeline.test.ts` (16 test): prioritas/tie/
+  konflik/purity arbiter, kapabilitas via role, role `ear` baru dengan uji
+  anti-positif-palsu (`pearl` ⊅ ear — substring `earl` sengaja dihindari).
+- **Infra**: `src/build-proof.ts` + `npm run build:proof` — `live2d-render.mjs`
+  kini reproducible (sebelumnya command manual tak terekam, artefak pasti
+  drift); MIME `.mjs` → `text/javascript`; guard core6 section D dikunci
+  ulang (shim hilang total & tidak boleh kembali).
+- **Bukti (browser nyata, server produk)**: `static/pipeline-proof.html`
+  `ok:true` — ren moc v6 (198 drawable/24 offscreen), role map 21 role,
+  `setRole(angleX,15)→15`, motion `Idle` native jalan, `exp_01` diputar,
+  grup tak dikenal ditolak (-1), reset default → 0, **pixel berubah antar
+  frame (idle+blink+physics hidup)**; screenshot: karakter ren utuh
+  (jaket putih trim hitam aksen oranye) ter-render lewat pipeline baru;
+  8 halaman proof fase 8–15 semuanya hijau. **Catatan**: canvas tampil
+  hitam bila rAF berhenti (context Pixi `preserveDrawingBuffer:false`) —
+  bukti visual wajib diambil saat loop masih menggambar; loop proof kini
+  tidak berhenti.
+- **Belum disentuh (sengaja)**: **integrasi view** — `app.js:542` masih
+  `PIXI.live2d.Live2DModel.from` stack lama; ini fase berikutnya (ganti titik
+  masuk model ke adapter baru, satu mode dulu, patuhi teardown
+  `docs/MODES.md`; UI di atas model = DOM karena Cubism menggambar setelah
+  Pixi). File untracked `agent-prompt-migrasi-pixi8-cubism.md` +
+  `live2d-agent-2.0.0.tgz` dibiarkan tidak di-commit.
+- Gate: **tsc bersih; 430 unit (3 gagal = data model 神宫白子/lumine/tesmodel
+  tidak ada di F:\backup\lumi — hijau di mesin data lengkap); guard 451
+  (1 gagal = probe butuh lumine/tesmodel — idem)**. Yang bisa hijau di
+  mesin backup ini semuanya hijau.
+
 ## UPDATE 2026-09-18 (27) — FASE PENDAHULUAN: RISET CUBISM 5-r.5 + PIXI 8 + SPIKE TERISOLASI (BELUM COMMIT)
+
 
 Riset wajib sebelum Fase 0. SDK `F:\CubismSdkForWeb-5-r.5.zip` diekstrak ke temp
 (`CubismSdkForWeb-5-r.5`), Pixi 8 diverifikasi dari registry, dan spike read-only
