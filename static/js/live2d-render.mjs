@@ -11643,8 +11643,79 @@ if (typeof window !== "undefined") {
   window.Live2DAgentBrain = AgentBrain;
   console.log("\uD83C\uDFAD Live2D Agent v2 brain (TS) initialized");
 }
+// src/live2d/CapabilityAnalyzer.ts
+var CAPS = {
+  headRotation: { roles: ["angleX", "angleY", "angleZ"] },
+  eyeBlink: { roles: ["eyeLOpen", "eyeROpen"] },
+  mouth: { roles: ["mouthOpenY", "mouthForm"] },
+  gaze: { roles: ["eyeBallX", "eyeBallY"] },
+  bodyRotation: { roles: ["bodyAngleX", "bodyAngleY", "bodyAngleZ"] },
+  physics: { params: ["__physics"] },
+  blush: { roles: ["blush"] },
+  earMovement: { params: ["ParamEarL", "ParamEarR"] }
+};
+function analyzeCapabilities(profile, roleMap) {
+  const has = {};
+  const missing = [];
+  const fallback = {};
+  for (const cap in CAPS) {
+    const need = CAPS[cap];
+    let ok = false;
+    if (need.roles)
+      ok = need.roles.some((r) => !!roleMap[r]);
+    else if (need.params) {
+      if (need.params[0] === "__physics")
+        ok = profile.physics;
+      else
+        ok = need.params.some((p) => profile.parameters.some((pr) => pr.id === p));
+    }
+    if (need.expressions)
+      ok = need.expressions.some((e) => profile.expressions.includes(e));
+    has[cap] = ok;
+    if (!ok) {
+      missing.push(cap);
+      if (cap === "blush")
+        fallback[cap] = profile.expressions.length ? `expression:${profile.expressions[0]}` : "ignore";
+      else if (cap === "earMovement")
+        fallback[cap] = "ignore";
+      else
+        fallback[cap] = "ignore";
+    }
+  }
+  return { has, missing, fallback };
+}
+// src/live2d/IntentDirector.ts
+class IntentDirector {
+  renderer;
+  constructor(renderer) {
+    this.renderer = renderer;
+  }
+  direct(intent) {
+    if (intent.emotion) {}
+    if (typeof intent.headTilt === "number") {
+      this.renderer.setRole("angleZ", intent.headTilt * 30, "emotion");
+    }
+    if (intent.gaze === "away") {
+      this.renderer.setRole("eyeBallX", intent.intensity ?? 0.8, "gaze");
+      this.renderer.setRole("eyeBallY", 0.2, "gaze");
+    } else if (intent.gaze === "direct") {
+      this.renderer.setRole("eyeBallX", 0, "gaze");
+      this.renderer.setRole("eyeBallY", 0, "gaze");
+    }
+    if (intent.emotion === "embarrassed") {
+      const ok = this.renderer.setRole("blush", intent.intensity ?? 0.8, "emotion");
+      if (!ok) {
+        const prof = this.renderer.getModelProfile();
+        if (prof?.expressions?.length) {
+          console.log(`[IntentDirector] blush missing → fallback expression ${prof.expressions[0]}`);
+        }
+      }
+    }
+  }
+}
 export {
   AgentBrain,
+  IntentDirector,
   Live2DModel,
   Live2DRenderer,
   MotionBridge,
@@ -11653,6 +11724,7 @@ export {
   ParameterArbiter,
   ParameterController,
   RoleController,
+  analyzeCapabilities,
   inspectModel,
   mapRoles,
   roleDefaultOf,

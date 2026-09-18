@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="id">
+<meta charset="utf-8">
+<title>Capability + Intent — Fase 14-15 proof</title>
+<style>html,body{margin:0;background:#e8e8e8}canvas{display:block}</style>
+<script src="js/live2dcubismcore.min.js"></script>
+<script type="importmap">{"imports":{"pixi.js":"./js/pixi8.mjs"}}</script>
+<script type="module">
+import * as PIXI from 'pixi.js';
+import { Live2DRenderer, analyzeCapabilities, IntentDirector } from './js/live2d-render.mjs';
+
+const app = new PIXI.Application();
+await app.init({ width: 420, height: 640, background: '#e8e8e8' });
+document.body.appendChild(app.canvas);
+const gl = app.canvas.getContext('webgl2') || app.canvas.getContext('webgl');
+const renderer = new Live2DRenderer(app.canvas, gl);
+await renderer.loadModel('/model/ren_official_cubism/runtime/ren.model3.json');
+const profile = renderer.getModelProfile();
+const roleMap = renderer.getRoleMap();
+const caps = analyzeCapabilities(profile, roleMap);
+console.log('[fase14] caps has', caps.has, 'missing', caps.missing, 'fallback', caps.fallback);
+console.log('[fase14] blush has', caps.has.blush, 'fallback', caps.fallback.blush);
+window.__fase14 = caps;
+
+// Fase 15: intent semantik, bukan ParamAngleX
+const director = new IntentDirector(renderer);
+director.direct({ emotion:'embarrassed', intensity:0.8, gaze:'away', headTilt:-0.2 });
+console.log('[fase15] after intent headTilt', renderer.getRole('angleZ'), 'eyeBallX', renderer.getRole('eyeBallX'));
+let f=0; function frame(){ renderer.draw(); if(++f<3) requestAnimationFrame(frame); else { window.__fase15={ ok:true, angleZ: renderer.getRole('angleZ'), eyeX: renderer.getRole('eyeBallX'), caps }; } } requestAnimationFrame(frame);
+</script>
+</html>
