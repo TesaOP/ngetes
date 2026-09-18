@@ -4,6 +4,39 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-19 (40) — PENSIUNAN PENUH STACK LAMA (COMMIT)
+
+`?renderer=legacy` tidak ada lagi: SATU jalur render — adapter
+src/live2d/view (Pixi 8 + Cubism 5-r.5, efek framework penuh). Migrasi
+Pixi 8 SELESAI (Fase 0–B sejak entri 27).
+
+- **app.js** (−741 baris): flag RENDERER_PIXI8 + semua cabang kondisional
+  dilucuti; tickBlink, tulis breath, gaze look-state (state.look.t*),
+  installOverrideGuard dihapus — penggantinya updater framework (order
+  200–900) + gate; liveliness selalu aditif; `PIXI.Point` → objek polos;
+  `installOverrideGuard` digantikan AppWriteUpdater order 900 (jaminan
+  sama: sticky override menang setelah physics/blink/breath).
+- **Latar panggung pindah ke DOM**: `#stage-bg` (img object-fit cover) +
+  `#stage-dim` overlay — dulu sprite PIXI yang TIDAK ter-render di stack
+  view (gap senyap yang ditemukan saat pensiunan); bgColor kini CSS
+  #stage (dulu background pixi alpha 0 — tidak terlihat).
+- **index.html**: script pixi-live2d-0.4.0 dihapus; pixi.6.5.10
+  DIPERTAHANKAN sebagai utilitas renderer overlay efek emosi (canvas
+  terpisah — bukan renderer Live2D).
+- **Guard**: test-multiply-color.js + test-override-guard.js dipensiunkan
+  (subjeknya mekanisme lib lama / beforeModelUpdate yang digantikan
+  AppWriteUpdater — konversi bun test menyusul bila perlu);
+  test-core6-compat section patch lib pensiun, probe kini core-only
+  (moc v5/v6 + model hidup), section D (shim stamp) tetap.
+- Verifikasi (browser): `/` → model via facade TANPA error console, gaze
+  vertikal −30 terukur, blink 47 dip/12 dtk (min 0), bg DOM bekerja,
+  slider gaze tampil. Gate: 457 unit + 416 guard hijau penuh, tsc bersih
+  (c237aae).
+- **Sisa (opsional/lanjutan)**: uji pet klik-tembus di shell Tauri nyata
+  (build butuh Rust); konversi guard override ke bun test atas
+  AppWriteUpdater; pantauu uji rasa user beberapa hari — regresi tercatat
+  di git (branch ini menyimpan seluruh sejarah stack lama).
+
 ## UPDATE 2026-09-19 (39) — FLIP DEFAULT: STACK BARU JADI UTAMA (COMMIT)
 
 Fase B akhir: **tanpa parameter, app jalan di stack baru** (adapter
