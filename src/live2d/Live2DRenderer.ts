@@ -1,13 +1,24 @@
-/** Fase 6 — renderer nyata: Pixi 8 WebGL + Cubism Framework 5-r.5 (Core 6.0.1). */
+/** Fase 6 — renderer nyata: Pixi 8 WebGL + Cubism Framework 5-r.5 (Core 6.0.1).
+ * Koreksi sesuai pola resmi: pipeline update dua fase di Live2DUserModel,
+ * save/restore GL di sekitar drawModel (drawModel tidak mengembalikan state
+ * host), frame process offscreen manager untuk model blend-enabled, shader
+ * load asinkron cukup diatasi dengan terus menggambar (frame hitam awal
+ * adalah by design), dan FBO default di-capture sekali untuk setRenderState. */
 import { CubismFramework } from "./cubism/live2dcubismframework";
 import { CubismUserModel } from "./cubism/model/cubismusermodel";
 import { CubismModelSettingJson } from "./cubism/cubismmodelsettingjson";
 import { CubismMatrix44 } from "./cubism/math/cubismmatrix44";
 import { CubismModelMatrix } from "./cubism/math/cubismmodelmatrix";
+import { CubismWebGLOffscreenManager } from "./cubism/rendering/cubismoffscreenmanager";
+import type { CubismRenderer_WebGL } from "./cubism/rendering/cubismrenderer_webgl";
+import { LookParameterData } from "./cubism/effect/cubismlook";
+import { BreathParameterData } from "./cubism/effect/cubismbreath";
 import { ParameterController, type ParamInfo } from "./ParameterController";
 import { inspectModel, type ModelProfile } from "./ModelInspector";
 import { RoleController } from "./RoleController";
 import { ParameterArbiter, type SourceId } from "./ParameterArbiter";
+import { ArbiterUpdater } from "./ArbiterUpdater";
+import { Live2DUserModel, MotionPriority } from "./Live2DUserModel";
 
 let frameworkStarted = false;
 function ensureFramework() {
@@ -23,7 +34,7 @@ function ensureFramework() {
 export class Live2DRenderer {
   private canvas: HTMLCanvasElement;
   private gl: WebGL2RenderingContext | WebGLRenderingContext;
-  private userModel: CubismUserModel | null = null;
+  private userModel: Live2DUserModel | null = null;
   private setting: CubismModelSettingJson | null = null;
   private baseDir = "";
   private modelMatrix: CubismModelMatrix | null = null;
@@ -33,11 +44,16 @@ export class Live2DRenderer {
   private textures: WebGLTexture[] = [];
   private roleCtrl: RoleController | null = null;
   private arbiter = new ParameterArbiter();
+  private frameBuffer: WebGLFramebuffer | null = null;
+  private lastFrameMs: number | null = null;
 
   constructor(canvas: HTMLCanvasElement, gl?: WebGL2RenderingContext | WebGLRenderingContext) {
     this.canvas = canvas;
     this.gl = (gl ?? (canvas.getContext("webgl2") as any) ?? canvas.getContext("webgl")!) as any;
     if (!this.gl) throw new Error("WebGL tidak tersedia");
+    // FBO terikat saat ini (framebuffer default untuk konteks bersih) —
+    // inilah yang dipass ke setRenderState tiap frame, bukan null mutlak.
+    this.frameBuffer = this.gl.getParameter(this.gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
     ensureFramework();
   }
 
@@ -54,31 +70,48 @@ export class Live2DRenderer {
     const core = (globalThis as any).Live2DCubismCore;
     const mocVersion = core ? core.Version.csmGetMocVersion(mocBuf) : -1;
 
-    this.userModel = new CubismUserModel();
-    // CubismUserModel.loadModel expects buffer + flag consistency
-    (this.userModel as any).loadModel(mocBuf, false);
+    this.userModel = new Live2DUserModel();
+    this.userModel.loadModel(mocBuf, false);
+
+    // id grup resmi (EyeBlink/LipSync) — otoritatif soal keanggotaan,
+    // dipilih by-name, tidak pernah by-indeks.
+    const s: any = this.setting;
+    const eyeBlinkIds: string[] = [];
+    const lipSyncIds: string[] = [];
+    const ec = s.getEyeBlinkParameterCount?.() ?? 0;
+    for (let i = 0; i < ec; i++) eyeBlinkIds.push(s.getEyeBlinkParameterId(i).getString());
+    const lc = s.getLipSyncParameterCount?.() ?? 0;
+    for (let i = 0; i < lc; i++) lipSyncIds.push(s.getLipSyncParameterId(i).getString());
+    this.userModel.attachSetting(this.setting, this.baseDir, eyeBlinkIds, lipSyncIds);
 
     // physics / pose
+    let hasPhysics = false;
+    let hasPose = false;
     const phys = this.setting.getPhysicsFileName();
     if (phys) {
       const b = await (await fetch(this.baseDir + phys)).arrayBuffer();
-      (this.userModel as any).loadPhysics(b, b.byteLength);
+      this.userModel.loadPhysics(b, b.byteLength);
+      hasPhysics = true;
     }
     const poseFile = this.setting.getPoseFileName();
     if (poseFile) {
       const b = await (await fetch(this.baseDir + poseFile)).arrayBuffer();
-      (this.userModel as any).loadPose(b, b.byteLength);
+      this.userModel.loadPose(b, b.byteLength);
+      hasPose = true;
     }
 
-    // renderer
+    // renderer — shader loadShaders() asinkron: drawModel memanggilnya
+    // idempotent tiap frame, jadi cukup terus menggambar; frame awal hitam
+    // by design (drawMeshWebGL early-return sampai isShaderLoaded).
     const w = this.canvas.width, h = this.canvas.height;
-    (this.userModel as any).createRenderer(w, h, 1);
-    const renderer: any = (this.userModel as any).getRenderer();
+    this.userModel.createRenderer(w, h, 1);
+    const renderer: any = this.userModel.getRenderer();
     renderer.setIsPremultipliedAlpha(true);
     renderer.startUp(this.gl);
     renderer.loadShaders(this.shaderPath);
 
-    // textures — tunggu sampai shader selesai? bind saja, draw akan skip kalau belum siap
+    // textures — premultiplied (pasangan setIsPremultipliedAlpha(true)) +
+    // mipmap seperti sample resmi
     const texCount = this.setting.getTextureCount();
     for (let i = 0; i < texCount; i++) {
       const texPath = this.baseDir + this.setting.getTextureFileName(i);
@@ -86,12 +119,12 @@ export class Live2DRenderer {
       img.crossOrigin = "anonymous";
       img.src = texPath;
       try { await img.decode(); } catch (e) { console.warn(`[Live2DRenderer] img decode gagal ${texPath}`, e); }
-      console.log(`[Live2DRenderer] texture ${i} ${texPath} ${img.width}x${img.height}`);
       const tex = this.gl.createTexture()!;
       this.gl.bindTexture(this.gl.TEXTURE_2D, tex);
       this.gl.pixelStorei(this.gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 1);
       this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, img);
-      this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.LINEAR);
+      this.gl.generateMipmap(this.gl.TEXTURE_2D);
+      this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.LINEAR_MIPMAP_LINEAR);
       this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.LINEAR);
       this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_S, this.gl.CLAMP_TO_EDGE);
       this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_WRAP_T, this.gl.CLAMP_TO_EDGE);
@@ -102,140 +135,176 @@ export class Live2DRenderer {
     }
 
     // model matrix
-    const model: any = (this.userModel as any).getModel?.() ?? (this.userModel as any)._model;
+    const model = this.userModel.getModel();
     if (model) {
-      const cw = model.getCanvasWidth(), ch = model.getCanvasHeight();
-      console.log(`[Live2DRenderer] canvas ${cw}x${ch} drawable ${model.getDrawableCount?.()}`);
-      this.modelMatrix = new CubismModelMatrix(cw, ch);
+      this.modelMatrix = new CubismModelMatrix(model.getCanvasWidth(), model.getCanvasHeight());
     } else {
       this.modelMatrix = new CubismModelMatrix(1, 1);
     }
 
-    // tunggu shader siap (Framework fetch 13 shader files async)
-    const rendererAny: any = (this.userModel as any).getRenderer();
-    for (let i = 0; i < 40; i++) {
-      // akses internal: CubismShaderManager_WebGL._instance? coba via global
-      const mgr: any = (rendererAny as any)._shaderManager ?? (this.gl as any).__shaderMgr;
-      // fallback: cek via renderer loadShaders state — cukup tunggu fetch selesai
-      await new Promise((r) => setTimeout(r, 100));
-      // cek isShaderLoaded jika tersedia
-      try {
-        const sh: any = (await import("./cubism/rendering/cubismshader_webgl")).CubismShaderManager_WebGL;
-        const inst = sh.getInstance?.();
-        const shader = inst?.getShader?.(this.gl as any);
-        if (shader?._isShaderLoaded) {
-          console.log(`[Live2DRenderer] shader ready after ${i * 100}ms`);
-          break;
-        }
-      } catch {}
-      if (i === 39) console.warn("[Live2DRenderer] shader masih belum ready setelah 4s");
-    }
-
-    const drawable = (model as any)?.getDrawableCount?.() ?? (model as any)?.drawables?.count ?? 0;
-    const offscreen = (model as any)?.getOffscreenCount?.() ?? (model as any)?.offscreens?.count ?? 0;
+    const drawable = model?.getDrawableCount?.() ?? 0;
+    const offscreen = (model as any)?.getOffscreenCount?.() ?? 0;
 
     // Fase 10: bangun RoleController (model-agnostic)
     try {
       const paramSet = new Set<string>();
-      const pc = (model as any).getParameterCount?.() ?? 0;
-      for (let i = 0; i < pc; i++) paramSet.add((model as any).getParameterId(i).getString());
-      const eyeBlinkIds: string[] = [];
-      const lipSyncIds: string[] = [];
-      const s: any = this.setting;
-      if (s) {
-        const ec = s.getEyeBlinkParameterCount?.() ?? 0;
-        for (let i = 0; i < ec; i++) try { eyeBlinkIds.push(s.getEyeBlinkParameterId(i).getString()); } catch {}
-        const lc = s.getLipSyncParameterCount?.() ?? 0;
-        for (let i = 0; i < lc; i++) try { lipSyncIds.push(s.getLipSyncParameterId(i).getString()); } catch {}
-      }
-      this.roleCtrl = new RoleController(model, paramSet, { eyeBlinkIds, lipSyncIds });
+      const pc = model ? model.getParameterCount() : 0;
+      for (let i = 0; i < pc; i++) paramSet.add(model!.getParameterId(i).getString());
+      this.roleCtrl = new RoleController(model!, paramSet, { eyeBlinkIds, lipSyncIds });
       console.log(`[Live2DRenderer] role map`, this.roleCtrl.getRoleMap());
     } catch (e) { console.warn("[Live2DRenderer] role map gagal", e); }
+
+    // Daftarkan updater efek (blink/expr/look/breath/physics/pose) dengan
+    // look & breath diskalakan dari range aktual model (role-space), lalu
+    // arbiter sebagai updater manual order 900 — setelah semua efek.
+    this.userModel.registerEffectUpdaters({
+      look: this.buildLookData(),
+      breath: this.buildBreathData(),
+    });
+    this.userModel.updateScheduler.addUpdatableList(new ArbiterUpdater(this.arbiter));
+    this.userModel.updateScheduler.sortUpdatableList();
+    if (hasPhysics) this.userModel.stabilizePhysics();
 
     return { mocVersion, drawable, offscreen };
   }
 
-  /** Gambar satu frame — dipanggil dari rAF. Fase 13: arbiter resolve → tulis ke model, baru update. */
-  draw() {
+  /** Faktor look std resmi (±30 kepala, ±10 badan, ±1 bola mata)
+   * diskalakan proporsional ke range aktual model. */
+  private buildLookData(): LookParameterData[] {
+    const SPEC: Record<string, { stdHalf: number; fx: number; fy: number; fxy: number }> = {
+      angleX: { stdHalf: 30, fx: 30, fy: 0, fxy: 0 },
+      angleY: { stdHalf: 30, fx: 0, fy: 30, fxy: 0 },
+      angleZ: { stdHalf: 30, fx: 0, fy: 0, fxy: -30 },
+      bodyAngleX: { stdHalf: 10, fx: 10, fy: 0, fxy: 0 },
+      eyeBallX: { stdHalf: 1, fx: 1, fy: 0, fxy: 0 },
+      eyeBallY: { stdHalf: 1, fx: 0, fy: 1, fxy: 0 },
+    };
+    const idMgr = CubismFramework.getIdManager();
+    const out: LookParameterData[] = [];
+    for (const role in SPEC) {
+      const info = this.roleCtrl?.roleInfo(role);
+      if (!info) continue;
+      const spec = SPEC[role];
+      const scale = ((info.max - info.min) / 2) / spec.stdHalf;
+      out.push(new LookParameterData(idMgr.getId(info.id), spec.fx * scale, spec.fy * scale, spec.fxy * scale));
+    }
+    return out;
+  }
+
+  /** Puncak breath std resmi diskalakan ke range aktual; offset = default. */
+  private buildBreathData(): BreathParameterData[] {
+    const SPEC: Record<string, { stdHalf: number; peakStd: number; cycle: number; weight: number }> = {
+      angleX: { stdHalf: 30, peakStd: 15, cycle: 6.5345, weight: 0.5 },
+      angleY: { stdHalf: 30, peakStd: 8, cycle: 3.5345, weight: 0.5 },
+      angleZ: { stdHalf: 30, peakStd: 10, cycle: 5.5345, weight: 0.5 },
+      bodyAngleX: { stdHalf: 10, peakStd: 4, cycle: 15.5345, weight: 0.5 },
+      breath: { stdHalf: 0.5, peakStd: 0.5, cycle: 3.2345, weight: 1 },
+    };
+    const idMgr = CubismFramework.getIdManager();
+    const out: BreathParameterData[] = [];
+    for (const role in SPEC) {
+      const info = this.roleCtrl?.roleInfo(role);
+      if (!info) continue;
+      const spec = SPEC[role];
+      const scale = ((info.max - info.min) / 2) / spec.stdHalf;
+      out.push(new BreathParameterData(idMgr.getId(info.id), info.def, spec.peakStd * scale, spec.cycle, spec.weight));
+    }
+    return out;
+  }
+
+  /** Gambar satu frame — dipanggil dari rAF. dt dalam detik (tiap manager
+   * meng-akumulasi userTimeSeconds sendiri), frame pertama di-clamp. */
+  draw(nowMs?: number) {
     if (!this.userModel) return;
-    const model: any = (this.userModel as any).getModel?.() ?? (this.userModel as any)._model;
-    if (!model) return;
-    // Fase 13: terapkan hasil arbiter sebelum update
-    const resolved = this.arbiter.resolve();
-    if (resolved.size) {
-      const pc = new ParameterController(model);
-      for (const [id, val] of resolved) pc.setParameter(id, val);
+    const now = nowMs ?? (typeof performance !== "undefined" ? performance.now() : Date.now());
+    let dt = this.lastFrameMs == null ? 1 / 60 : (now - this.lastFrameMs) / 1000;
+    this.lastFrameMs = now;
+    if (!Number.isFinite(dt) || dt <= 0) dt = 1 / 60;
+    if (dt > 0.25) dt = 0.25;
+
+    const offscreenMgr = CubismWebGLOffscreenManager.getInstance();
+    offscreenMgr.beginFrameProcess(this.gl);
+    try {
+      this.userModel.update(dt);
+
+      const renderer = this.userModel.getRenderer() as CubismRenderer_WebGL | null;
+      if (!renderer) return;
+
+      const w = (this.gl as any).drawingBufferWidth ?? this.canvas.width;
+      const h = (this.gl as any).drawingBufferHeight ?? this.canvas.height;
+      // clear default framebuffer ke warna latar Pixi (232,232,232) — biar
+      // readPixels proof bisa membedakan background vs model
+      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+      this.gl.viewport(0, 0, w, h);
+      this.gl.clearColor(0.909, 0.909, 0.909, 1.0);
+      this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
+
+      // drawModel tidak mengembalikan state GL host — save/restore wajib
+      // begitu context dibagi dengan Pixi 8. saveProfile/restoreProfile
+      // protected di framework vendored; ini satu-satunya titik yang perlu
+      // cast di jalur draw.
+      const drawRenderer = renderer as any;
+      drawRenderer.saveProfile?.();
+      renderer.setRenderState(this.frameBuffer as WebGLFramebuffer, [0, 0, w, h]);
+
+      this.proj.loadIdentity();
+      // framing mirip LAppView: scale agar tinggi model ~80% canvas, center
+      const scale = 1.45;
+      this.proj.scale(scale, scale * (this.canvas.width / this.canvas.height));
+      this.proj.translateY(-0.12);
+      if (this.modelMatrix) {
+        this.mvp.loadIdentity();
+        this.mvp.multiplyByMatrix(this.proj);
+        this.mvp.multiplyByMatrix(this.modelMatrix);
+        renderer.setMvpMatrix(this.mvp);
+      } else {
+        renderer.setMvpMatrix(this.proj);
+      }
+      renderer.drawModel(this.shaderPath);
+      drawRenderer.restoreProfile?.();
+    } finally {
+      offscreenMgr.endFrameProcess(this.gl);
     }
-    model.update?.();
-
-    const renderer: any = (this.userModel as any).getRenderer();
-    if (!renderer) return;
-
-    const w = (this.gl as any).drawingBufferWidth ?? this.canvas.width;
-    const h = (this.gl as any).drawingBufferHeight ?? this.canvas.height;
-    // clear default framebuffer ke warna latar Pixi (232,232,232) — biar readPixels bisa bedakan background vs model
-    this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
-    this.gl.viewport(0, 0, w, h);
-    this.gl.clearColor(0.909, 0.909, 0.909, 1.0);
-    this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
-
-    renderer.setRenderState(null, [0, 0, w, h]);
-
-    this.proj.loadIdentity();
-    // framing mirip LAppView: scale agar tinggi model ~80% canvas, center
-    const scale = 1.45;
-    this.proj.scale(scale, scale * (this.canvas.width / this.canvas.height));
-    this.proj.translateY(-0.12);
-    // modelMatrix sudah punya scaling dari canvas size
-    if (this.modelMatrix) {
-      this.mvp.loadIdentity();
-      this.mvp.multiplyByMatrix(this.proj);
-      this.mvp.multiplyByMatrix(this.modelMatrix);
-      renderer.setMvpMatrix(this.mvp);
-    } else {
-      renderer.setMvpMatrix(this.proj);
-    }
-    renderer.drawModel(this.shaderPath);
   }
 
   getDrawableCount(): number {
-    const m: any = (this.userModel as any)?.getModel?.() ?? (this.userModel as any)?._model;
-    return m?.getDrawableCount?.() ?? m?.drawables?.count ?? 0;
+    return this.userModel?.getModel()?.getDrawableCount?.() ?? 0;
   }
 
   // Fase 8 — Parameter API (tanpa AI, model-agnostic: id dicek via model, bukan hardcode)
   getParameters(): string[] {
-    const m: any = (this.userModel as any)?.getModel?.() ?? (this.userModel as any)?._model;
+    const m = this.userModel?.getModel();
     if (!m) return [];
     return new ParameterController(m).getParameters();
   }
   getParameterInfo(id: string): ParamInfo | null {
-    const m: any = (this.userModel as any)?.getModel?.() ?? (this.userModel as any)?._model;
+    const m = this.userModel?.getModel();
     if (!m) return null;
     return new ParameterController(m).getParameterInfo(id);
   }
   getParameter(id: string): number | null {
-    const m: any = (this.userModel as any)?.getModel?.() ?? (this.userModel as any)?._model;
+    const m = this.userModel?.getModel();
     if (!m) return null;
-    // Fase 13: bila ada pending arbiter, kembalikan resolved, bukan langsung model
+    // bila ada pending arbiter, kembalikan resolved, bukan langsung model
     const pending = this.arbiter.resolve().get(id);
     if (pending !== undefined) return pending;
     return new ParameterController(m).getParameter(id);
   }
   setParameter(id: string, value: number, source: SourceId = 'manual'): boolean {
-    const m: any = (this.userModel as any)?.getModel?.() ?? (this.userModel as any)?._model;
+    const m = this.userModel?.getModel();
     if (!m) return false;
     if (!new ParameterController(m).getParameterInfo(id)) return false;
     this.arbiter.set(id, value, source);
     return true;
   }
+
   // Fase 13 helpers
   getArbiter(): ParameterArbiter { return this.arbiter; }
   hasConflict(id: string): boolean { return this.arbiter.hasConflict(id); }
 
   // Fase 9 — Model Inspector
   getModelProfile(): ModelProfile | null {
-    const m: any = (this.userModel as any)?.getModel?.() ?? (this.userModel as any)?._model;
+    const m = this.userModel?.getModel();
     if (!m || !this.setting) return null;
     return inspectModel(m, this.setting);
   }
@@ -254,11 +323,38 @@ export class Live2DRenderer {
   getRole(role: string): number | null {
     return this.roleCtrl ? this.roleCtrl.getRole(role) : null;
   }
+  /** Reset role ke default asli model (bukan 0-ref — eyeOpen dsb. punya
+   * default ≠ 0), ditulis lewat arbiter supaya satu jalur dengan source. */
+  setRoleDefault(role: string, source: SourceId = 'manual'): boolean {
+    if (!this.roleCtrl) return false;
+    const d = this.roleCtrl.roleDefaultActual(role);
+    if (!d) return false;
+    this.arbiter.set(d.id, d.def, source);
+    return true;
+  }
+
+  // Motion & ekspresi native — dipakai MotionBridge/IntentDirector.
+  async playNativeMotion(group: string, index = 0, priority: number = MotionPriority.Normal): Promise<number> {
+    if (!this.userModel) return -1;
+    return this.userModel.startMotionGroup(group, index, priority);
+  }
+  async playExpression(name: string): Promise<boolean> {
+    if (!this.userModel) return false;
+    return this.userModel.playExpression(name);
+  }
+  /** Target look/gaze view-coords ±1 — di-ease CubismTargetPoint. */
+  setLookTarget(x: number, y: number): void {
+    this.userModel?.setLookTarget(x, y);
+  }
 
   destroy() {
-    try { (this.userModel as any)?.release?.(); } catch {}
+    // dispose: cache motion/ekspresi + scheduler, baru rantai release() base
+    try { this.userModel?.dispose(); } catch {}
     for (const t of this.textures) try { this.gl.deleteTexture(t); } catch {}
     this.textures = [];
     this.userModel = null;
   }
 }
+
+// referensi tipe agar CubismUserModel tetap bagian dari kontrak public adapter
+export type { CubismUserModel };

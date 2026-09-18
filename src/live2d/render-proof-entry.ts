@@ -1,4 +1,6 @@
 export { Live2DRenderer } from "./Live2DRenderer";
+export { Live2DUserModel, MotionPriority } from "./Live2DUserModel";
+export { ArbiterUpdater } from "./ArbiterUpdater";
 export { Live2DModel } from "./Live2DModel";
 export { ParameterController } from "./ParameterController";
 export { inspectModel } from "./ModelInspector";

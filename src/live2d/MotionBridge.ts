@@ -1,6 +1,7 @@
 /** Fase 11 — bridge MotionRuntime → Live2DRenderer (Cubism). */
 import type { RuntimeBridge } from "../client/animation/motion-runtime";
 import type { Live2DRenderer } from "./Live2DRenderer";
+import { MotionPriority } from "./Live2DUserModel";
 
 export class MotionBridge implements RuntimeBridge {
   private poseBase: Record<string, number> = {};
@@ -17,20 +18,24 @@ export class MotionBridge implements RuntimeBridge {
     for (const k in delta) {
       const role = alias[k] || k;
       const v = delta[k] ?? 0;
-      (this.renderer as any).setRole(role, v, 'motion');
+      this.renderer.setRole(role, v, 'motion');
     }
   }
 
   clearPoseDelta(): void {
-    // reset all roles to default
+    // Reset semua role ke default ASLI model (bukan 0-ref — eyeOpen dsb.
+    // default ≠ 0) lewat arbiter source 'motion': clear adalah tulisan
+    // motion, jadi tulisan motion berikutnya menimpanya secara alami
+    // (sama source, seq terbaru menang) — tidak mematikan motion seperti
+    // kalau dipakai source 'manual' yang prioritasnya lebih tinggi.
     const map = this.renderer.getRoleMap();
     if (!map) return;
-    for (const role in map) this.renderer.setRole(role, 0);
+    for (const role in map) this.renderer.setRoleDefault(role, 'motion');
   }
 
   applyParamDrive(params: Record<string, number>): void {
     for (const id in params) {
-      (this.renderer as any).setParameter(id, params[id], 'motion');
+      this.renderer.setParameter(id, params[id], 'motion');
       this.ownedParams.add(id);
     }
   }
@@ -39,7 +44,9 @@ export class MotionBridge implements RuntimeBridge {
     for (const id of paramIds) {
       this.ownedParams.delete(id);
       const info = this.renderer.getParameterInfo(id);
-      if (info) this.renderer.setParameter(id, info.default);
+      // kembali ke default via source 'motion' — kepemilikan layer sudah
+      // dilepas, tulisan motion berikutnya boleh menimpa
+      if (info) this.renderer.setParameter(id, info.default, 'motion');
     }
   }
 
@@ -51,13 +58,13 @@ export class MotionBridge implements RuntimeBridge {
     const map = this.renderer.getRoleMap();
     const caps = new Set<string>();
     if (!map) return caps;
-    // field ax/ay -> head, ex/ey -> eyes, mouthForm -> mouth, body* -> body
+    // field ax/ay -> head, ex/ey -> eyes, mouthForm -> mouth, body* -> body.
+    // Kapabilitas hanya klaim dari role map nyata — model tanpa kepala
+    // tidak mengaku punya kepala (jangan tambah fallback sintetis).
     if (map.angleX || map.angleY) caps.add("head");
     if (map.eyeBallX || map.eyeBallY) caps.add("eyes");
     if (map.mouthForm || map.mouthOpenY) caps.add("mouth");
     if (map.bodyAngleX || map.bodyAngleY || map.bodyAngleZ) caps.add("body");
-    // always allow at least head/eyes/mouth for test
-    if (caps.size === 0) caps.add("head");
     return caps;
   }
 
@@ -65,9 +72,12 @@ export class MotionBridge implements RuntimeBridge {
     return new Set(this.ownedParams);
   }
 
-  playNative(_group: string): void {
-    // Fase 11: native motion playback via Cubism motion manager — belum, stub
-    console.log(`[MotionBridge] playNative ${_group} (stub Fase 11)`);
+  playNative(group: string): void {
+    // motion native via Cubism motion manager — grup divalidasi dari
+    // manifest di dalam model; -1 = kalah prioritas / grup tak ada.
+    void this.renderer.playNativeMotion(group, 0, MotionPriority.Normal)
+      .then((h) => console.log(`[MotionBridge] playNative ${group} → handle ${h}`))
+      .catch((e) => console.warn(`[MotionBridge] playNative ${group} gagal`, e));
   }
 
   now(): number {

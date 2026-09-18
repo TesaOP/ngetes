@@ -13,10 +13,6 @@ export class IntentDirector {
 
   /** Terjemahkan intent → role/param via renderer (model-agnostic). */
   direct(intent: SemanticIntent): void {
-    if (intent.emotion) {
-      // emotion → setRole via arbiter (fallback handled by CapabilityAnalyzer)
-      // untuk Fase 15 proof, cukup set angleX dari headTilt
-    }
     if (typeof intent.headTilt === 'number') {
       this.renderer.setRole('angleZ', intent.headTilt * 30, 'emotion');
     }
@@ -28,14 +24,17 @@ export class IntentDirector {
       this.renderer.setRole('eyeBallY', 0, 'gaze');
     }
     if (intent.emotion === 'embarrassed') {
-      // coba blush, fallback ke expression jika tidak ada
+      // coba blush; kalau model tidak punya param blush, fallback NYATA ke
+      // ekspresi pertama dari manifest (bukan sekadar log)
       const ok = this.renderer.setRole('blush', intent.intensity ?? 0.8, 'emotion');
       if (!ok) {
-        // fallback: pakai expression pertama jika ada
         const prof = this.renderer.getModelProfile();
-        if (prof?.expressions?.length) {
-          // di real app, trigger expression via motion manager — di proof cukup log
-          console.log(`[IntentDirector] blush missing → fallback expression ${prof.expressions[0]}`);
+        const fallbackName = prof?.expressions?.[0];
+        if (fallbackName) {
+          void this.renderer.playExpression(fallbackName)
+            .then((played) => console.log(`[IntentDirector] blush missing → fallback expression ${fallbackName} ${played ? "diputar" : "gagal"}`));
+        } else {
+          console.warn("[IntentDirector] blush missing, model tanpa ekspresi — intent diabaikan");
         }
       }
     }
