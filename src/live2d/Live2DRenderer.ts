@@ -7,6 +7,7 @@ import { CubismModelMatrix } from "./cubism/math/cubismmodelmatrix";
 import { ParameterController, type ParamInfo } from "./ParameterController";
 import { inspectModel, type ModelProfile } from "./ModelInspector";
 import { RoleController } from "./RoleController";
+import { ParameterArbiter, type SourceId } from "./ParameterArbiter";
 
 let frameworkStarted = false;
 function ensureFramework() {
@@ -31,6 +32,7 @@ export class Live2DRenderer {
   private shaderPath = "/shaders/cubism/WebGL/";
   private textures: WebGLTexture[] = [];
   private roleCtrl: RoleController | null = null;
+  private arbiter = new ParameterArbiter();
 
   constructor(canvas: HTMLCanvasElement, gl?: WebGL2RenderingContext | WebGLRenderingContext) {
     this.canvas = canvas;
@@ -153,13 +155,17 @@ export class Live2DRenderer {
     return { mocVersion, drawable, offscreen };
   }
 
-  /** Gambar satu frame — dipanggil dari rAF. Fase 8: manual setParameter harus survive — update saja, tanpa load/save. */
+  /** Gambar satu frame — dipanggil dari rAF. Fase 13: arbiter resolve → tulis ke model, baru update. */
   draw() {
     if (!this.userModel) return;
     const model: any = (this.userModel as any).getModel?.() ?? (this.userModel as any)._model;
     if (!model) return;
-    // Fase 8: jangan loadParameters di sini (akan menimpa setParameter manual).
-    // Untuk motion/physics nanti, panggil update saja.
+    // Fase 13: terapkan hasil arbiter sebelum update
+    const resolved = this.arbiter.resolve();
+    if (resolved.size) {
+      const pc = new ParameterController(model);
+      for (const [id, val] of resolved) pc.setParameter(id, val);
+    }
     model.update?.();
 
     const renderer: any = (this.userModel as any).getRenderer();
@@ -211,13 +217,21 @@ export class Live2DRenderer {
   getParameter(id: string): number | null {
     const m: any = (this.userModel as any)?.getModel?.() ?? (this.userModel as any)?._model;
     if (!m) return null;
+    // Fase 13: bila ada pending arbiter, kembalikan resolved, bukan langsung model
+    const pending = this.arbiter.resolve().get(id);
+    if (pending !== undefined) return pending;
     return new ParameterController(m).getParameter(id);
   }
-  setParameter(id: string, value: number): boolean {
+  setParameter(id: string, value: number, source: SourceId = 'manual'): boolean {
     const m: any = (this.userModel as any)?.getModel?.() ?? (this.userModel as any)?._model;
     if (!m) return false;
-    return new ParameterController(m).setParameter(id, value);
+    if (!new ParameterController(m).getParameterInfo(id)) return false;
+    this.arbiter.set(id, value, source);
+    return true;
   }
+  // Fase 13 helpers
+  getArbiter(): ParameterArbiter { return this.arbiter; }
+  hasConflict(id: string): boolean { return this.arbiter.hasConflict(id); }
 
   // Fase 9 — Model Inspector
   getModelProfile(): ModelProfile | null {
@@ -230,8 +244,12 @@ export class Live2DRenderer {
   getRoleMap(): Record<string, string> | null {
     return this.roleCtrl ? this.roleCtrl.getRoleMap() : null;
   }
-  setRole(role: string, vRef: number): boolean {
-    return this.roleCtrl ? this.roleCtrl.setRole(role, vRef) : false;
+  setRole(role: string, vRef: number, source: SourceId = 'manual'): boolean {
+    if (!this.roleCtrl) return false;
+    const resolved = this.roleCtrl.resolveRole(role, vRef);
+    if (!resolved) return false;
+    this.arbiter.set(resolved.id, resolved.actual, source);
+    return true;
   }
   getRole(role: string): number | null {
     return this.roleCtrl ? this.roleCtrl.getRole(role) : null;

@@ -9847,6 +9847,64 @@ class RoleController {
     const r = this.rangeByRole[role];
     return this.paramCtrl.setParameter(id, roleDefaultOf(r));
   }
+  resolveRole(role, vRef) {
+    const id = this.roleToId[role];
+    if (!id)
+      return null;
+    const r = this.rangeByRole[role];
+    const actual = writeRef(role, vRef, r);
+    return { id, actual };
+  }
+}
+
+// src/live2d/ParameterArbiter.ts
+var PRIORITY = {
+  blink: 90,
+  gaze: 70,
+  emotion: 80,
+  lipsync: 85,
+  motion: 60,
+  raw: 50,
+  physics: 40,
+  manual: 100
+};
+
+class ParameterArbiter {
+  byParam = new Map;
+  seq = 0;
+  set(id, value, source) {
+    const prio = PRIORITY[source] ?? 0;
+    let m = this.byParam.get(id);
+    if (!m) {
+      m = new Map;
+      this.byParam.set(id, m);
+    }
+    m.set(source, { source, prio, value, seq: ++this.seq });
+  }
+  clearSource(source) {
+    for (const [id, m] of this.byParam) {
+      m.delete(source);
+      if (!m.size)
+        this.byParam.delete(id);
+    }
+  }
+  resolve() {
+    const out = new Map;
+    for (const [id, m] of this.byParam) {
+      let best = null;
+      for (const p of m.values()) {
+        if (!best || p.prio > best.prio || p.prio === best.prio && p.seq > best.seq)
+          best = p;
+      }
+      if (best)
+        out.set(id, best.value);
+    }
+    return out;
+  }
+  hasConflict(id) {
+    const m = this.byParam.get(id);
+    return !!m && m.size > 1;
+  }
 }
 
 // src/live2d/Live2DRenderer.ts
@@ -9874,6 +9932,7 @@ class Live2DRenderer {
   shaderPath = "/shaders/cubism/WebGL/";
   textures = [];
   roleCtrl = null;
+  arbiter = new ParameterArbiter;
   constructor(canvas, gl) {
     this.canvas = canvas;
     this.gl = gl ?? canvas.getContext("webgl2") ?? canvas.getContext("webgl");
@@ -9995,6 +10054,12 @@ class Live2DRenderer {
     const model = this.userModel.getModel?.() ?? this.userModel._model;
     if (!model)
       return;
+    const resolved = this.arbiter.resolve();
+    if (resolved.size) {
+      const pc = new ParameterController(model);
+      for (const [id, val] of resolved)
+        pc.setParameter(id, val);
+    }
     model.update?.();
     const renderer = this.userModel.getRenderer();
     if (!renderer)
@@ -10040,13 +10105,25 @@ class Live2DRenderer {
     const m = this.userModel?.getModel?.() ?? this.userModel?._model;
     if (!m)
       return null;
+    const pending = this.arbiter.resolve().get(id);
+    if (pending !== undefined)
+      return pending;
     return new ParameterController(m).getParameter(id);
   }
-  setParameter(id, value) {
+  setParameter(id, value, source = "manual") {
     const m = this.userModel?.getModel?.() ?? this.userModel?._model;
     if (!m)
       return false;
-    return new ParameterController(m).setParameter(id, value);
+    if (!new ParameterController(m).getParameterInfo(id))
+      return false;
+    this.arbiter.set(id, value, source);
+    return true;
+  }
+  getArbiter() {
+    return this.arbiter;
+  }
+  hasConflict(id) {
+    return this.arbiter.hasConflict(id);
   }
   getModelProfile() {
     const m = this.userModel?.getModel?.() ?? this.userModel?._model;
@@ -10057,8 +10134,14 @@ class Live2DRenderer {
   getRoleMap() {
     return this.roleCtrl ? this.roleCtrl.getRoleMap() : null;
   }
-  setRole(role, vRef) {
-    return this.roleCtrl ? this.roleCtrl.setRole(role, vRef) : false;
+  setRole(role, vRef, source = "manual") {
+    if (!this.roleCtrl)
+      return false;
+    const resolved = this.roleCtrl.resolveRole(role, vRef);
+    if (!resolved)
+      return false;
+    this.arbiter.set(resolved.id, resolved.actual, source);
+    return true;
   }
   getRole(role) {
     return this.roleCtrl ? this.roleCtrl.getRole(role) : null;
@@ -10152,7 +10235,7 @@ class MotionBridge {
     for (const k in delta) {
       const role = alias[k] || k;
       const v = delta[k] ?? 0;
-      this.renderer.setRole(role, v);
+      this.renderer.setRole(role, v, "motion");
     }
   }
   clearPoseDelta() {
@@ -10164,7 +10247,7 @@ class MotionBridge {
   }
   applyParamDrive(params) {
     for (const id in params) {
-      this.renderer.setParameter(id, params[id]);
+      this.renderer.setParameter(id, params[id], "motion");
       this.ownedParams.add(id);
     }
   }
@@ -11567,6 +11650,7 @@ export {
   MotionBridge,
   MotionRegistry,
   MotionRuntime,
+  ParameterArbiter,
   ParameterController,
   RoleController,
   inspectModel,

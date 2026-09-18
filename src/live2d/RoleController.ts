@@ -48,4 +48,13 @@ export class RoleController {
     const r = this.rangeByRole[role];
     return this.paramCtrl.setParameter(id, roleDefaultOf(r));
   }
+
+  /** Fase 13: hitung actual tanpa tulis — untuk arbiter. */
+  resolveRole(role: string, vRef: number): { id: string; actual: number } | null {
+    const id = this.roleToId[role];
+    if (!id) return null;
+    const r = this.rangeByRole[role];
+    const actual = writeRef(role, vRef, r);
+    return { id, actual };
+  }
 }

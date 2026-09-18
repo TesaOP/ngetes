@@ -17,7 +17,7 @@ export class MotionBridge implements RuntimeBridge {
     for (const k in delta) {
       const role = alias[k] || k;
       const v = delta[k] ?? 0;
-      this.renderer.setRole(role, v);
+      (this.renderer as any).setRole(role, v, 'motion');
     }
   }
 
@@ -30,7 +30,7 @@ export class MotionBridge implements RuntimeBridge {
 
   applyParamDrive(params: Record<string, number>): void {
     for (const id in params) {
-      this.renderer.setParameter(id, params[id]);
+      (this.renderer as any).setParameter(id, params[id], 'motion');
       this.ownedParams.add(id);
     }
   }

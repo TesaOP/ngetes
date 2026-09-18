@@ -9,3 +9,4 @@ export { MotionBridge } from "./MotionBridge";
 export { MotionRegistry } from "../client/animation/motion-registry";
 export { MotionRuntime } from "../client/animation/motion-runtime";
 export { AgentBrain } from "../client/agent/brain";
+export { ParameterArbiter } from "./ParameterArbiter";
