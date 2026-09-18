@@ -53,19 +53,31 @@
   <button class="btn" id="b-through" hidden data-i18n="petWindow.ctOff">Klik tembus</button>
   <button class="btn" id="b-close" data-i18n="petWindow.close">Tutup</button>
 </div>
-<script src="js/pixi.6.5.10.min.js"></script>
 <script src="js/live2dcubismcore.min.js"></script>
-<script src="js/pixi-live2d-0.4.0.js?v=3"></script>
 <!-- Core i18n (khusus pet — app utama memuatnya di dalam bundle.js). Self-exec:
      menyweep atribut data-i18n* di atas sekaligus membaca localStorage, jadi
      bahasa pet mengikuti bahasa app utama (origin sama). -->
 <script src="js/i18n.js?v=1"></script>
+<!-- Stack render baru (Pixi 8 + Cubism 5-r.5 via adapter src/live2d) — sama
+     dengan index.html: importmap pixi.js → pixi8.mjs (instance ESM terpisah),
+     modul view mengambil alih #live2d-canvas saat __live2dRendererRequested. -->
+<script type="importmap">{"imports":{"pixi.js":"./js/pixi8.mjs"}}</script>
+<script type="module" src="js/live2d-view.mjs"></script>
 <script>
 (function () {
   const API = location.origin;
   const t = (k, v) => (window.__i18n ? window.__i18n.t(k, v) : k);
   const qs = new URLSearchParams(location.search);
-  const state = { model: null, app: null, bubbleTimer: null, idleTimer: null, dir: 1 };
+  const state = { model: null, bubbleTimer: null, idleTimer: null };
+  // Minta modul view mengambil alih canvas + janji siapnya (modul dieksekusi
+  // setelah parsing, jadi flag aman dipasang dari sini).
+  window.__live2dRendererRequested = true;
+  window.__live2dStageSize = () => ({ w: window.innerWidth, h: window.innerHeight });
+  if (!window.__live2dViewWait) {
+    window.__live2dViewWait = new Promise((res) => {
+      window.__live2dViewReadyResolve = res;
+    });
+  }
 
   function bubble(text, ms) {
     const b = document.getElementById("bubble");
@@ -91,59 +103,42 @@
       } catch (e) {}
     }
     if (!path) { document.getElementById("status").textContent = t("petWindow.noModel"); return; }
-    // registerTicker adalah static di Live2DModel, bukan di namespace live2d —
-    // memanggilnya lewat PIXI.live2d melempar TypeError dan boot() berhenti
-    // sebelum canvas dibuat, jadi jendela pet tampil kosong.
-    PIXI.live2d.Live2DModel.registerTicker(PIXI.Ticker);
-    const app = new PIXI.Application({
-      view: document.getElementById("live2d-canvas"),
-      width: window.innerWidth, height: window.innerHeight,
-      backgroundAlpha: 0, autoDensity: true, resolution: Math.min(devicePixelRatio || 1, 2),
-    });
-    state.app = app;
-    const model = await PIXI.live2d.Live2DModel.from(API + "/" + path, { autoInteract: false });
-    state.model = model;
-    app.stage.addChild(model);
-    // Skala pas jendela lalu pusatkan. Bounds HARUS dibaca ulang setelah
-    // scale.set(): rumus lama memakai objek bounds pra-skala, sehingga
-    // model.x dihitung dari lebar natural (bisa ribuan px) dan karakter
-    // terdorong jauh ke luar canvas — jendela pet tampak kosong.
-    const nat = model.getBounds();
-    const natW = nat.width / model.scale.x;
-    const natH = nat.height / model.scale.y;
+    await window.__live2dViewWait;
+    // Muat model lewat adapter stack baru (moc native, tanpa pixi-live2d).
+    // Blink/breath/gaze diputar framework; tidak ada lagi id param hardcode.
+    state.model = await window.__live2dView.loadModel(path);
+    const m = state.model;
+    // Skala pas jendela lalu pusatkan (bounds dibaca via facade — math sama
+    // dengan versi lama, dikoreksi sudah membaca bounds pasca-scale).
+    const nat = m.getBounds();
+    const natW = nat.width / m.scale.x;
+    const natH = nat.height / m.scale.y;
     const s = Math.min((window.innerWidth * 0.9) / natW, (window.innerHeight * 0.92) / natH);
-    model.scale.set(s);
-    model.x = (window.innerWidth - natW * s) / 2;
-    model.y = (window.innerHeight - natH * s) / 2 - window.innerHeight * 0.03;
+    m.scale.set(s);
+    m.x = (window.innerWidth - natW * s) / 2;
+    m.y = (window.innerHeight - natH * s) / 2 - window.innerHeight * 0.03;
     document.getElementById("status").textContent = t("petWindow.active");
     startIdleLife();
   }
 
-  // ── "hidup" sebagai pet: goyang pelan + tatapan acak + sapa berkala ──
+  // ── "hidup" sebagai pet: goyang pelan + tatapan ke kursor + sapa berkala ──
   function startIdleLife() {
-    let t = 0;
+    // dulu bernama `t` — MENIMPA fungsi penerjemah t() di scope yang sama,
+    // sehingga baris sapaan selalu melempar "t is not a function" (bug lama
+    // yang ikut tersalin; sapa berkala tidak pernah jalan di stack lama).
+    let tm = 0;
     setInterval(() => {
       const m = state.model;
       if (!m) return;
-      t += 0.016;
-      // goyang halus seperti bernapas
-      const sway = Math.sin(t * 1.2) * 4;
-      m.position.x = m.position.x; // anchor tetap
-      m.rotation = Math.sin(t * 0.9) * 0.012;
-      // tatapan ke arah kursor
+      tm += 0.016;
+      m.rotation = Math.sin(tm * 0.9) * 0.012; // goyang halus seperti bernapas
     }, 16);
     window.addEventListener("mousemove", (e) => {
-      const m = state.model;
-      if (!m || !m.internalModel) return;
-      try {
-        const core = m.internalModel.coreModel;
-        const set = (id, v) => { try { core.setParameterValueById(id, v); } catch {} };
-        const rect = { w: window.innerWidth, h: window.innerHeight };
-        const nx = (e.clientX / rect.w) * 2 - 1;
-        const ny = (e.clientY / rect.h) * 2 - 1;
-        set("ParamAngleX", nx * 18); set("ParamAngleY", -ny * 14);
-        set("ParamEyeBallX", nx); set("ParamEyeBallY", -ny);
-      } catch (err) {}
+      // Gaze framework: semua sendi (kepala/mata/badan) ikut kursor,
+      // ter-skala range aktual model — paritas dengan app utama.
+      const nx = (e.clientX / window.innerWidth) * 2 - 1;
+      const ny = (e.clientY / window.innerHeight) * 2 - 1;
+      window.__live2dView.setLookTarget(nx, -ny);
     });
     // sapa berkala kecil
     const lines = [
@@ -235,7 +230,14 @@
     if (e.key === "Escape") document.getElementById("b-close").click();
   });
 
-  boot().catch((e) => { document.getElementById("status").textContent = t("sys.errGeneric", { msg: e.message }); })();
+  boot().catch((e) => {
+    // Fail-loud: error boot disimpan + di-console — jendela pet kosong tanpa
+    // petunjuk adalah kegagalan senyap klasik (lihat STATUS entri 19/29).
+    window.__petBootError = String(e && e.stack || e && e.message || e);
+    console.error("[pet] boot gagal:", e);
+    document.getElementById("status").textContent =
+      t("sys.errGeneric", { msg: e.message });
+  })();
 })();
 </script>
 </body>
