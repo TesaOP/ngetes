@@ -115,10 +115,33 @@ export function computeModelMvp(t: FacadeTransform): Float32Array {
 }
 
 /** p' = P·RES·T·R·S·A·p → kembalikan piksel CSS (padanan toGlobal pixi
- * untuk titik box lokal; clip → CSS: (clip+1)/2·stage). */
+ * untuk titik box lokal). Bentuk tertutup TANPA alokasi matriks: rantai
+ * RES·ortho saling meniadakan (clip→CSS membagi stage yang sama dengan
+ * RES mengalikan), tersisa afine 2D R·S·A·p + posisi. Jalur panas —
+ * dipanggil per mousemove (gaze) dan 4× per getBounds. */
 export function localToScreen(t: FacadeTransform, px: number, py: number): { x: number; y: number } {
-  const m = computeDisplayMvp(t);
-  const cx = m[0] * px + m[4] * py + m[12];
-  const cy = m[1] * px + m[5] * py + m[13];
-  return { x: ((cx + 1) / 2) * t.stageW, y: ((1 - cy) / 2) * t.stageH };
+  const c = Math.cos(t.rotation);
+  const s = Math.sin(t.rotation);
+  const ax = px - t.anchorX * t.origW;
+  const ay = py - t.anchorY * t.origH;
+  const xs = ax * t.scaleX;
+  const ys = ay * t.scaleY;
+  return { x: c * xs - s * ys + t.x, y: s * xs + c * ys + t.y };
+}
+
+/** Kebalikan localToScreen: piksel CSS layar → titik box lokal. Padanan
+ * toLocal pixi — zoom-anchored app.js (setScaleAroundPoint) memanggilnya
+ * lewat facade; tanpa toLocal zoom jatuh ke jalur fallback "center-kan
+ * box ke kursor" yang men-snap posisi tiap tick interpolasi. */
+export function screenToLocal(t: FacadeTransform, sx: number, sy: number): { x: number; y: number } {
+  const c = Math.cos(t.rotation);
+  const s = Math.sin(t.rotation);
+  const dx = sx - t.x;
+  const dy = sy - t.y;
+  const rx = c * dx + s * dy;
+  const ry = -s * dx + c * dy;
+  return {
+    x: rx / t.scaleX + t.anchorX * t.origW,
+    y: ry / t.scaleY + t.anchorY * t.origH,
+  };
 }

@@ -697,6 +697,11 @@ export class CubismRenderer_WebGL extends CubismRenderer {
       this._drawableClippingManager = null;
     }
 
+    // PATCH PERF (lumi): render state cache tidak valid lagi setelah release
+    this._renderStateValid = false;
+    this._renderingFrameBuffer = null;
+    this._renderingViewport = null;
+
     if (this.gl == null) {
       return;
     }
@@ -795,10 +800,21 @@ export class CubismRenderer_WebGL extends CubismRenderer {
     this.loadShaders(shaderPath);
     this.beforeDrawModelRenderTarget();
 
-    const lastFbo = this.gl.getParameter(
-      this.gl.FRAMEBUFFER_BINDING
+    // PATCH PERF (lumi): sebelumnya gl.getParameter(FRAMEBUFFER_BINDING/VIEWPORT)
+    // tiap frame — satu glGet setelah draw submission cukup untuk memaksa CPU
+    // menunggu GPU mengosongkan antrean (seri penuh, 26 FPS). Nilainya identik
+    // dengan yang diset setRenderState() — glGet hanya fallback bila pemanggil
+    // tidak memanggil setRenderState (di luar kontrak resmi).
+    const lastFbo = (
+      this._renderStateValid
+        ? this._renderingFrameBuffer
+        : this.gl.getParameter(this.gl.FRAMEBUFFER_BINDING)
     ) as WebGLFramebuffer;
-    const lastViewport = this.gl.getParameter(this.gl.VIEWPORT) as number[];
+    const lastViewport = (
+      this._renderStateValid
+        ? this._renderingViewport
+        : this.gl.getParameter(this.gl.VIEWPORT)
+    ) as number[];
 
     // //------------ クリッピングマスク・バッファ前処理方式の場合 ------------
     if (this._drawableClippingManager != null) {
@@ -1443,7 +1459,16 @@ export class CubismRenderer_WebGL extends CubismRenderer {
     }
 
     // 別バッファに描画を開始
-    this._modelRenderTargets[0].beginDraw();
+    // PATCH PERF (lumi): beginDraw() tanpa argumen membaca FBO aktif via
+    // glGet tiap frame (stall CPU–GPU). FBO pemulihnya adalah FBO yang
+    // diset setRenderState() — pass eksplisit; null FBO (framebuffer default)
+    // lewat sentinel supaya beginDraw tidak perlu membaca GL. Fallback jalur
+    // lama bila setRenderState belum dipanggil.
+    this._modelRenderTargets[0].beginDraw(
+      this._renderStateValid
+        ? this._renderingFrameBuffer ?? CUBISM_DEFAULT_FRAMEBUFFER
+        : null
+    );
     this._modelRenderTargets[0].clear(0.0, 0.0, 0.0, 0.0);
   }
 
@@ -1515,6 +1540,15 @@ export class CubismRenderer_WebGL extends CubismRenderer {
   public setRenderState(fbo: WebGLFramebuffer, viewport: number[]): void {
     this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, fbo);
     this.gl.viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+
+    // PATCH PERF (lumi): simpan render state — doDrawModel & mask pass
+    // membutuhkan nilai ini tiap frame; membacanya via gl.getParameter
+    // memaksa sinkronisasi CPU–GPU (stall terukur ±40 ms/frame pada model
+    // 198 drawable + 24 offscreen). Kontrak resmi: setRenderState dipanggil
+    // sebelum drawModel (pola LAppView), jadi nilainya selalu mutakhir.
+    this._renderingFrameBuffer = fbo;
+    this._renderingViewport = viewport;
+    this._renderStateValid = true;
 
     if (
       this._modelRenderTargetWidth != viewport[2] ||
@@ -1750,6 +1784,12 @@ export class CubismRenderer_WebGL extends CubismRenderer {
 
   _modelRootFbo: WebGLFramebuffer; // モデルのルートフレームバッファ
 
+  // PATCH PERF (lumi): render state yang disimpan setRenderState (lihat
+  // doDrawModel) — tanpa ini glGet per frame menyebabkan stall CPU–GPU.
+  _renderingFrameBuffer: WebGLFramebuffer;
+  _renderingViewport: number[];
+  _renderStateValid: boolean;
+
   _bufferData: {
     vertex: WebGLBuffer;
     uv: WebGLBuffer;
@@ -1769,6 +1809,7 @@ CubismRenderer.staticRelease = (): void => {
 // Namespace definition for compatibility.
 import * as $ from './cubismrenderer_webgl';
 import { CubismRenderTarget_WebGL as CubismRenderTarget_WebGL } from './cubismrendertarget_webgl';
+import { CUBISM_DEFAULT_FRAMEBUFFER } from './cubismrendertarget_webgl';
 import { CubismOffscreenRenderTarget_WebGL as CubismOffscreenRenderTarget_WebGL } from './cubismoffscreenrendertarget_webgl';
 // eslint-disable-next-line @typescript-eslint/no-namespace
 export namespace Live2DCubismFramework {

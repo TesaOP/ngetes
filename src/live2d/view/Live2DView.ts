@@ -22,6 +22,7 @@ import { CubismFramework } from "../cubism/live2dcubismframework";
 import {
   computeModelMvp,
   localToScreen,
+  screenToLocal,
   type FacadeTransform,
 } from "./framing";
 
@@ -33,6 +34,9 @@ const MODEL_UNIT_PX = 400;
  * frame SETELAH semua efek framework — padanan beforeModelUpdate lama. */
 class AppWriteUpdater extends ICubismUpdater {
   private pending = new Map<string, { v: number; w: number }>();
+  /** Cache id handle per string — getId membangun CubismId bila belum ada;
+   * tanpa cache tiap poke app.js melewatinya tiap frame. */
+  private ids = new Map<string, unknown>();
 
   constructor() {
     super(900);
@@ -52,7 +56,12 @@ class AppWriteUpdater extends ICubismUpdater {
     if (!this.pending.size) return;
     const idMgr = CubismFramework.getIdManager();
     for (const [id, { v, w }] of this.pending) {
-      model.setParameterValueById(idMgr.getId(id), v, w);
+      let h: any = this.ids.get(id);
+      if (!h) {
+        h = idMgr.getId(id);
+        this.ids.set(id, h);
+      }
+      model.setParameterValueById(h, v, w);
     }
     this.pending.clear();
   }
@@ -90,6 +99,30 @@ export class Live2DView {
       this.renderer = new Live2DRenderer(canvas, gl);
       // latar dari CSS stage — Cubism tidak clear
       this.renderer.setClear(null);
+      // Jembatan state GL setelah Cubism menggambar. drawModel memutasi GL
+      // (blend/frontFace/colorMask/program/VAO) dan mesin state Pixi 8 murni
+      // cache — TIDAK pernah glGet — jadi tanpa reset cache-nya basi. Jalur
+      // saveProfile/restoreProfile framework (±15 glGet) menciptakan
+      // sinkronisasi CPU–GPU paksa tiap frame tepat setelah antrean GPU penuh
+      // drawModel — TERUKUR ±40 ms/frame (26 FPS vs 60 FPS stack lama).
+      // Reset di sini = GL-set murni (tanpa glGet) + pembatalan cache Pixi:
+      // stateId=0 memaksa state.set() berikutnya menerbitkan ulang semua bit
+      // enable/disable, blendMode="" memaksa blendFunc, _blendEq memaksa
+      // blendEquation — Pixi mengembalikan state yang ia butuhkan sendiri.
+      this.renderer.setPixiStateReset(() => {
+        gl.colorMask(true, true, true, true);
+        gl.depthMask(true);
+        gl.frontFace(gl.CCW);
+        gl.activeTexture(gl.TEXTURE0);
+        const st = (pixiApp.renderer as any).state;
+        if (st) {
+          st.stateId = 0;
+          st.blendMode = "";
+          st._glFrontFace = false;
+          st._frontFaceDirty = false;
+          st._blendEq = true;
+        }
+      });
       const draw = () => {
         this.renderer?.draw();
         this.rafId = requestAnimationFrame(draw);
@@ -214,6 +247,12 @@ export class Live2DView {
       },
       toGlobal(p: { x: number; y: number }) {
         return localToScreen(t, p.x, p.y);
+      },
+      /** Padanan toLocal pixi — zoom-anchored app.js (setScaleAroundPoint)
+       * wajib memilikinya; tanpa ini zoom jatuh ke jalur fallback yang
+       * center-kan seluruh box ke kursor tiap tick → melompat. */
+      toLocal(p: { x: number; y: number }) {
+        return screenToLocal(t, p.x, p.y);
       },
       /** AABB dunia (CSS) dari 4 pojok box lokal — padanan getBounds pixi
        * untuk frameModel/applyStageLayout (natW/natH = bounds / scale). */

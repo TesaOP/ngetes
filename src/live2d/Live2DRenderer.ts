@@ -49,11 +49,26 @@ export class Live2DRenderer {
   private lastFrameMs: number | null = null;
   private mvpProvider: (() => Float32Array) | null = null;
   private clearColor: [number, number, number, number] | null = [0.909, 0.909, 0.909, 1.0];
+  /** View integrasi: reset state GL Pixi 8 setelah drawModel (GL-set murni,
+   * tanpa glGet) — menggantikan saveProfile/restoreProfile yang memaksa
+   * sinkronisasi CPU–GPU tiap frame. Null = jalur lama (halaman proof). */
+  private pixiStateReset: (() => void) | null = null;
+  /** Matriks MVP dipakai ulang — draw() berjalan tiap frame. */
+  private mvpTmp = new CubismMatrix44();
+  /** Controller parameter di-cache (wraps model — dibuat sekali per model). */
+  private paramCtrl: ParameterController | null = null;
 
   /** Integrasi view: mvp dihitung facade (x/y/scale/anchor → matriks),
    * bukan framing bawaan proof. Null = kembali framing proof. */
   setMvpProvider(fn: (() => Float32Array) | null): void {
     this.mvpProvider = fn;
+  }
+
+  /** Integrasi view: reset state GL Pixi setelah drawModel. Lihat catatan
+   * Live2DView.init — saveProfile/restoreProfile (glGet storm) membuat
+   * CPU menunggu GPU tiap frame. */
+  setPixiStateReset(fn: (() => void) | null): void {
+    this.pixiStateReset = fn;
   }
 
   /** Integrasi view: null = jangan clear (latar dari CSS #stage, canvas
@@ -102,6 +117,7 @@ export class Live2DRenderer {
     const mocVersion = core ? core.Version.csmGetMocVersion(mocBuf) : -1;
 
     this.userModel = new Live2DUserModel();
+    this.paramCtrl = null; // model baru — controller lama basi
     this.userModel.loadModel(mocBuf, false);
 
     // id grup resmi (EyeBlink/LipSync) — otoritatif soal keanggotaan,
@@ -291,18 +307,20 @@ export class Live2DRenderer {
         this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
       }
 
-      // drawModel tidak mengembalikan state GL host — save/restore wajib
-      // begitu context dibagi dengan Pixi 8. saveProfile/restoreProfile
-      // protected di framework vendored; ini satu-satunya titik yang perlu
-      // cast di jalur draw.
-      const drawRenderer = renderer as any;
-      drawRenderer.saveProfile?.();
+      // drawModel tidak mengembalikan state GL host. Dua jalur:
+      //  - pixiStateReset (view integrasi): GL-set murni + invalidate cache
+      //    Pixi — TANPA glGet, GPU dan CPU tetap overlap.
+      //  - saveProfile/restoreProfile (halaman proof): baca-tulis state
+      //    via glGet — benar tapi setiap glGet setelah draw submission
+      //    memaksa CPU menunggu GPU selesai (stall ±40 ms/frame).
+      if (!this.pixiStateReset) {
+        (renderer as any).saveProfile?.();
+      }
       renderer.setRenderState(this.frameBuffer as WebGLFramebuffer, [0, 0, w, h]);
 
       if (this.mvpProvider) {
-        const mvp = new CubismMatrix44();
-        mvp.setMatrix(this.mvpProvider());
-        renderer.setMvpMatrix(mvp);
+        this.mvpTmp.setMatrix(this.mvpProvider());
+        renderer.setMvpMatrix(this.mvpTmp);
       } else {
         this.proj.loadIdentity();
         // framing mirip LAppView: scale agar tinggi model ~80% canvas, center
@@ -319,7 +337,11 @@ export class Live2DRenderer {
         }
       }
       renderer.drawModel(this.shaderPath);
-      drawRenderer.restoreProfile?.();
+      if (this.pixiStateReset) {
+        this.pixiStateReset();
+      } else {
+        (renderer as any).restoreProfile?.();
+      }
     } finally {
       offscreenMgr.endFrameProcess(this.gl);
     }
@@ -335,28 +357,34 @@ export class Live2DRenderer {
   }
 
   // Fase 8 — Parameter API (tanpa AI, model-agnostic: id dicek via model, bukan hardcode)
-  getParameters(): string[] {
+  /** Controller di-cache — stateless di atas model yang sama; getParameter
+   * dipanggil driver app.js ±10× per frame (lerp pose & emosi). */
+  private ctrl(): ParameterController | null {
     const m = this.userModel?.getModel();
-    if (!m) return [];
-    return new ParameterController(m).getParameters();
+    if (!m) return null;
+    if (!this.paramCtrl) this.paramCtrl = new ParameterController(m);
+    return this.paramCtrl;
+  }
+  getParameters(): string[] {
+    const c = this.ctrl();
+    return c ? c.getParameters() : [];
   }
   getParameterInfo(id: string): ParamInfo | null {
-    const m = this.userModel?.getModel();
-    if (!m) return null;
-    return new ParameterController(m).getParameterInfo(id);
+    const c = this.ctrl();
+    return c ? c.getParameterInfo(id) : null;
   }
   getParameter(id: string): number | null {
-    const m = this.userModel?.getModel();
-    if (!m) return null;
+    const c = this.ctrl();
+    if (!c) return null;
     // bila ada pending arbiter, kembalikan resolved, bukan langsung model
-    const pending = this.arbiter.resolve().get(id);
+    const pending = this.arbiter.resolveFinal().get(id);
     if (pending !== undefined) return pending;
-    return new ParameterController(m).getParameter(id);
+    return c.getParameter(id);
   }
   setParameter(id: string, value: number, source: SourceId = 'manual'): boolean {
-    const m = this.userModel?.getModel();
-    if (!m) return false;
-    if (!new ParameterController(m).getParameterInfo(id)) return false;
+    const c = this.ctrl();
+    if (!c) return false;
+    if (!c.getParameterInfo(id)) return false;
     this.arbiter.set(id, value, source);
     return true;
   }

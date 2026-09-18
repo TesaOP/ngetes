@@ -4,6 +4,84 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-18 (30) — FASE B: PERF + ZOOM/DRAG — STALL glGet DIHABISKAN (26→60 FPS) (COMMIT)
+
+Feedback user setelah Fase A: **stack baru terasa lebih berat**, **zoom
+kurang lancar**, **drag kadang loncat-loncat**. Diukur di browser nyata
+(server produk, ren, webview IAB): stack lama **60 FPS stabil** (p50 16,7 ms,
+0 long frame) vs stack baru **26 FPS** (p50 33,4 ms, 103/240 long frame,
+`draw()` CPU 34,5 ms/frame).
+
+- **Akar "berat" = sinkronisasi CPU–GPU paksa tiap frame.** Jalur draw
+  memanggil `gl.getParameter`/`getVertexAttrib` SETELAH draw submission:
+  (1) `saveProfile()` ±15 glGet (framework, di Live2DRenderer.draw),
+  (2) `CubismRenderer_WebGL.doDrawModel` — lastFbo/lastViewport,
+  (3) `beforeDrawModelRenderTarget` → `_modelRenderTargets[0].beginDraw()`
+  tanpa argumen (baca FBO aktif). Satu glGet pun setelah antrean GPU penuh
+  (198 drawable + 24 offscreen) memaksa CPU menunggu GPU mengosongkan
+  antrean → CPU dan GPU SERI (terukur: blok save+setRenderState 41,8 ms
+  di loop; gl.finish setelah draw hanya +0,03 ms — GPU bukan bottleneck).
+  Stack lama tak punya glGet di jalur panas → CPU/GPU overlap → 60 FPS.
+- **Fix (3 lapis, semua GL-set murni tanpa glGet):**
+  1. `Live2DView.init` memasang **jembatan state reset Pixi** via
+     `renderer.setPixiStateReset()` — setelah drawModel: colorMask/depthMask/
+     frontFace/activeTexture di-set, cache Pixi 8 di-invalidate
+     (`state.stateId=0` memaksa `state.set()` berikutnya menerbitkan ulang
+     semua enable/disable; `blendMode=""` memaksa blendFunc; `_blendEq`
+     memaksa blendEquation; `_glFrontFace=false` senada CCW yang baru
+     di-set). Mesin state Pixi 8 terbukti murni cache (tidak pernah glGet
+     saat render) — satu-satunya risiko bersama context adalah cache basi,
+     dan itu dibatalkan di sini.
+  2. `CubismRenderer_WebGL.setRenderState` kini **menyimpan**
+     fbo/viewport (`_renderingFrameBuffer/_renderingViewport/_renderStateValid`);
+     `doDrawModel` & `beforeDrawModelRenderTarget` memakai nilai tersimpan
+     itu (fallback glGet hanya bila setRenderState belum dipanggil — di luar
+     kontrak resmi LAppView). `beginDraw` menerima sentinel baru
+     `CUBISM_DEFAULT_FRAMEBUFFER` (cubismrendertarget_webgl.ts) untuk FBO
+     pemulih = framebuffer default TANPA membaca GL (null sungguhan tetap
+     dibaca via glGet sebagai jalur lama). `release()` mereset flag.
+  3. `Live2DRenderer.draw`: jalur view memakai jembatan (1); jalur lama
+     saveProfile/restoreProfile DIPERTAHANKAN untuk halaman proof (mereka
+     memanggil draw() sendiri tanpa bridge).
+- **Mikro:** `ParameterArbiter.resolveFinal()` — cache resolve (dirty flag)
+  untuk baca param app.js ±10×/frame (dulu alokasi Map per baca);
+  `AppWriteUpdater` cache id handle; matriks MVP dipakai ulang (dulu `new`
+  per frame); ParameterController di-cache per model (null-kan saat loadModel).
+- **Akar "zoom loncat/lancar" = facade tak punya `toLocal`.**
+  `setScaleAroundPoint` app.js bergantung `m.toLocal(cursor)` untuk zoom
+  anchored; tanpa itu ia jatuh ke jalur fallback `m.texture?…` yang
+  **center-kan seluruh box ke kursor tiap tick** interpolasi lerp 0.25/frame
+  (+ bucket) → posisi tersnap ulang berkali-kali dan melawan drag. Fix:
+  `framing.ts` — `localToScreen` diubah ke **bentuk tertutup tanpa alokasi**
+  (rantai RES·ortho saling meniadakan; afine 2D R·S·A·p + posisi — hasil
+  identik, 8 test lama tetap hijau; dulu ±7 Float32Array + 5 matmul per
+  mousemove gaze) + `screenToLocal` (kebalikan eksak) + facade `toLocal`.
+  Uji semantik di browser: titik di bawah kursor **tetap persis di bawah
+  kursor** setelah reposition ala setScaleAroundPoint (error 0 px).
+- **Bukti (browser nyata, server produk, ?renderer=pixi8):** batas atas
+  frame (draw + gl.finish) **13,8 ms** — muat budget vsync 16,6 ms; bedah
+  fase bersih: `um.update` median 5,8 ms (core 5,1 — Core 6 moc v6),
+  `drawModel` 2,2 ms, prep 0,07 ms → total CPU ±8–10 ms/frame ≈ 60 FPS
+  (dari 26). **Piksel terverifikasi** via readPixels (tengah = warna kulit
+  alpha 255, pojok transparan) dan **screenshot**: ren utuh di panggung
+  (jaket putih trim oranye, mask rambut-wajah & blend jaket benar, chat UI
+  hidup). Overlay biru di dada = bagian motion model (konfirmasi user,
+  bukan bug render). Catatan metode: loop draw() manual TANPA present
+  menghasilkan 40+ ms artifak (luap antrean perintah) — instrumen sah
+  adalah finish-per-frame atau loop rAF.
+- **Keterbatasan lingkungan verifikasi:** compositor IAB membekukan rAF
+  saat jendela host ter-oklusi → FPS rAF langsung tak selalu terukur;
+  pengukuran memakai bedah fase + finish (batas atas) + readPixels.
+- Gate: tsc bersih; **454 unit (3 gagal env data backup — pre-existing) +
+  guard 450/451 (1 gagal env probe — pre-existing)**; 19 test framing baru
+  (roundtrip screenToLocal dua arah × 9 kasus + semantik anchored).
+- **Belum (Fase B lanjutan):** flip kepemilikan blink→breath→gaze ke
+  framework (satu commit per fitur), lipsync updater (IParameterProvider
+  TTS), uji jalur interaksi penuh dari chat/brain, bersihkan instrumentasi
+  debug (`__loadSteps`, `__l2dDebug`), fade-out loader (kosmetik),
+  `rolePoke` gagal (`undefined setParameter` — cek regresi vs stack lama),
+  mode Assistant/Pet, terakhir pensiunkan stack lama.
+
 ## UPDATE 2026-09-18 (29) — FASE A INTEGRASI VIEW: PANGGUNG + CHAT DI STACK BARU (?renderer=pixi8) (COMMIT)
 
 Strategi **TRANSPLANT JIWA** — akar kegagalan integrasi-view berulang user

@@ -9,6 +9,17 @@
 import { CubismLogError } from '../utils/cubismdebug';
 
 /**
+ * PATCH PERF (lumi): sentinel untuk "FBO pemulih = framebuffer default".
+ * beginDraw(null) membaca FBO aktif via gl.getParameter — satu glGet setelah
+ * draw submission memaksa CPU menunggu GPU mengosongkan antrean (terukur
+ * ±40 ms/frame). Pemanggil yang TAHU binding saat ini (dari setRenderState)
+ * memakai sentinel ini; endDraw tetap memulihkan dengan bindFramebuffer(null).
+ */
+export const CUBISM_DEFAULT_FRAMEBUFFER: unique symbol = Symbol(
+  'CubismDefaultFramebuffer'
+);
+
+/**
  * WebGL用オフスクリーンサーフェス
  * マスクの描画に必要なフレームバッファなどを管理する。
  */
@@ -70,7 +81,10 @@ export class CubismRenderTarget_WebGL {
     }
 
     // バックバッファのサーフェイスを記憶しておく。
-    if (restoreFbo == null) {
+    // PATCH PERF (lumi): sentinel = framebuffer default, tanpa gl.getParameter.
+    if (restoreFbo === CUBISM_DEFAULT_FRAMEBUFFER) {
+      this._oldFbo = null;
+    } else if (restoreFbo == null) {
       this._oldFbo = this._gl.getParameter(this._gl.FRAMEBUFFER_BINDING);
     } else {
       this._oldFbo = restoreFbo;

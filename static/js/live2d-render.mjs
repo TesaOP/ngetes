@@ -2211,6 +2211,8 @@ function updateSize(curArray, newSize, value = null, callPlacementNew = null) {
 }
 
 // src/live2d/cubism/rendering/cubismrendertarget_webgl.ts
+var CUBISM_DEFAULT_FRAMEBUFFER = Symbol("CubismDefaultFramebuffer");
+
 class CubismRenderTarget_WebGL {
   static copyBuffer(gl, src, dst) {
     if (src == null || dst == null) {
@@ -2230,7 +2232,9 @@ class CubismRenderTarget_WebGL {
       console.error("_renderTexture is null");
       return;
     }
-    if (restoreFbo == null) {
+    if (restoreFbo === CUBISM_DEFAULT_FRAMEBUFFER) {
+      this._oldFbo = null;
+    } else if (restoreFbo == null) {
       this._oldFbo = this._gl.getParameter(this._gl.FRAMEBUFFER_BINDING);
     } else {
       this._oldFbo = restoreFbo;
@@ -3123,6 +3127,8 @@ var PRIORITY = {
 class ParameterArbiter {
   byParam = new Map;
   seq = 0;
+  cachedFinal = null;
+  dirty = true;
   set(id, value, source) {
     const prio = PRIORITY[source] ?? 0;
     let m = this.byParam.get(id);
@@ -3131,6 +3137,7 @@ class ParameterArbiter {
       this.byParam.set(id, m);
     }
     m.set(source, { source, prio, value, seq: ++this.seq });
+    this.dirty = true;
   }
   clearSource(source) {
     for (const [id, m] of this.byParam) {
@@ -3138,6 +3145,7 @@ class ParameterArbiter {
       if (!m.size)
         this.byParam.delete(id);
     }
+    this.dirty = true;
   }
   resolve() {
     const out = new Map;
@@ -3151,6 +3159,13 @@ class ParameterArbiter {
         out.set(id, best.value);
     }
     return out;
+  }
+  resolveFinal() {
+    if (!this.dirty && this.cachedFinal)
+      return this.cachedFinal;
+    this.cachedFinal = this.resolve();
+    this.dirty = false;
+    return this.cachedFinal;
   }
   hasConflict(id) {
     const m = this.byParam.get(id);
@@ -9023,6 +9038,9 @@ class CubismRenderer_WebGL extends CubismRenderer {
       this._drawableClippingManager = undefined;
       this._drawableClippingManager = null;
     }
+    this._renderStateValid = false;
+    this._renderingFrameBuffer = null;
+    this._renderingViewport = null;
     if (this.gl == null) {
       return;
     }
@@ -9090,8 +9108,8 @@ Please call 'CubimRenderer_WebGL.startUp' function.`);
   doDrawModel(shaderPath = null) {
     this.loadShaders(shaderPath);
     this.beforeDrawModelRenderTarget();
-    const lastFbo = this.gl.getParameter(this.gl.FRAMEBUFFER_BINDING);
-    const lastViewport = this.gl.getParameter(this.gl.VIEWPORT);
+    const lastFbo = this._renderStateValid ? this._renderingFrameBuffer : this.gl.getParameter(this.gl.FRAMEBUFFER_BINDING);
+    const lastViewport = this._renderStateValid ? this._renderingViewport : this.gl.getParameter(this.gl.VIEWPORT);
     if (this._drawableClippingManager != null) {
       this.preDraw();
       for (let i = 0;i < this._drawableClippingManager.getRenderTextureCount(); ++i) {
@@ -9365,7 +9383,7 @@ Please call 'CubimRenderer_WebGL.startUp' function.`);
         this._modelRenderTargets[i].createRenderTarget(this.gl, this._modelRenderTargetWidth, this._modelRenderTargetHeight, this._currentFbo);
       }
     }
-    this._modelRenderTargets[0].beginDraw();
+    this._modelRenderTargets[0].beginDraw(this._renderStateValid ? this._renderingFrameBuffer ?? CUBISM_DEFAULT_FRAMEBUFFER : null);
     this._modelRenderTargets[0].clear(0, 0, 0, 0);
   }
   afterDrawModelRenderTarget() {
@@ -9392,6 +9410,9 @@ Please call 'CubimRenderer_WebGL.startUp' function.`);
   setRenderState(fbo, viewport) {
     this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, fbo);
     this.gl.viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    this._renderingFrameBuffer = fbo;
+    this._renderingViewport = viewport;
+    this._renderStateValid = true;
     if (this._modelRenderTargetWidth != viewport[2] || this._modelRenderTargetHeight != viewport[3]) {
       this._modelRenderTargetWidth = viewport[2];
       this._modelRenderTargetHeight = viewport[3];
@@ -9502,6 +9523,9 @@ Please call 'CubimRenderer_WebGL.startUp' function.`);
   _currentFbo;
   _currentOffscreen;
   _modelRootFbo;
+  _renderingFrameBuffer;
+  _renderingViewport;
+  _renderStateValid;
   _bufferData;
   _extension;
   gl;
@@ -10354,8 +10378,14 @@ class Live2DRenderer {
   lastFrameMs = null;
   mvpProvider = null;
   clearColor = [0.909, 0.909, 0.909, 1];
+  pixiStateReset = null;
+  mvpTmp = new CubismMatrix44;
+  paramCtrl = null;
   setMvpProvider(fn) {
     this.mvpProvider = fn;
+  }
+  setPixiStateReset(fn) {
+    this.pixiStateReset = fn;
   }
   setClear(color) {
     this.clearColor = color;
@@ -10389,6 +10419,7 @@ class Live2DRenderer {
     const core = globalThis.Live2DCubismCore;
     const mocVersion = core ? core.Version.csmGetMocVersion(mocBuf) : -1;
     this.userModel = new Live2DUserModel;
+    this.paramCtrl = null;
     this.userModel.loadModel(mocBuf, false);
     const s = this.setting;
     const eyeBlinkIds = [];
@@ -10557,13 +10588,13 @@ class Live2DRenderer {
         this.gl.clearColor(...this.clearColor);
         this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
       }
-      const drawRenderer = renderer;
-      drawRenderer.saveProfile?.();
+      if (!this.pixiStateReset) {
+        renderer.saveProfile?.();
+      }
       renderer.setRenderState(this.frameBuffer, [0, 0, w, h]);
       if (this.mvpProvider) {
-        const mvp = new CubismMatrix44;
-        mvp.setMatrix(this.mvpProvider());
-        renderer.setMvpMatrix(mvp);
+        this.mvpTmp.setMatrix(this.mvpProvider());
+        renderer.setMvpMatrix(this.mvpTmp);
       } else {
         this.proj.loadIdentity();
         const scale = 1.45;
@@ -10579,7 +10610,11 @@ class Live2DRenderer {
         }
       }
       renderer.drawModel(this.shaderPath);
-      drawRenderer.restoreProfile?.();
+      if (this.pixiStateReset) {
+        this.pixiStateReset();
+      } else {
+        renderer.restoreProfile?.();
+      }
     } finally {
       offscreenMgr.endFrameProcess(this.gl);
     }
@@ -10590,32 +10625,36 @@ class Live2DRenderer {
   getDrawableCount() {
     return this.userModel?.getModel()?.getDrawableCount?.() ?? 0;
   }
-  getParameters() {
+  ctrl() {
     const m = this.userModel?.getModel();
     if (!m)
-      return [];
-    return new ParameterController(m).getParameters();
+      return null;
+    if (!this.paramCtrl)
+      this.paramCtrl = new ParameterController(m);
+    return this.paramCtrl;
+  }
+  getParameters() {
+    const c = this.ctrl();
+    return c ? c.getParameters() : [];
   }
   getParameterInfo(id) {
-    const m = this.userModel?.getModel();
-    if (!m)
-      return null;
-    return new ParameterController(m).getParameterInfo(id);
+    const c = this.ctrl();
+    return c ? c.getParameterInfo(id) : null;
   }
   getParameter(id) {
-    const m = this.userModel?.getModel();
-    if (!m)
+    const c = this.ctrl();
+    if (!c)
       return null;
-    const pending = this.arbiter.resolve().get(id);
+    const pending = this.arbiter.resolveFinal().get(id);
     if (pending !== undefined)
       return pending;
-    return new ParameterController(m).getParameter(id);
+    return c.getParameter(id);
   }
   setParameter(id, value, source = "manual") {
-    const m = this.userModel?.getModel();
-    if (!m)
+    const c = this.ctrl();
+    if (!c)
       return false;
-    if (!new ParameterController(m).getParameterInfo(id))
+    if (!c.getParameterInfo(id))
       return false;
     this.arbiter.set(id, value, source);
     return true;

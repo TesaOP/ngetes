@@ -3,7 +3,7 @@
  * murni matematika, tanpa GL/DOM.
  */
 import { describe, expect, it } from "bun:test";
-import { computeModelMvp, localToScreen, type FacadeTransform } from "../src/live2d/view/framing";
+import { computeModelMvp, localToScreen, screenToLocal, type FacadeTransform } from "../src/live2d/view/framing";
 
 function t(over: Partial<FacadeTransform> = {}): FacadeTransform {
   return {
@@ -81,5 +81,51 @@ describe("computeModelMvp — paritas framing pixi-live2d", () => {
     const s = localToScreen(t({ rotation: Math.PI, anchorX: 0.5, anchorY: 0.5, x: 300, y: 200 }), 200, 200);
     expect(s.x).toBeCloseTo(300, 3);
     expect(s.y).toBeCloseTo(200, 3);
+  });
+});
+
+describe("screenToLocal — kebalikan localToScreen (zoom-anchored app.js)", () => {
+  const CASES: Partial<FacadeTransform>[] = [
+    {},
+    { x: 120, y: 80 },
+    { scaleX: 2, scaleY: 2 },
+    { scaleX: 1.36, scaleY: 1.36, x: 50, y: 30 },
+    { anchorX: 0.5, anchorY: 0.5, x: 300, y: 200 },
+    { rotation: 0.7, anchorX: 0.5, anchorY: 0.5, x: 300, y: 200 },
+    { rotation: Math.PI },
+    { resolution: 2, stageW: 800, stageH: 600 },
+    { canvasW: 1, canvasH: 1.346, origW: 400, origH: 400 * 1.346 },
+  ];
+
+  for (const over of CASES) {
+    const label = Object.entries(over).map(([k, v]) => `${k}=${v}`).join(", ") || "default";
+    it(`roundtrip lokal→layar→lokal identitas (${label})`, () => {
+      const tf = t(over);
+      const p = { x: 173.2, y: 88.7 };
+      const s = localToScreen(tf, p.x, p.y);
+      const back = screenToLocal(tf, s.x, s.y);
+      expect(back.x).toBeCloseTo(p.x, 4);
+      expect(back.y).toBeCloseTo(p.y, 4);
+    });
+    it(`roundtrip layar→lokal→layar identitas (${label})`, () => {
+      const tf = t(over);
+      const s = { x: 321.7, y: 254.3 };
+      const l = screenToLocal(tf, s.x, s.y);
+      const back = localToScreen(tf, l.x, l.y);
+      expect(back.x).toBeCloseTo(s.x, 4);
+      expect(back.y).toBeCloseTo(s.y, 4);
+    });
+  }
+
+  it("titik di bawah kursor tetap di bawah kursor saat scale berubah (semantik setScaleAroundPoint)", () => {
+    // skenario app.js: local = toLocal(cursor) di scale lama, lalu
+    // x = cursor - local*scaleBaru — titik lokal itu HARUS tetap jatuh di kursor.
+    const tf = t({ scaleX: 1.2, scaleY: 1.2, x: 100, y: 60, anchorX: 0, anchorY: 0 });
+    const cursor = { x: 350, y: 210 };
+    const local = screenToLocal(tf, cursor.x, cursor.y);
+    const next: FacadeTransform = { ...tf, scaleX: 2.4, scaleY: 2.4, x: cursor.x - local.x * 2.4, y: cursor.y - local.y * 2.4 };
+    const after = localToScreen(next, local.x, local.y);
+    expect(after.x).toBeCloseTo(cursor.x, 3);
+    expect(after.y).toBeCloseTo(cursor.y, 3);
   });
 });
