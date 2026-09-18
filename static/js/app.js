@@ -130,10 +130,11 @@
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => document.querySelectorAll(s);
 
-  // Fase A integrasi view: ?renderer=pixi8 memakai stack baru
-  // (Pixi 8 + Cubism 5-r.5 via js/live2d-view.mjs, dibangun dari src/live2d/).
-  // Tanpa toggle, stack lama (Pixi 6 + pixi-live2d) tetap default.
-  const RENDERER_PIXI8 = /[?&]renderer=pixi8\b/.test(location.search);
+  // Flip default (Fase B akhir): stack baru (Pixi 8 + Cubism 5-r.5 via
+  // js/live2d-view.mjs) kini DEFAULT. `?renderer=legacy` = kill-switch balik
+  // ke stack lama (Pixi 6 + pixi-live2d) selama masa transisi — parameter
+  // ?renderer=pixi8 lama jadi no-op (sudah default).
+  const RENDERER_PIXI8 = !/[?&]renderer=legacy\b/.test(location.search);
 
   let refreshConfigForm = () => {};
 

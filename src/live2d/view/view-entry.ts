@@ -2,7 +2,8 @@
  * view-entry — jembatan window untuk integrasi view Pixi 8.
  * Dimuat sebagai module script (index.html) SETELAH skrip klasik app.js —
  * lihat catatan timing di Live2DView. app.js menandai
- * window.__live2dRendererRequested saat ?renderer=pixi8; modul ini
+ * window.__live2dRendererRequested (app.js menandainya untuk semua halaman
+ * kecuali mode legacy ?renderer=legacy); modul ini
  * mengambil alih canvas panggung, lalu menyelesaikan janji
  * __live2dViewWait yang ditunggu jalur init model app.js.
  */

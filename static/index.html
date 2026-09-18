@@ -981,10 +981,10 @@
   <!-- Scripts: PixiJS v6 (required by pixi-live2d-display@0.4.0) THEN Live2D bridge -->
   <script src="js/pixi.6.5.10.min.js"></script>
   <script src="js/pixi-live2d-0.4.0.js?v=3"></script>
-  <!-- Integrasi view Pixi 8 (Fase A, ?renderer=pixi8): module ESM, pixi.js
-       diresolve importmap ke ./js/pixi8.mjs — instance ESM terpisah, tidak
-       menyentuh global PIXI v6 stack lama. Tanpa toggle modul ini idle.
-       Dibangun dari src/live2d/view/ oleh `bun run build`. -->
+  <!-- View Pixi 8 (DEFAULT sejak Fase B): module ESM, pixi.js diresolve
+       importmap ke ./js/pixi8.mjs — instance ESM terpisah, tidak menyentuh
+       global PIXI v6 stack lama (`?renderer=legacy` = kill-switch balik,
+       modul tetap idle). Dibangun dari src/live2d/view/ oleh `bun run build`. -->
   <script type="importmap">{"imports":{"pixi.js":"./js/pixi8.mjs"}}</script>
   <script type="module" src="js/live2d-view.mjs"></script>
   <!-- TS client core: Taxonomy → DSL → Registry → Runtime + brain + i18n, terpasang sebagai
