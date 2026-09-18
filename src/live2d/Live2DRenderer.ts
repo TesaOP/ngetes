@@ -227,6 +227,14 @@ export class Live2DRenderer {
       breath: this.buildBreathData(),
       enabled: opts?.effects,
     });
+    // Flip kepemilikan lipsync (Fase B #4): updater mulut dari provider
+    // (dipasang app.js), role-resolved + diskalakan range aktual. Model
+    // tanpa role mulut tidak mendaftar apa pun (model-agnostic).
+    const mouth = this.roleCtrl?.roleInfo("mouthOpenY");
+    if (mouth) {
+      const idMgr = CubismFramework.getIdManager();
+      this.userModel.registerLipsync(idMgr.getId(mouth.id), mouth.min, mouth.max);
+    }
     this.userModel.updateScheduler.addUpdatableList(new ArbiterUpdater(this.arbiter));
     this.userModel.updateScheduler.sortUpdatableList();
     if (hasPhysics) this.userModel.stabilizePhysics();

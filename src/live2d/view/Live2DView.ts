@@ -129,6 +129,14 @@ export class Live2DView {
     this.renderer?.setLookTarget(x, y);
   }
 
+  /** Flip kepemilikan lipsync (Fase B #4): app.js memasang penyedia nilai
+   * 0..1 (sumber analisis audio TTS lokal tetap milik driver); framework
+   * menulis param mulut (role-resolved, skala range aktual). */
+  setLipsyncProvider(fn: (() => number | null) | null): void {
+    const um = (this.renderer as any)?.userModel as Live2DUserModel | undefined;
+    if (um) um.lipsyncProvider = fn;
+  }
+
   /** Miliki canvas panggung: Pixi 8 Application di atas #live2d-canvas
    * (transparan — latar dari CSS #stage; alpha context dipertahankan
    * untuk blend Atop/Out moc3 v6, pelajaran patchCore6Compat lama). */

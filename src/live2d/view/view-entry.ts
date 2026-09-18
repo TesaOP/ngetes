@@ -23,6 +23,10 @@ w.__live2dView = {
   setBreathGate: (fn: (() => boolean) | null) => view.setBreathGate(fn),
   setLookGate: (fn: (() => boolean) | null) => view.setLookGate(fn),
   setLookTarget: (x: number, y: number) => view.setLookTarget(x, y),
+  // Flip kepemilikan lipsync (#4): app.js memasang penyedia 0..1 (sumber
+  // audio tetap di driver), framework menulis param mulut.
+  setLipsyncProvider: (fn: (() => number | null) | null) =>
+    view.setLipsyncProvider(fn),
 };
 
 if (w.__live2dRendererRequested) {

@@ -603,6 +603,18 @@
             !(haveMotionSystem && motionRuntime && motionRuntime.isPlaying())
           );
         });
+        // Flip kepemilikan lipsync (Fase B #4): sumber nilai tetap di
+        // driver (analisis audio TTS lokal / pola sintetis); framework
+        // menulis param mulut (role-resolved, skala range aktual).
+        window.__live2dView.setLipsyncProvider(function () {
+          if (!state.talking || state.frozen) return null;
+          const lip = state.audioLipSync;
+          if (lip && lip.active) return lip.sample();
+          const tNow = performance.now() / 1000;
+          const base = 0.35 + 0.4 * Math.abs(Math.sin(tNow * 9));
+          const jitter = Math.random() < 0.25 ? 0.25 : 0;
+          return Math.min(1, base + jitter);
+        });
       } else {
         state.model = await PIXI.live2d.Live2DModel.from(settings || modelPath, {
           autoInteract: false,
@@ -990,7 +1002,11 @@
         }
       }
 
-      if (state.talking && !state.frozen) {
+      // Flip kepemilikan lipsync (Fase B #4): di stack baru framework
+      // menulis mulut dari provider — blok overrides lama dilewati.
+      // Pembersihan saat bicara selesai (delete overrides + poke rest)
+      // tetap jalan di kedua stack (no-op di pixi8).
+      if (state.talking && !state.frozen && !RENDERER_PIXI8) {
         const mId = roleId("mouthOpenY");
         if (mId) {
           let openness;

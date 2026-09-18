@@ -35,6 +35,33 @@ export const MotionPriority = {
   Force: 3,
 } as const;
 
+/** Updater lipsync (flip kepemilikan, Fase B #4): menulis param mulut
+ * (role-resolved) dari penyedia nilai 0..1, diskalakan ke range aktual
+ * param (role-space — bukan angka literal). Provider null = tidak bicara
+ * → nilai base/motion yang tampil (tulisan frame-transien). SET, bukan
+ * add: mulut terbuka pengganti base saat bicara — konsisten driver lama. */
+class LipsyncUpdater extends ICubismUpdater {
+  constructor(
+    private provider: () => number | null,
+    private id: CubismIdHandle,
+    private min: number,
+    private max: number,
+    order: number,
+  ) {
+    super(order);
+  }
+  onLateUpdate(model: CubismModel, _dt: number): void {
+    const v = this.provider();
+    if (v == null) return;
+    const openness = Math.max(0, Math.min(1, v));
+    model.setParameterValueById(
+      this.id,
+      this.min + openness * (this.max - this.min),
+      1,
+    );
+  }
+}
+
 /** Pembungkus updater dengan gate runtime (flip kepemilikan efek, Fase B).
  * Tulisan efek bersifat frame-transien (dibuang loadParameters frame
  * berikutnya) — gate false berarti nilai base motion yang tampil, tanpa
@@ -71,6 +98,19 @@ export class Live2DUserModel extends CubismUserModel {
    * memutuskan dari aiLock + frozen + motion layer — saat otak/klip yang
    * memegang pose, gaze framework diredam supaya tidak dobel. */
   lookGate: (() => boolean) | null = null;
+  /** Penyedia lipsync (flip kepemilikan, Fase B #4): nilai 0..1 saat
+   * karakter bicara, null saat tidak — dipasang app.js (sumber analisis
+   * audio TTS lokal tetap milik driver). */
+  lipsyncProvider: (() => number | null) | null = null;
+
+  /** Pasang updater lipsync untuk SATU param mulut (role-resolved).
+   * Dipanggil renderer setelah role map siap; model tanpa role mulut
+   * tidak mendaftar apa pun. */
+  registerLipsync(id: CubismIdHandle, min: number, max: number): void {
+    this.updateScheduler.addUpdatableList(
+      new LipsyncUpdater(() => this.lipsyncProvider?.() ?? null, id, min, max, 450),
+    );
+  }
   private _setting: CubismModelSettingJson | null = null;
   private _baseUrl = "";
   private _motionCache = new Map<string, CubismMotion>();
