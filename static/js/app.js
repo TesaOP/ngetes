@@ -130,12 +130,6 @@
   const $ = (s) => document.querySelector(s);
   const $$ = (s) => document.querySelectorAll(s);
 
-  // Flip default (Fase B akhir): stack baru (Pixi 8 + Cubism 5-r.5 via
-  // js/live2d-view.mjs) kini DEFAULT. `?renderer=legacy` = kill-switch balik
-  // ke stack lama (Pixi 6 + pixi-live2d) selama masa transisi — parameter
-  // ?renderer=pixi8 lama jadi no-op (sudah default).
-  const RENDERER_PIXI8 = !/[?&]renderer=legacy\b/.test(location.search);
-
   let refreshConfigForm = () => {};
 
   let refreshSheetUI = () => {};
@@ -184,34 +178,6 @@
         else cm.setParameterValueById(id, o, 1);
       } catch (e) {}
     }
-  }
-
-  function installOverrideGuard(im) {
-    if (!im || typeof im.on !== "function" || im.__overrideGuard) return;
-    im.__overrideGuard = true;
-    im.on("beforeModelUpdate", () => {
-      const cm = coreModel();
-      if (!cm) return;
-      for (const id in state.overrides) {
-        const o = state.overrides[id];
-        try {
-          if (typeof o === "object")
-            cm.setParameterValueById(id, o.value, o.weight);
-          else cm.setParameterValueById(id, o, 1);
-        } catch (e) {}
-      }
-      const d = state.rawDrive;
-      if (!d) return;
-      for (const id in d) {
-        let v = d[id];
-        if (!Number.isFinite(v)) continue;
-        const r = state.paramRange && state.paramRange[id];
-        if (r) v = Math.max(r.min, Math.min(r.max, v));
-        try {
-          cm.setParameterValueById(id, v, 1);
-        } catch (e) {}
-      }
-    });
   }
 
   function visfxStoreKey(modelKey) {
@@ -344,21 +310,11 @@
     return shim;
   }
 
-  const app = RENDERER_PIXI8
-    ? makePixi8AppShim(_sz)
-    : new PIXI.Application({
-    view: $("#live2d-canvas"),
-    width: _sz.w,
-    height: _sz.h,
-    // Transparan — warna latar tetap dari #stage CSS. Canvas alpha
-    // dibutuhkan blend Atop/Out moc3 v6 (patchCore6Compat membaca
-    // getContextAttributes().alpha); canvas opaque membuat Out jadi quad hitam.
-    backgroundColor: 0x16120c,
-    backgroundAlpha: 0,
-    autoDensity: true,
-    resolution: Math.min(window.devicePixelRatio || 1, 2),
-    antialias: true,
-  });
+  // Stack baru satu-satunya jalur: shim permukaan PIXI (screen/stage/
+  // renderer/ticker) — canvas resmi milik modul view (js/live2d-view.mjs).
+  // Logika karakter TIDAK berubah: backend tulis (coreModel()) dialihkan ke
+  // pending-flush updater order 900 — padanan semantik beforeModelUpdate.
+  const app = makePixi8AppShim(_sz);
 
   function fitCanvas() {
     const sz = stageSize();
@@ -578,56 +534,44 @@
       } catch (e) {}
 
       const settings = await buildModelSettings(modelPath);
-      if (RENDERER_PIXI8) {
-        // Fase A: stack baru — view Pixi 8 memuat model lewat adapter
-        // src/live2d (moc native, tanpa pixi-live2d). Manifest hasil adopsi
-        // .exp3 yatim (buildModelSettings) DITERUSKAN supaya model dengan
-        // deklarasi kosong (mis. lumine/神宫白子) tetap punya ekspresi —
-        // paritas jalur lama yang menyerahkan settings ke Live2DModel.from.
-        await window.__live2dViewWait;
-        state.model = await window.__live2dView.loadModel(modelPath, settings);
-        // Flip kepemilikan blink (#1), breath (#2), gaze (#3) & lipsync (#4):
-        // framework memutar, app.js tetap pemegang pintu konfigurasi —
-        // gate dibaca live updater tiap frame.
-        window.__live2dView.setBlinkGate(function () {
-          return state.blinkEnabled && !state.frozen;
-        });
-        window.__live2dView.setBreathGate(function () {
-          return (
-            state.hasBreath &&
-            !state.frozen &&
-            !(haveMotionSystem && motionRuntime && motionRuntime.isPlaying())
-          );
-        });
-        window.__live2dView.setLookGate(function () {
-          return (
-            !state.aiLock &&
-            !state.frozen &&
-            !(haveMotionSystem && motionRuntime && motionRuntime.isPlaying())
-          );
-        });
-        // Flip kepemilikan lipsync (Fase B #4): sumber nilai tetap di
-        // driver (analisis audio TTS lokal / pola sintetis); framework
-        // menulis param mulut (role-resolved, skala range aktual).
-        window.__live2dView.setLipsyncProvider(function () {
-          if (!state.talking || state.frozen) return null;
-          const lip = state.audioLipSync;
-          if (lip && lip.active) return lip.sample();
-          const tNow = performance.now() / 1000;
-          const base = 0.35 + 0.4 * Math.abs(Math.sin(tNow * 9));
-          const jitter = Math.random() < 0.25 ? 0.25 : 0;
-          return Math.min(1, base + jitter);
-        });
-      } else {
-        state.model = await PIXI.live2d.Live2DModel.from(settings || modelPath, {
-          autoInteract: false,
-        });
-      }
-
-      app.stage.addChild(state.model);
-      app.stage.sortableChildren = true;
-      state.model.zIndex = 0;
-      state.model.anchor.set(0, 0);
+      // View Pixi 8 memuat model lewat adapter src/live2d (moc native).
+      // Manifest hasil adopsi .exp3 yatim (buildModelSettings) DITERUSKAN
+      // supaya model dengan deklarasi kosong (mis. lumine/神宫白子) tetap
+      // punya ekspresi (in-memory, tidak pernah ke disk).
+      await window.__live2dViewWait;
+      state.model = await window.__live2dView.loadModel(modelPath, settings);
+      // Kepemilikan efek: framework memutar blink/breath/gaze/lipsync,
+      // app.js tetap pemegang pintu konfigurasi — gate dibaca live updater
+      // tiap frame.
+      window.__live2dView.setBlinkGate(function () {
+        return state.blinkEnabled && !state.frozen;
+      });
+      window.__live2dView.setBreathGate(function () {
+        return (
+          state.hasBreath &&
+          !state.frozen &&
+          !(haveMotionSystem && motionRuntime && motionRuntime.isPlaying())
+        );
+      });
+      window.__live2dView.setLookGate(function () {
+        return (
+          !state.aiLock &&
+          !state.frozen &&
+          !(haveMotionSystem && motionRuntime && motionRuntime.isPlaying())
+        );
+      });
+      // Lipsync: sumber nilai tetap di driver (analisis audio TTS lokal /
+      // pola sintetis); framework menulis param mulut (role-resolved,
+      // skala range aktual).
+      window.__live2dView.setLipsyncProvider(function () {
+        if (!state.talking || state.frozen) return null;
+        const lip = state.audioLipSync;
+        if (lip && lip.active) return lip.sample();
+        const tNow = performance.now() / 1000;
+        const base = 0.35 + 0.4 * Math.abs(Math.sin(tNow * 9));
+        const jitter = Math.random() < 0.25 ? 0.25 : 0;
+        return Math.min(1, base + jitter);
+      });
 
       state.stageArea = { width: app.screen.width };
 
@@ -645,10 +589,7 @@
 
       fetchSheetFile().catch(() => {});
 
-      // kedip rAF — lihat tickBlink() dekat tick idle (interval natural,
-      // pulih aman saat freeze/model ganti)
       startIdle();
-      installOverrideGuard(state.model.internalModel);
       state.visfxMap = visfxLoad();
       wireInteractions();
       detectModelCapabilities();
@@ -718,75 +659,6 @@
     }
   }
 
-  // Kedip hidup di tick rAF (dt-based), bukan setInterval: interval natural
-  // per kedip, tidak terkuantisasi ke titik cek 3 dtk, dan fase buka-penuh
-  // selalu dipulihkan saat freeze/model ganti (timer lama tidak bisa
-  // ditinggal mati — mata bisa tertinggal di 0 tanpa ini).
-  state.blinkState = null; // null=terbuka | {phase:"close"|"closed"|"open", t:number}
-  state.blinkNext = 2 + Math.random() * 3; // dtk sampai kedip berikutnya
-  function tickBlink(dt) {
-    // Flip kepemilikan blink (Fase B): di stack baru framework memutar
-    // kedip (updater resmi + gate konfigurasi/frozen lewat setBlinkGate).
-    // Tulisan kedip framework frame-transien — tidak perlu restore manual.
-    if (RENDERER_PIXI8) return;
-    if (!state.model) return;
-    const eyes = [
-      roleId("eyeLOpen"),
-      roleId("eyeROpen"),
-    ].filter(Boolean);
-    // Saat klip emosi/motion memutar, kurva klip bisa menganimasi mata
-    // (mis. wink) — kedip otomatis dijeda supaya tidak menimpanya.
-    const clipOwns = !!(state.clipUntil && performance.now() < state.clipUntil);
-    if (
-      !eyes.length ||
-      !state.blinkEnabled ||
-      state.frozen ||
-      clipOwns
-    ) {
-      // Pulihkan mata ke buka penuh bila sempat tertutup, lalu reset fase.
-      if (state.blinkState) {
-        for (const id of eyes) pokeRoleNorm(id, 1);
-        state.blinkState = null;
-      }
-      return;
-    }
-    const CLOSE_MS = 100,
-      CLOSED_MS = 60,
-      OPEN_MS = 150;
-    if (!state.blinkState) {
-      state.blinkNext -= dt;
-      if (state.blinkNext <= 0) {
-        // Kembar (biasanya) atau kedip tunggal; kadang rentetan 2-3.
-        state.blinkNext = 2 + Math.random() * 4 - (Math.random() < 0.2 ? 1.2 : 0);
-        state.blinkState = { phase: "close", t: 0 };
-      }
-      return;
-    }
-    const bs = state.blinkState;
-    bs.t += dt * 1000;
-    if (bs.phase === "close") {
-      const v = 1 - Math.min(1, bs.t / CLOSE_MS);
-      for (const id of eyes) pokeRoleNorm(id, v);
-      if (bs.t >= CLOSE_MS) {
-        bs.phase = "closed";
-        bs.t = 0;
-      }
-    } else if (bs.phase === "closed") {
-      for (const id of eyes) pokeRoleNorm(id, 0);
-      if (bs.t >= CLOSED_MS) {
-        bs.phase = "open";
-        bs.t = 0;
-      }
-    } else {
-      const v = Math.min(1, bs.t / OPEN_MS);
-      for (const id of eyes) pokeRoleNorm(id, v);
-      if (bs.t >= OPEN_MS) {
-        for (const id of eyes) pokeRoleNorm(id, 1);
-        state.blinkState = null;
-      }
-    }
-  }
-
   function startIdle() {
     if (state.idleRAF) cancelAnimationFrame(state.idleRAF);
     let last = performance.now();
@@ -798,8 +670,6 @@
         state.idleRAF = requestAnimationFrame(tick);
         return;
       }
-
-      tickBlink(dt);
 
       state.impulse *= 0.9;
       if (state.impulse < 0.001) state.impulse = 0;
@@ -843,9 +713,8 @@
         motionRuntime &&
         motionRuntime.isPlaying()
       );
-      // Flip gaze (Fase B #3): di stack baru gaze dimiliki framework
-      // (CubismLook) — liveliness menyusun offset sway TANPA term gaze.
-      const gazeFromFramework = RENDERER_PIXI8 && !state.aiLock;
+      // Gaze dimiliki framework (CubismLook) — liveliness menyusun offset
+      // sway TANPA term gaze (komposisi aditif di atas motion + look).
       if (motionLayersActive) {
         const P = state.aiPose;
         const frozen = !!state.frozen;
@@ -860,21 +729,13 @@
         bBy = P.bodyY || 0;
         bBz = P.bodyZ || 0;
       } else if (!state.aiLock) {
-        const L = state.look,
-          k = 0.28;
-        L.ax += (L.tax - L.ax) * k;
-        L.ay += (L.tay - L.ay) * k;
-        L.ex += (L.tex - L.ex) * k;
-        L.ey += (L.tey - L.ey) * k;
-        L.bx += (L.tbx - L.bx) * k;
-        L.by += (L.tby - L.by) * k;
-        bAx = gazeFromFramework ? A1 * 0.5 : L.ax + A1 * 0.5;
-        bAy = gazeFromFramework ? A2 * 0.5 : L.ay + A2 * 0.5;
-        bEx = gazeFromFramework ? E1 : L.ex + E1;
-        bEy = gazeFromFramework ? E2 : L.ey + E2;
+        bAx = A1 * 0.5;
+        bAy = A2 * 0.5;
+        bEx = E1;
+        bEy = E2;
         bMf = 0;
-        bBx = gazeFromFramework ? bodyLeanLife * 0.4 : L.bx + bodyLeanLife * 0.4;
-        bBy = gazeFromFramework ? 0 : L.by;
+        bBx = bodyLeanLife * 0.4;
+        bBy = 0;
         bBz = tiltLife * 0.4;
       } else {
         const frozen = !!state.frozen;
@@ -944,12 +805,11 @@
           pokeParam(id, actual, 1);
           return;
         }
-        // Flip gaze (Fase B #3): di stack baru (di luar aiLock) liveliness
-        // menulis ADITIF — offset sway ditambahkan di atas motion + gaze
-        // framework. Lerp absolut akan mengikis kontribusi gaze framework
-        // pada param yang sama. mouthForm tetap SET-lerp (look tak
-        // menyentuhnya).
-        if (RENDERER_PIXI8 && !state.aiLock && role !== "mouthForm") {
+        // Di luar aiLock liveliness menulis ADITIF — offset sway
+        // ditambahkan di atas motion + gaze framework. Lerp absolut akan
+        // mengikis kontribusi gaze framework pada param yang sama.
+        // mouthForm tetap SET-lerp (look tak menyentuhnya).
+        if (!state.aiLock && role !== "mouthForm") {
           pokeAddParam(id, actual * poseAuthority, 1);
           return;
         }
@@ -974,21 +834,8 @@
         target("angleZ", tiltLife + (state.aiLock ? bBz * 0.5 : 0));
       }
 
-      // Breath app.js hanya saat tick ini pemilik pose. Saat layer motion
-      // aktif, kurva motion3 bisa membawa breath sendiri — menimpanya tiap
-      // frame berarti kurva itu tak pernah terdengar. Framework bawaan
-      // (updateNaturalMovements) menambahkan breath tersendiri di bawah —
-      // aman karena tick menulis SETELAH framework (beforeModelUpdate).
-      // Flip kepemilikan breath (Fase B #2): di stack baru framework yang
-      // menambah napas (aditif, gate hasBreath/frozen/motion-layer) —
-      // tulisan app.js dilewati supaya tidak menimpa kontribusi framework.
-      if (
-        state.hasBreath &&
-        !state.frozen &&
-        !motionLayersActive &&
-        !RENDERER_PIXI8
-      )
-        pokeRoleNorm("breath", clamp(breath, 0, 1));
+      // Breath: framework yang menambah napas (aditif, gate
+      // hasBreath/frozen/motion-layer lewat setBreathGate).
 
       if (state.emoCur) {
         const e = 0.12;
@@ -1005,29 +852,8 @@
         }
       }
 
-      // Flip kepemilikan lipsync (Fase B #4): di stack baru framework
-      // menulis mulut dari provider — blok overrides lama dilewati.
-      // Pembersihan saat bicara selesai (delete overrides + poke rest)
-      // tetap jalan di kedua stack (no-op di pixi8).
-      if (state.talking && !state.frozen && !RENDERER_PIXI8) {
-        const mId = roleId("mouthOpenY");
-        if (mId) {
-          let openness;
-          const lip = state.audioLipSync;
-          if (lip && lip.active) {
-            openness = lip.sample();
-          } else {
-            const base = 0.35 + 0.4 * Math.abs(Math.sin(t * 9));
-            const jitter = Math.random() < 0.25 ? 0.25 : 0;
-            openness = Math.min(1, base + jitter);
-          }
-
-          const r = roleRange("mouthOpenY");
-          state.overrides[mId] = r
-            ? r.min + openness * (r.max - r.min)
-            : openness;
-        }
-      }
+      // Lipsync: framework menulis mulut dari provider (setLipsyncProvider);
+      // pembersihan overrides saat bicara selesai tetap jalan di jalur TTS.
       applyOverrides();
       applyRawDrive();
       state._tickCount = (state._tickCount || 0) + 1;
@@ -1080,7 +906,7 @@
 
       const eyeLocalX = state.lookFrame.eyeX || m.width / m.scale.x / 2;
       const eyeLocalY = state.lookFrame.eyeY || (m.height / m.scale.y) * 0.22;
-      const eye = m.toGlobal(new PIXI.Point(eyeLocalX, eyeLocalY));
+      const eye = m.toGlobal({ x: eyeLocalX, y: eyeLocalY });
       const W = app.screen.width,
         H = app.screen.height;
 
@@ -1099,21 +925,9 @@
       const ny = clamp(-rawY / (rawY < 0 ? upRoom : downRoom), -1, 1);
       const nx = clamp(rawX / (rawX < 0 ? leftRoom : rightRoom), -1, 1);
 
-      // Flip gaze (Fase B #3): di stack baru target gaze diteruskan ke
-      // framework (CubismTargetPoint — easing wajah resmi); state.look
-      // app.js tidak dipakai lagi di jalur ini.
-      if (RENDERER_PIXI8) {
-        window.__live2dView.setLookTarget(nx, ny);
-        return;
-      }
-
-      state.look.tax = nx * REF_HALF;
-      state.look.tay = ny * REF_HALF;
-      state.look.tex = nx;
-      state.look.tey = ny;
-
-      state.look.tbx = nx * REF_HALF * 0.25;
-      state.look.tby = ny * REF_HALF * 0.25;
+      // Target gaze diteruskan ke framework (CubismTargetPoint — easing
+      // wajah resmi); framework look menggerakkan semua sendi gaze.
+      window.__live2dView.setLookTarget(nx, ny);
     });
 
     canvas.addEventListener("pointerdown", onPointerDown);
@@ -1145,7 +959,7 @@
       const wy = cursor ? cursor.y : m.y + curH / 2;
       let local =
         cursor && m.toLocal
-          ? m.toLocal(new PIXI.Point(cursor.x, cursor.y))
+          ? m.toLocal({ x: cursor.x, y: cursor.y })
           : null;
 
       if (
@@ -1252,9 +1066,8 @@
       state.look.tax = state.look.tay = state.look.tex = state.look.tey = 0;
       state.look.bx = state.look.by = state.look.tbx = state.look.tby = 0;
       state.look.ax = state.look.ay = state.look.ex = state.look.ey = 0;
-      // Flip gaze (Fase B #3): reset juga target gaze framework.
-      if (RENDERER_PIXI8 && window.__live2dView?.setLookTarget)
-        window.__live2dView.setLookTarget(0, 0);
+      // Reset juga target gaze framework.
+      window.__live2dView.setLookTarget(0, 0);
       frameModel("reset");
     });
   }
@@ -3735,10 +3548,6 @@
       gazeBody: $("#cfg-gaze-body"),
       gazeBodyOut: $("#cfg-gaze-body-out"),
     };
-    // Gain gaze hanya berlaku di stack baru (framework look) — sembunyikan
-    // di stack lama supaya tidak mengecoh.
-    if (!RENDERER_PIXI8 && cfgEls.gazeSection)
-      cfgEls.gazeSection.classList.add("hidden");
 
     let bgImageDraft;
     function setCfgStatus(msg, kind) {
@@ -3921,8 +3730,7 @@
               eyes: state.modelConfig.gazeEyes,
               body: state.modelConfig.gazeBody,
             };
-            if (RENDERER_PIXI8 && window.__live2dView?.setGazeGain)
-              window.__live2dView.setGazeGain(state.gazeGain);
+            window.__live2dView.setGazeGain(state.gazeGain);
           }
         });
       }
@@ -7745,8 +7553,7 @@
     state.blinkEnabled = c.blink;
     state.idleEnabled = c.idle;
     state.gazeGain = { head: c.gazeHead, eyes: c.gazeEyes, body: c.gazeBody };
-    if (RENDERER_PIXI8 && window.__live2dView?.setGazeGain)
-      window.__live2dView.setGazeGain(state.gazeGain);
+    window.__live2dView.setGazeGain(state.gazeGain);
 
     if (state.model) {
       try {
@@ -7774,20 +7581,12 @@
     if (!app || app.destroyed) return;
     const c = normalizeModelConfig(cfg);
     try {
-      // Fallback saat bgColor kosong: hangat hangat gelap (nuansa amber
-      // menyatu dengan aksen UI) — bukan hitam-biru dingin. Setelan user
-      // (picker #cfg-bg-color / gambar) selalu menang di atas nilai ini.
-      const hex = c.bgColor ? cssColorToHex(c.bgColor) : 0x16120c;
-
-      if (app.renderer.background && "color" in app.renderer.background) {
-        app.renderer.background.color = hex;
-      } else if ("backgroundColor" in app.renderer) {
-        app.renderer.backgroundColor = hex;
-      } else {
-        app.renderer._backgroundColor = hex;
-        app.renderer._backgroundColorString =
-          "#" + hex.toString(16).padStart(6, "0");
-      }
+      // Latar panggung kini DOM (#stage) — canvas render transparan di
+      // atasnya. Fallback saat bgColor kosong: hangat gelap (nuansa amber
+      // menyatu dengan aksen UI). Setelan user (picker #cfg-bg-color /
+      // gambar) selalu menang di atas nilai ini.
+      const stageEl = document.getElementById("stage");
+      if (stageEl) stageEl.style.background = c.bgColor || "#16120c";
     } catch (e) {
       console.warn("[stage-bg] color invalid:", c.bgColor);
     }
@@ -7797,20 +7596,19 @@
       removeStageBgImage();
       return;
     }
-    if (state._bgImageKey === want && state._bgSprite) {
+    if (state._bgImageKey === want && state._bgImgEl) {
       fitStageBgImage(c.bgDim);
       return;
     }
     removeStageBgImage();
-    const img = new Image();
+    // Gambar latar = <img> DOM di belakang canvas (object-fit: cover);
+    // dulu sprite PIXI di stage — tidak ter-render di stack view baru.
+    const img = document.getElementById("stage-bg");
+    if (!img) return;
     img.onload = () => {
       const cur = state.modelConfig || {};
       if ((cur.bgImage || "") !== want) return;
-      const tex = PIXI.Texture.from(img);
-      const spr = new PIXI.Sprite(tex);
-      spr.zIndex = -1;
-      app.stage.addChildAt(spr, 0);
-      state._bgSprite = spr;
+      img.hidden = false;
       state._bgImageKey = want;
       fitStageBgImage(c.bgDim);
     };
@@ -7818,42 +7616,20 @@
     img.src = want;
   }
   function fitStageBgImage(dim) {
-    const spr = state._bgSprite;
-    if (!spr || !spr.texture) return;
-    const W = app.screen.width,
-      H = app.screen.height;
-    const s = Math.max(W / spr.texture.width, H / spr.texture.height);
-    spr.width = spr.texture.width * s;
-    spr.height = spr.texture.height * s;
-    spr.x = (W - spr.width) / 2;
-    spr.y = (H - spr.height) / 2;
-
-    if (!state._bgDimSprite) {
-      state._bgDimSprite = new PIXI.Graphics();
-      state._bgDimSprite.zIndex = -0.5;
-      app.stage.addChild(state._bgDimSprite);
-    }
-    const g = state._bgDimSprite;
-    g.clear();
-    g.beginFill(0x000000, Math.max(0, Math.min(0.9, Number(dim) || 0)));
-    g.drawRect(0, 0, W, H);
-    g.endFill();
+    // object-fit: cover menangani fit; sisa pekerjaan = opacity dim.
+    const img = document.getElementById("stage-bg");
+    const dimEl = document.getElementById("stage-dim");
+    if (img && img.src && !img.hidden && dimEl)
+      dimEl.style.opacity = String(Math.max(0, Math.min(0.9, Number(dim) || 0)));
   }
   function removeStageBgImage() {
-    if (state._bgSprite) {
-      try {
-        app.stage.removeChild(state._bgSprite);
-        state._bgSprite.destroy();
-      } catch (e) {}
+    const img = document.getElementById("stage-bg");
+    const dimEl = document.getElementById("stage-dim");
+    if (img) {
+      img.removeAttribute("src");
+      img.hidden = true;
     }
-    if (state._bgDimSprite) {
-      try {
-        app.stage.removeChild(state._bgDimSprite);
-        state._bgDimSprite.destroy();
-      } catch (e) {}
-    }
-    state._bgSprite = null;
-    state._bgDimSprite = null;
+    if (dimEl) dimEl.style.opacity = "0";
     state._bgImageKey = null;
   }
 

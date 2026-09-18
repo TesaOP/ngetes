@@ -51,6 +51,10 @@
          cahaya / blur di atas canvas — apa pun yang menutupi canvas WebGL
          memaksa recomposite tiap frame. -->
     <div id="stage">
+      <!-- Latar panggung DOM: gambar (object-fit: cover) + overlay dim —
+           di belakang canvas transparan; dikendalikan app.js (config bg). -->
+      <img id="stage-bg" alt="" hidden />
+      <div id="stage-dim"></div>
       <canvas id="live2d-canvas"></canvas>
 
       <!-- Aktivitas agent konkret di panggung; tampil hanya saat bekerja /
@@ -978,13 +982,14 @@
   <!-- Floating Toast Notification Container -->
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
-  <!-- Scripts: PixiJS v6 (required by pixi-live2d-display@0.4.0) THEN Live2D bridge -->
+  <!-- Scripts: PixiJS v6 global DIPERTAHANKAN hanya sebagai utilitas
+       overlay efek emosi (renderer overlay emoji pada canvas terpisah) —
+       bukan lagi renderer Live2D. Stack Live2D lama (pixi-live2d-display)
+       sudah dipensiunkan. -->
   <script src="js/pixi.6.5.10.min.js"></script>
-  <script src="js/pixi-live2d-0.4.0.js?v=3"></script>
   <!-- View Pixi 8 (DEFAULT sejak Fase B): module ESM, pixi.js diresolve
        importmap ke ./js/pixi8.mjs — instance ESM terpisah, tidak menyentuh
-       global PIXI v6 stack lama (`?renderer=legacy` = kill-switch balik,
-       modul tetap idle). Dibangun dari src/live2d/view/ oleh `bun run build`. -->
+       global PIXI v6. Dibangun dari src/live2d/view/ oleh `bun run build`. -->
   <script type="importmap">{"imports":{"pixi.js":"./js/pixi8.mjs"}}</script>
   <script type="module" src="js/live2d-view.mjs"></script>
   <!-- TS client core: Taxonomy → DSL → Registry → Runtime + brain + i18n, terpasang sebagai
