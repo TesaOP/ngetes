@@ -6006,11 +6006,13 @@
 
   app.ticker.add(() => {
     if (state.model && !$("#loader").classList.contains("done")) {
+      // Loader hilang cepat begitu model siap (dulu 600+650 ms — overlay
+      // menghalangi panggung hampir 1,5 dtk setelah model termuat).
       $("#loader").classList.add("done");
       setTimeout(() => {
         $("#loader").classList.add("fade-out");
-        setTimeout(() => $("#loader").classList.add("hidden"), 650);
-      }, 600);
+        setTimeout(() => $("#loader").classList.add("hidden"), 300);
+      }, 200);
     }
   });
 

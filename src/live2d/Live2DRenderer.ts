@@ -101,9 +101,6 @@ export class Live2DRenderer {
     /** false = tanpa idle otomatis framework (app.js punya scheduler idle sendiri) */
     autoIdle?: boolean;
   }): Promise<{ mocVersion: number; drawable: number; offscreen: number }> {
-    const trace: string[] = ((globalThis as any).__loadSteps ??= []);
-    const step = (m: string) => { trace.push(`${performance.now().toFixed(0)}ms ${m}`); };
-    step(`loadModel mulai ${model3Path}`);
     const res = await fetch(model3Path);
     if (!res.ok) throw new Error(`fetch model3 ${res.status} ${model3Path}`);
     const buf = await res.arrayBuffer();
@@ -170,7 +167,6 @@ export class Live2DRenderer {
         const res = await fetch(texPath);
         if (!res.ok) throw new Error(`HTTP ${res.status} ${texPath}`);
         source = await createImageBitmap(await res.blob());
-        step(`tex${i} bitmap ok`);
       } catch (e) {
         console.warn(`[Live2DRenderer] bitmap gagal ${texPath}, fallback <img>`, e);
         const img = new Image();
@@ -180,7 +176,6 @@ export class Live2DRenderer {
         source = img;
       }
       const tex = this.gl.createTexture()!;
-      step(`tex${i} createTexture`);
       this.gl.bindTexture(this.gl.TEXTURE_2D, tex);
       this.gl.pixelStorei(this.gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 1);
       this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, source);
@@ -193,7 +188,6 @@ export class Live2DRenderer {
       if (err) console.warn(`[Live2DRenderer] glError setelah tex ${i}: ${err}`);
       renderer.bindTexture(i, tex);
       this.textures.push(tex);
-      step(`tex${i} bound`);
     }
 
     // model matrix + info canvas (untuk facade transform)

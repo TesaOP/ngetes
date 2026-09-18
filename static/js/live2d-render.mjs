@@ -10170,9 +10170,51 @@ var MotionPriority = {
   Force: 3
 };
 
+class LipsyncUpdater extends ICubismUpdater {
+  provider;
+  id;
+  min;
+  max;
+  constructor(provider, id, min, max, order) {
+    super(order);
+    this.provider = provider;
+    this.id = id;
+    this.min = min;
+    this.max = max;
+  }
+  onLateUpdate(model, _dt) {
+    const v = this.provider();
+    if (v == null)
+      return;
+    const openness = Math.max(0, Math.min(1, v));
+    model.setParameterValueById(this.id, this.min + openness * (this.max - this.min), 1);
+  }
+}
+
+class GatedUpdater extends ICubismUpdater {
+  inner;
+  gate;
+  constructor(inner, gate, order) {
+    super(order);
+    this.inner = inner;
+    this.gate = gate;
+  }
+  onLateUpdate(model, dt) {
+    if (this.gate())
+      this.inner.onLateUpdate(model, dt);
+  }
+}
+
 class Live2DUserModel extends CubismUserModel {
   updateScheduler = new CubismUpdateScheduler;
   autoIdle = true;
+  blinkGate = null;
+  breathGate = null;
+  lookGate = null;
+  lipsyncProvider = null;
+  registerLipsync(id, min, max) {
+    this.updateScheduler.addUpdatableList(new LipsyncUpdater(() => this.lipsyncProvider?.() ?? null, id, min, max, 450));
+  }
   _setting = null;
   _baseUrl = "";
   _motionCache = new Map;
@@ -10192,20 +10234,20 @@ class Live2DUserModel extends CubismUserModel {
   registerEffectUpdaters(opts) {
     const en = { blink: true, look: true, breath: true, ...opts.enabled ?? {} };
     if (this._eyeBlink && en.blink) {
-      this.updateScheduler.addUpdatableList(new CubismEyeBlinkUpdater(() => this._motionUpdated, this._eyeBlink));
+      this.updateScheduler.addUpdatableList(new CubismEyeBlinkUpdater(() => this._motionUpdated || !(this.blinkGate?.() ?? true), this._eyeBlink));
     }
     this.updateScheduler.addUpdatableList(new CubismExpressionUpdater(this._expressionManager));
     if (en.look) {
       this._look = CubismLook.create();
       if (opts.look.length)
         this._look.setParameters(opts.look);
-      this.updateScheduler.addUpdatableList(new CubismLookUpdater(this._look, this._dragManager));
+      this.updateScheduler.addUpdatableList(new GatedUpdater(new CubismLookUpdater(this._look, this._dragManager), () => this.lookGate?.() ?? true, 400 /* CubismUpdateOrder_Drag */));
     }
     if (en.breath) {
       this._breath = CubismBreath.create();
       if (opts.breath.length)
         this._breath.setParameters(opts.breath);
-      this.updateScheduler.addUpdatableList(new CubismBreathUpdater(this._breath));
+      this.updateScheduler.addUpdatableList(new GatedUpdater(new CubismBreathUpdater(this._breath), () => this.breathGate?.() ?? true, 500 /* CubismUpdateOrder_Breath */));
     }
     if (this._physics) {
       this.updateScheduler.addUpdatableList(new CubismPhysicsUpdater(this._physics));
@@ -10411,11 +10453,6 @@ class Live2DRenderer {
     ensureFramework();
   }
   async loadModel(model3Path, opts) {
-    const trace = globalThis.__loadSteps ??= [];
-    const step = (m) => {
-      trace.push(`${performance.now().toFixed(0)}ms ${m}`);
-    };
-    step(`loadModel mulai ${model3Path}`);
     const res = await fetch(model3Path);
     if (!res.ok)
       throw new Error(`fetch model3 ${res.status} ${model3Path}`);
@@ -10469,7 +10506,6 @@ class Live2DRenderer {
         if (!res2.ok)
           throw new Error(`HTTP ${res2.status} ${texPath}`);
         source = await createImageBitmap(await res2.blob());
-        step(`tex${i} bitmap ok`);
       } catch (e) {
         console.warn(`[Live2DRenderer] bitmap gagal ${texPath}, fallback <img>`, e);
         const img = new Image;
@@ -10483,7 +10519,6 @@ class Live2DRenderer {
         source = img;
       }
       const tex = this.gl.createTexture();
-      step(`tex${i} createTexture`);
       this.gl.bindTexture(this.gl.TEXTURE_2D, tex);
       this.gl.pixelStorei(this.gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 1);
       this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, source);
@@ -10497,7 +10532,6 @@ class Live2DRenderer {
         console.warn(`[Live2DRenderer] glError setelah tex ${i}: ${err}`);
       renderer.bindTexture(i, tex);
       this.textures.push(tex);
-      step(`tex${i} bound`);
     }
     const model = this.userModel.getModel();
     if (model) {
@@ -10524,6 +10558,11 @@ class Live2DRenderer {
       breath: this.buildBreathData(),
       enabled: opts?.effects
     });
+    const mouth = this.roleCtrl?.roleInfo("mouthOpenY");
+    if (mouth) {
+      const idMgr = CubismFramework.getIdManager();
+      this.userModel.registerLipsync(idMgr.getId(mouth.id), mouth.min, mouth.max);
+    }
     this.userModel.updateScheduler.addUpdatableList(new ArbiterUpdater(this.arbiter));
     this.userModel.updateScheduler.sortUpdatableList();
     if (hasPhysics)
