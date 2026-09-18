@@ -6,14 +6,15 @@
   "scripts": {
     "dev": "bun run src/server/index.ts",
     "start": "bun run src/server/index.ts",
-    "build": "bun run src/build.ts",
+    "build": "bun run scripts/setup-core.mjs && bun run src/build.ts",
     "test": "bun test && bun run test/run-guards.js",
     "test:unit": "bun test",
     "test:guards": "bun run test/run-guards.js",
     "build:pet": "cd agent-shell && bunx @tauri-apps/cli build",
     "dev:pet": "cd agent-shell && bunx @tauri-apps/cli build --debug",
     "dist": "bun run src/dist.ts",
-    "agent": "bun run src/cli/agent.ts"
+    "agent": "bun run src/cli/agent.ts",
+    "setup:core": "bun run scripts/setup-core.mjs"
   },
   "engines": {
     "bun": ">=1.0"

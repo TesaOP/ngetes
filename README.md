@@ -48,9 +48,15 @@ tanpa MOC-version-hack).
 
 ```bash
 bun install                   # hanya untuk dev (test / tsc)
-bun run build                 # WAJIB — static/js/bundle.js di-gitignore
+bun run build                 # WAJIB — unduh Cubism Core (sekali) + bundle client
 bun run src/server/index.ts   # default http://127.0.0.1:8310
 ```
+
+`bun run build` otomatis mengunduh **Cubism Core** dari CDN resmi Live2D bila belum ada
+(√Core = kode proprietary Live2D — tidak di-commit; dengan menjalankannya kamu dianggap
+menyetujui [lisensinya](https://www.live2d.com/eula/live2d-proprietary-software-license-agreement_en.html)).
+Bisa juga manual: unduh dari [halaman SDK Web Live2D](https://www.live2d.com/sdk/download/web/)
+lalu taruh `live2dcubismcore.min.js` di `static/js/`.
 
 `PORT=9000` untuk port lain · `HOST=0.0.0.0` untuk akses LAN (loopback default) ·
 `bun run dev` sebagai alias. Lewati `build` dan aplikasi jalan tapi **tanpa otak** — chat
@@ -195,6 +201,16 @@ Semua data buatanmu hidup di `data/` dan **tidak di-commit** (privasi + aset ber
 `config.json` (koneksi LLM/TTS — contoh format di `config.example.json`), `model/`
 (aset Live2D), `sheets/`, `motions/`. Pindah mesin = copy folder `data/` — format file
 identik, tidak ada konversi.
+
+## 📜 Lisensi
+
+| Komponen | Lisensi | Catatan |
+|---|---|---|
+| Kode aplikasi (`src/`, `static/js/app.js`, dll.) | milik kamu | — |
+| PixiJS 8 & 6 (vendored) | MIT | bebas didistribusikan |
+| **Cubism Core** (`live2dcubismcore.min.js`) | **Live2D Proprietary** (Redistributable Code) | TIDAK di-commit — diunduh via `bun run setup:core` dari CDN resmi; lisensinya melarang Core dipublish berdiri sendiri di repo publik |
+| **Cubism Framework** (`src/live2d/cubism/`, `static/shaders/cubism/`) | Live2D Open Software License | header lisensi resmi ikut ter-commit di tiap file |
+| Model Live2D (aset) | milik pembuat model | tidak di-commit |
 
 ## ⚠️ Model assets
 
