@@ -579,13 +579,15 @@
       const settings = await buildModelSettings(modelPath);
       if (RENDERER_PIXI8) {
         // Fase A: stack baru — view Pixi 8 memuat model lewat adapter
-        // src/live2d (moc native, tanpa pixi-live2d). buildModelSettings
-        // tetap dijalankan duluan supaya jalur rescue manifest tetap kerja.
+        // src/live2d (moc native, tanpa pixi-live2d). Manifest hasil adopsi
+        // .exp3 yatim (buildModelSettings) DITERUSKAN supaya model dengan
+        // deklarasi kosong (mis. lumine/神宫白子) tetap punya ekspresi —
+        // paritas jalur lama yang menyerahkan settings ke Live2DModel.from.
         await window.__live2dViewWait;
-        state.model = await window.__live2dView.loadModel(modelPath);
-        // Flip kepemilikan blink (#1), breath (#2), gaze (#3): framework
-        // memutar, app.js tetap pemegang pintu konfigurasi — gate dibaca
-        // live updater tiap frame.
+        state.model = await window.__live2dView.loadModel(modelPath, settings);
+        // Flip kepemilikan blink (#1), breath (#2), gaze (#3) & lipsync (#4):
+        // framework memutar, app.js tetap pemegang pintu konfigurasi —
+        // gate dibaca live updater tiap frame.
         window.__live2dView.setBlinkGate(function () {
           return state.blinkEnabled && !state.frozen;
         });

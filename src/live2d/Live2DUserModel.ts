@@ -111,6 +111,25 @@ export class Live2DUserModel extends CubismUserModel {
       new LipsyncUpdater(() => this.lipsyncProvider?.() ?? null, id, min, max, 450),
     );
   }
+
+  /** Fallback blink role-resolved (model-agnostic, Fase B): rig tanpa grup
+   * EyeBlink di manifest (CubismEyeBlink.create → null) tetap harus kedip —
+   * id mata dari role mapping, bukan grup manifest. No-op bila grup ada
+   * (instance resmi sudah dibuat attachSetting) atau id kosong. */
+  /** Fallback blink role-resolved (model-agnostic, Fase B): rig tanpa grup
+   * EyeBlink di manifest menghasilkan instance dengan 0 id — isi dengan id
+   * mata dari role mapping (by-name, bukan grup). Deklarasi rigger yang
+   * punya id selalu menang (no-op). */
+  ensureEyeBlink(ids: CubismIdHandle[]): void {
+    if (!ids.length) return;
+    if (this._eyeBlink) {
+      if (this._eyeBlink.getParameterIds().length) return;
+      this._eyeBlink.setParameterIds(ids);
+      return;
+    }
+    this._eyeBlink = new CubismEyeBlink(null as any);
+    this._eyeBlink.setParameterIds(ids);
+  }
   private _setting: CubismModelSettingJson | null = null;
   private _baseUrl = "";
   private _motionCache = new Map<string, CubismMotion>();

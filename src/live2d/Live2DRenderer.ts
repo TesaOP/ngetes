@@ -100,18 +100,32 @@ export class Live2DRenderer {
     effects?: { blink?: boolean; look?: boolean; breath?: boolean };
     /** false = tanpa idle otomatis framework (app.js punya scheduler idle sendiri) */
     autoIdle?: boolean;
+    /** Adopsi .exp3 yatim (Fase B): manifest in-memory hasil buildModelSettings
+     * app.js (hanya menambah yang belum dideklarasikan rigger; aturan user>ai
+     * dan opt-out per-file dipatuhi di sana). Null/undefined = fetch manifest
+     * asli. Jangan pernah ditulis balik ke disk. */
+    adoptedManifest?: unknown;
   }): Promise<{ mocVersion: number; drawable: number; offscreen: number }> {
     const res = await fetch(model3Path);
     if (!res.ok) throw new Error(`fetch model3 ${res.status} ${model3Path}`);
-    const buf = await res.arrayBuffer();
-    this.setting = new CubismModelSettingJson(buf, buf.byteLength);
+    let manifestBuf: ArrayBuffer;
+    if (opts?.adoptedManifest && typeof opts.adoptedManifest === "object") {
+      manifestBuf = new TextEncoder().encode(
+        JSON.stringify(opts.adoptedManifest),
+      ).buffer as ArrayBuffer;
+    } else {
+      manifestBuf = await res.arrayBuffer();
+    }
+    this.setting = new CubismModelSettingJson(manifestBuf, manifestBuf.byteLength);
     this.baseDir = model3Path.slice(0, model3Path.lastIndexOf("/") + 1);
 
     // moc
     const mocFile = this.setting.getModelFileName();
     const mocBuf = await (await fetch(this.baseDir + mocFile)).arrayBuffer();
     const core = (globalThis as any).Live2DCubismCore;
-    const mocVersion = core ? core.Version.csmGetMocVersion(mocBuf) : -1;
+    const mocVersion = core
+      ? core.Version.csmGetMocVersion(mocBuf, mocBuf.byteLength)
+      : -1;
 
     this.userModel = new Live2DUserModel();
     this.paramCtrl = null; // model baru — controller lama basi
@@ -211,6 +225,19 @@ export class Live2DRenderer {
       this.roleCtrl = new RoleController(model!, paramSet, { eyeBlinkIds, lipSyncIds });
       console.log(`[Live2DRenderer] role map`, this.roleCtrl.getRoleMap());
     } catch (e) { console.warn("[Live2DRenderer] role map gagal", e); }
+
+    // Blink resmi dibangun dari grup EyeBlink manifest; rig tanpa grup
+    // (mis. 面饼0) menghasilkan instance 0-id — isi dengan id mata dari
+    // role mapping (model-agnostic, by-name). Deklarasi rigger menang.
+    if (this.roleCtrl) {
+      const fallbackIds: any[] = [];
+      const idMgr = CubismFramework.getIdManager();
+      for (const role of ["eyeLOpen", "eyeROpen"]) {
+        const info = this.roleCtrl.roleInfo(role);
+        if (info) fallbackIds.push(idMgr.getId(info.id));
+      }
+      this.userModel.ensureEyeBlink(fallbackIds);
+    }
 
     // Daftarkan updater efek (blink/expr/look/breath/physics/pose) dengan
     // look & breath diskalakan dari range aktual model (role-space), lalu

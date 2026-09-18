@@ -14,7 +14,8 @@ const w = window as any;
 w.__live2dView = {
   ready: false,
   view,
-  loadModel: (p: string) => view.loadModel(p),
+  loadModel: (p: string, adoptedManifest?: unknown) =>
+    view.loadModel(p, adoptedManifest),
   resize: (cw: number, ch: number) => view.resize(cw, ch),
   setBackground: (hex: number) => view.setBackground(hex),
   // Flip kepemilikan blink (#1), breath (#2), gaze (#3): app.js tetap

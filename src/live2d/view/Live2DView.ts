@@ -202,7 +202,7 @@ export class Live2DView {
     return this.initPromise;
   }
 
-  async loadModel(modelPath: string): Promise<any> {
+  async loadModel(modelPath: string, adoptedManifest?: unknown): Promise<any> {
     if (!this.renderer) throw new Error("Live2DView belum init");
     const prev = this.facade;
     if (prev?.destroy) { try { prev.destroy(); } catch {} }
@@ -215,6 +215,10 @@ export class Live2DView {
       // startIdleMotion pemilik idle.
       effects: { blink: true, look: true, breath: true },
       autoIdle: false,
+      // Adopsi .exp3 yatim (Fase B): manifest in-memory hasil
+      // buildModelSettings app.js — dipakai bila ada, fetch manifest asli
+      // bila null (model dengan deklarasi lengkap).
+      adoptedManifest,
     });
 
     const userModel = (this.renderer as any).userModel as Live2DUserModel;
