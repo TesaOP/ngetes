@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="id">
+<meta charset="utf-8">
+<title>Pixi 8 Proof — Fase 3</title>
+<style>html,body{margin:0;height:100%;background:#e8e8e8}canvas{display:block}</style>
+<script type="importmap">{"imports":{"pixi.js":"./js/pixi8.mjs"}}</script>
+<script type="module">
+import * as PIXI from 'pixi.js';
+const app = new PIXI.Application();
+await app.init({ width: 320, height: 180, backgroundAlpha: 0, antialias: true });
+document.body.appendChild(app.canvas);
+// bukti sprite biasa (tanpa Live2D) — target Fase 3
+const g = new PIXI.Graphics().rect(0,0,320,180).fill(0xe8e8e8);
+const spr = new PIXI.Graphics().rect(80,40,160,100).fill(0x22c55e);
+const label = new PIXI.Text({ text: 'Pixi 8.20.1 OK', style: { fill: 0x111827, fontSize: 14, fontFamily: 'sans-serif' } });
+label.x = 106; label.y = 84;
+app.stage.addChild(g, spr, label);
+console.log('[pixi8-proof] PIXI', PIXI.VERSION, 'canvas', app.canvas.width+'x'+app.canvas.height);
+// expose for headless check
+window.__pixi8Proof = { version: PIXI.VERSION, w: app.canvas.width, h: app.canvas.height, hasCanvas: !!app.canvas };
+</script>
+</html>
