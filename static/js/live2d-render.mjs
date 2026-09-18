@@ -9501,6 +9501,63 @@ class ParameterController {
   }
 }
 
+// src/live2d/ModelInspector.ts
+function inspectModel(model, setting) {
+  const parameters = [];
+  const n = model.getParameterCount();
+  for (let i = 0;i < n; i++) {
+    const id = model.getParameterId(i).getString();
+    parameters.push({
+      id,
+      min: model.getParameterMinimumValue(i),
+      max: model.getParameterMaximumValue(i),
+      default: model.getParameterDefaultValue(i)
+    });
+  }
+  const parts = [];
+  const pc = model.getPartCount?.() ?? 0;
+  for (let i = 0;i < pc; i++) {
+    try {
+      const pid = model.getPartId?.(i)?.getString?.() ?? `Part${i}`;
+      parts.push({ id: pid });
+    } catch {
+      parts.push({ id: `Part${i}` });
+    }
+  }
+  const motions = [];
+  let expressions = [];
+  let physics = false;
+  let pose = false;
+  if (setting) {
+    const anySetting = setting;
+    if (anySetting.getMotionGroupCount) {
+      const gc = anySetting.getMotionGroupCount();
+      for (let i = 0;i < gc; i++) {
+        const g = anySetting.getMotionGroupName?.(i) ?? `Group${i}`;
+        const count = anySetting.getMotionCount?.(g) ?? 0;
+        motions.push({ group: g, count });
+      }
+    }
+    expressions = [];
+    const ec = anySetting.getExpressionCount?.() ?? 0;
+    for (let i = 0;i < ec; i++)
+      expressions.push(anySetting.getExpressionName?.(i) ?? `exp_${i}`);
+    physics = !!anySetting.getPhysicsFileName?.() && anySetting.getPhysicsFileName?.() !== "";
+    pose = !!anySetting.getPoseFileName?.() && anySetting.getPoseFileName?.() !== "";
+  }
+  return {
+    parameters,
+    parts,
+    motions,
+    expressions,
+    physics,
+    pose,
+    canvas: { width: model.getCanvasWidth(), height: model.getCanvasHeight() },
+    drawable: model.getDrawableCount?.() ?? model.drawables?.count ?? 0,
+    offscreen: model.getOffscreenCount?.() ?? 0
+  };
+}
+
 // src/live2d/Live2DRenderer.ts
 var frameworkStarted = false;
 function ensureFramework() {
@@ -9674,6 +9731,12 @@ class Live2DRenderer {
       return false;
     return new ParameterController(m).setParameter(id, value);
   }
+  getModelProfile() {
+    const m = this.userModel?.getModel?.() ?? this.userModel?._model;
+    if (!m || !this.setting)
+      return null;
+    return inspectModel(m, this.setting);
+  }
   destroy() {
     try {
       this.userModel?.release?.();
@@ -9750,5 +9813,6 @@ class Live2DModel {
 export {
   Live2DModel,
   Live2DRenderer,
-  ParameterController
+  ParameterController,
+  inspectModel
 };

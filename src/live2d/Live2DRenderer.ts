@@ -5,6 +5,7 @@ import { CubismModelSettingJson } from "./cubism/cubismmodelsettingjson";
 import { CubismMatrix44 } from "./cubism/math/cubismmatrix44";
 import { CubismModelMatrix } from "./cubism/math/cubismmodelmatrix";
 import { ParameterController, type ParamInfo } from "./ParameterController";
+import { inspectModel, type ModelProfile } from "./ModelInspector";
 
 let frameworkStarted = false;
 function ensureFramework() {
@@ -195,6 +196,13 @@ export class Live2DRenderer {
     const m: any = (this.userModel as any)?.getModel?.() ?? (this.userModel as any)?._model;
     if (!m) return false;
     return new ParameterController(m).setParameter(id, value);
+  }
+
+  // Fase 9 — Model Inspector
+  getModelProfile(): ModelProfile | null {
+    const m: any = (this.userModel as any)?.getModel?.() ?? (this.userModel as any)?._model;
+    if (!m || !this.setting) return null;
+    return inspectModel(m, this.setting);
   }
 
   destroy() {
