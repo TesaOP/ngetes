@@ -10140,6 +10140,7 @@ var MotionPriority = {
 
 class Live2DUserModel extends CubismUserModel {
   updateScheduler = new CubismUpdateScheduler;
+  autoIdle = true;
   _setting = null;
   _baseUrl = "";
   _motionCache = new Map;
@@ -10157,18 +10158,23 @@ class Live2DUserModel extends CubismUserModel {
     this._eyeBlink = CubismEyeBlink.create(setting);
   }
   registerEffectUpdaters(opts) {
-    if (this._eyeBlink) {
+    const en = { blink: true, look: true, breath: true, ...opts.enabled ?? {} };
+    if (this._eyeBlink && en.blink) {
       this.updateScheduler.addUpdatableList(new CubismEyeBlinkUpdater(() => this._motionUpdated, this._eyeBlink));
     }
     this.updateScheduler.addUpdatableList(new CubismExpressionUpdater(this._expressionManager));
-    this._look = CubismLook.create();
-    if (opts.look.length)
-      this._look.setParameters(opts.look);
-    this.updateScheduler.addUpdatableList(new CubismLookUpdater(this._look, this._dragManager));
-    this._breath = CubismBreath.create();
-    if (opts.breath.length)
-      this._breath.setParameters(opts.breath);
-    this.updateScheduler.addUpdatableList(new CubismBreathUpdater(this._breath));
+    if (en.look) {
+      this._look = CubismLook.create();
+      if (opts.look.length)
+        this._look.setParameters(opts.look);
+      this.updateScheduler.addUpdatableList(new CubismLookUpdater(this._look, this._dragManager));
+    }
+    if (en.breath) {
+      this._breath = CubismBreath.create();
+      if (opts.breath.length)
+        this._breath.setParameters(opts.breath);
+      this.updateScheduler.addUpdatableList(new CubismBreathUpdater(this._breath));
+    }
     if (this._physics) {
       this.updateScheduler.addUpdatableList(new CubismPhysicsUpdater(this._physics));
     }
@@ -10343,8 +10349,21 @@ class Live2DRenderer {
   textures = [];
   roleCtrl = null;
   arbiter = new ParameterArbiter;
+  officialGroups = { eyeBlinkIds: [], lipSyncIds: [] };
   frameBuffer = null;
   lastFrameMs = null;
+  mvpProvider = null;
+  clearColor = [0.909, 0.909, 0.909, 1];
+  setMvpProvider(fn) {
+    this.mvpProvider = fn;
+  }
+  setClear(color) {
+    this.clearColor = color;
+  }
+  getModelCanvasSize() {
+    return this.modelMatrix ? { width: this.canvasInfo.width, height: this.canvasInfo.height } : { width: 1, height: 1 };
+  }
+  canvasInfo = { width: 1, height: 1 };
   constructor(canvas, gl) {
     this.canvas = canvas;
     this.gl = gl ?? canvas.getContext("webgl2") ?? canvas.getContext("webgl");
@@ -10353,7 +10372,12 @@ class Live2DRenderer {
     this.frameBuffer = this.gl.getParameter(this.gl.FRAMEBUFFER_BINDING);
     ensureFramework();
   }
-  async loadModel(model3Path) {
+  async loadModel(model3Path, opts) {
+    const trace = globalThis.__loadSteps ??= [];
+    const step = (m) => {
+      trace.push(`${performance.now().toFixed(0)}ms ${m}`);
+    };
+    step(`loadModel mulai ${model3Path}`);
     const res = await fetch(model3Path);
     if (!res.ok)
       throw new Error(`fetch model3 ${res.status} ${model3Path}`);
@@ -10375,6 +10399,7 @@ class Live2DRenderer {
     const lc = s.getLipSyncParameterCount?.() ?? 0;
     for (let i = 0;i < lc; i++)
       lipSyncIds.push(s.getLipSyncParameterId(i).getString());
+    this.officialGroups = { eyeBlinkIds: [...eyeBlinkIds], lipSyncIds: [...lipSyncIds] };
     this.userModel.attachSetting(this.setting, this.baseDir, eyeBlinkIds, lipSyncIds);
     let hasPhysics = false;
     let hasPose = false;
@@ -10399,18 +10424,30 @@ class Live2DRenderer {
     const texCount = this.setting.getTextureCount();
     for (let i = 0;i < texCount; i++) {
       const texPath = this.baseDir + this.setting.getTextureFileName(i);
-      const img = new Image;
-      img.crossOrigin = "anonymous";
-      img.src = texPath;
+      let source;
       try {
-        await img.decode();
+        const res2 = await fetch(texPath);
+        if (!res2.ok)
+          throw new Error(`HTTP ${res2.status} ${texPath}`);
+        source = await createImageBitmap(await res2.blob());
+        step(`tex${i} bitmap ok`);
       } catch (e) {
-        console.warn(`[Live2DRenderer] img decode gagal ${texPath}`, e);
+        console.warn(`[Live2DRenderer] bitmap gagal ${texPath}, fallback <img>`, e);
+        const img = new Image;
+        img.crossOrigin = "anonymous";
+        img.src = texPath;
+        try {
+          await img.decode();
+        } catch (e2) {
+          console.warn(`[Live2DRenderer] img decode gagal ${texPath}`, e2);
+        }
+        source = img;
       }
       const tex = this.gl.createTexture();
+      step(`tex${i} createTexture`);
       this.gl.bindTexture(this.gl.TEXTURE_2D, tex);
       this.gl.pixelStorei(this.gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 1);
-      this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, img);
+      this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, source);
       this.gl.generateMipmap(this.gl.TEXTURE_2D);
       this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.LINEAR_MIPMAP_LINEAR);
       this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.LINEAR);
@@ -10421,13 +10458,16 @@ class Live2DRenderer {
         console.warn(`[Live2DRenderer] glError setelah tex ${i}: ${err}`);
       renderer.bindTexture(i, tex);
       this.textures.push(tex);
+      step(`tex${i} bound`);
     }
     const model = this.userModel.getModel();
     if (model) {
+      this.canvasInfo = { width: model.getCanvasWidth(), height: model.getCanvasHeight() };
       this.modelMatrix = new CubismModelMatrix(model.getCanvasWidth(), model.getCanvasHeight());
     } else {
       this.modelMatrix = new CubismModelMatrix(1, 1);
     }
+    this.userModel.autoIdle = opts?.autoIdle ?? true;
     const drawable = model?.getDrawableCount?.() ?? 0;
     const offscreen = model?.getOffscreenCount?.() ?? 0;
     try {
@@ -10442,7 +10482,8 @@ class Live2DRenderer {
     }
     this.userModel.registerEffectUpdaters({
       look: this.buildLookData(),
-      breath: this.buildBreathData()
+      breath: this.buildBreathData(),
+      enabled: opts?.effects
     });
     this.userModel.updateScheduler.addUpdatableList(new ArbiterUpdater(this.arbiter));
     this.userModel.updateScheduler.sortUpdatableList();
@@ -10510,30 +10551,41 @@ class Live2DRenderer {
         return;
       const w = this.gl.drawingBufferWidth ?? this.canvas.width;
       const h = this.gl.drawingBufferHeight ?? this.canvas.height;
-      this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
-      this.gl.viewport(0, 0, w, h);
-      this.gl.clearColor(0.909, 0.909, 0.909, 1);
-      this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
+      if (this.clearColor) {
+        this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, null);
+        this.gl.viewport(0, 0, w, h);
+        this.gl.clearColor(...this.clearColor);
+        this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
+      }
       const drawRenderer = renderer;
       drawRenderer.saveProfile?.();
       renderer.setRenderState(this.frameBuffer, [0, 0, w, h]);
-      this.proj.loadIdentity();
-      const scale = 1.45;
-      this.proj.scale(scale, scale * (this.canvas.width / this.canvas.height));
-      this.proj.translateY(-0.12);
-      if (this.modelMatrix) {
-        this.mvp.loadIdentity();
-        this.mvp.multiplyByMatrix(this.proj);
-        this.mvp.multiplyByMatrix(this.modelMatrix);
-        renderer.setMvpMatrix(this.mvp);
+      if (this.mvpProvider) {
+        const mvp = new CubismMatrix44;
+        mvp.setMatrix(this.mvpProvider());
+        renderer.setMvpMatrix(mvp);
       } else {
-        renderer.setMvpMatrix(this.proj);
+        this.proj.loadIdentity();
+        const scale = 1.45;
+        this.proj.scale(scale, scale * (this.canvas.width / this.canvas.height));
+        this.proj.translateY(-0.12);
+        if (this.modelMatrix) {
+          this.mvp.loadIdentity();
+          this.mvp.multiplyByMatrix(this.proj);
+          this.mvp.multiplyByMatrix(this.modelMatrix);
+          renderer.setMvpMatrix(this.mvp);
+        } else {
+          renderer.setMvpMatrix(this.proj);
+        }
       }
       renderer.drawModel(this.shaderPath);
       drawRenderer.restoreProfile?.();
     } finally {
       offscreenMgr.endFrameProcess(this.gl);
     }
+  }
+  getOfficialGroups() {
+    return { eyeBlinkIds: [...this.officialGroups.eyeBlinkIds], lipSyncIds: [...this.officialGroups.lipSyncIds] };
   }
   getDrawableCount() {
     return this.userModel?.getModel()?.getDrawableCount?.() ?? 0;
