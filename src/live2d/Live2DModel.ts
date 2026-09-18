@@ -1,7 +1,4 @@
-/**
- * Fase 4 — facade kosong. Tujuan: app.js memanggil API ini, bukan PIXI.live2d langsung.
- * Isi masih stub — Fase 5 akan isi dengan load nyata via Cubism SDK.
- */
+/** Fase 5 — facade: app.js → Live2DModel.from → Cubism Core native (tanpa byte-hack). */
 import type { Live2DAdapterOptions, Live2DModelLike } from "./types";
 import { loadLive2DModel } from "./ModelLoader";
 

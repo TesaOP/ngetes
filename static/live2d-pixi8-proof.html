@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="id">
+<meta charset="utf-8">
+<title>Live2D Pixi8 — Fase 5 proof</title>
+<style>html,body{margin:0;background:#e8e8e8}canvas{display:block}</style>
+<script src="js/live2dcubismcore.min.js"></script>
+<script type="importmap">{"imports":{"pixi.js":"./js/pixi8.mjs"}}</script>
+<script type="module">
+import * as PIXI from 'pixi.js';
+import { Live2DModel } from './js/live2d-proof.mjs';
+
+const app = new PIXI.Application();
+await app.init({ width: 360, height: 520, background: '#e8e8e8', backgroundAlpha: 1, antialias: true });
+document.body.appendChild(app.canvas);
+console.log('[fase5] PIXI', PIXI.VERSION, 'core', window.Live2DCubismCore?.Version?.csmGetVersion?.().toString(16));
+
+// golden model: ren_official_cubism (v6, 24 offscreen) — sama dengan Ren SDK
+const PATH = '/model/ren_official_cubism/runtime/ren.model3.json';
+try {
+  const m = await Live2DModel.from(PATH);
+  app.stage.addChild(m.container);
+  m.container.x = 20; m.container.y = 80;
+  console.log('[fase5] OK', JSON.stringify(m.info));
+  window.__fase5 = { ok: true, info: m.info, hasCanvas: !!app.canvas, pixi: PIXI.VERSION };
+} catch (e) {
+  console.error('[fase5] FAIL', e && e.message || e);
+  window.__fase5 = { ok: false, error: String(e && e.message || e) };
+}
+</script>
+</html>

@@ -14,7 +14,9 @@ export interface ParameterInfo {
 }
 
 export interface Live2DModelLike {
-  /** Pixi Container yang bisa di-add ke stage (placeholder Fase 4). */
+  /** Pixi Container yang bisa di-add ke stage (Fase 5: placeholder + info). */
   container: import("pixi.js").Container;
+  /** Info Cubism native untuk verifikasi Fase 5. */
+  info: { mocVersion: number; drawable: number; offscreen: number; textures: number };
   destroy(): void;
 }

@@ -1,0 +1,65 @@
+// src/live2d/ModelLoader.ts
+import * as PIXI from "pixi.js";
+async function loadLive2DModel(modelPath, _options) {
+  const core = globalThis.Live2DCubismCore ?? window?.Live2DCubismCore;
+  if (!core)
+    throw new Error('Live2DCubismCore belum dimuat — <script src="js/live2dcubismcore.min.js"> harus sebelum bundle');
+  const res = await fetch(modelPath);
+  if (!res.ok)
+    throw new Error(`fetch model3.json gagal ${res.status} ${modelPath}`);
+  const dir = modelPath.slice(0, modelPath.lastIndexOf("/") + 1);
+  const setting = await res.json();
+  const mocFile = setting.FileReferences?.Moc;
+  if (!mocFile)
+    throw new Error("FileReferences.Moc tidak ada di model3.json");
+  const mocUrl = dir + mocFile;
+  const mocRes = await fetch(mocUrl);
+  if (!mocRes.ok)
+    throw new Error(`fetch moc gagal ${mocRes.status} ${mocUrl}`);
+  const mocBytes = await mocRes.arrayBuffer();
+  const mocVersion = core.Version.csmGetMocVersion(mocBytes);
+  const moc = core.Moc.fromArrayBuffer(mocBytes);
+  if (!moc)
+    throw new Error(`Core menolak moc v${mocVersion} — Core basi? (Core ${core.Version.csmGetVersion().toString(16)})`);
+  const model = core.Model.fromMoc(moc);
+  if (!model)
+    throw new Error("Model.fromMoc gagal");
+  const drawable = model.drawables?.count ?? 0;
+  const offscreen = model.offscreens?.count ?? 0;
+  const textures = setting.FileReferences?.Textures?.length ?? 0;
+  const container = new PIXI.Container;
+  container.label = "Live2D/Fase5";
+  const bg = new PIXI.Graphics().rect(0, 0, 320, 360).fill({ color: 988970, alpha: 0.08 });
+  const badge = new PIXI.Graphics().rect(8, 8, 304, 28).fill(2278750);
+  const txt = new PIXI.Text({
+    text: `moc v${mocVersion}  d:${drawable}  off:${offscreen}  tex:${textures}`,
+    style: { fill: 16777215, fontSize: 11, fontFamily: "monospace" }
+  });
+  txt.x = 12;
+  txt.y = 15;
+  container.addChild(bg, badge, txt);
+  return {
+    container,
+    info: { mocVersion, drawable, offscreen, textures },
+    destroy() {
+      try {
+        model._release?.();
+      } catch {}
+      try {
+        moc._release?.();
+      } catch {}
+      container.destroy({ children: true });
+    }
+  };
+}
+
+// src/live2d/Live2DModel.ts
+class Live2DModel {
+  static async from(modelPath, options) {
+    return loadLive2DModel(modelPath, options);
+  }
+}
+export {
+  Live2DModel,
+  loadLive2DModel
+};
