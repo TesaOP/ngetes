@@ -9041,6 +9041,10 @@ class CubismRenderer_WebGL extends CubismRenderer {
     this._renderStateValid = false;
     this._renderingFrameBuffer = null;
     this._renderingViewport = null;
+    if (this._renderTargetIndexBuffer != null && this.gl != null) {
+      this.gl.deleteBuffer(this._renderTargetIndexBuffer);
+      this._renderTargetIndexBuffer = null;
+    }
     if (this.gl == null) {
       return;
     }
@@ -9357,16 +9361,22 @@ Please call 'CubimRenderer_WebGL.startUp' function.`);
       this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, this._currentFbo);
     }
     {
-      const indexBuffer = this.gl.createBuffer();
-      this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
-      this.gl.bufferData(this.gl.ELEMENT_ARRAY_BUFFER, s_renderTargetIndexArray, this.gl.STATIC_DRAW);
+      this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, this.getRenderTargetIndexBuffer());
       this.gl.drawElements(this.gl.TRIANGLES, s_renderTargetIndexArray.length, this.gl.UNSIGNED_SHORT, 0);
-      this.gl.deleteBuffer(indexBuffer);
     }
     offscreen.stopUsingRenderTexture();
     this.gl.useProgram(null);
     this.setClippingContextBufferForMask(null);
     this.setClippingContextBufferForOffscreen(null);
+  }
+  getRenderTargetIndexBuffer() {
+    if (this._renderTargetIndexBuffer == null) {
+      const buf = this.gl.createBuffer();
+      this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, buf);
+      this.gl.bufferData(this.gl.ELEMENT_ARRAY_BUFFER, s_renderTargetIndexArray, this.gl.STATIC_DRAW);
+      this._renderTargetIndexBuffer = buf;
+    }
+    return this._renderTargetIndexBuffer;
   }
   saveProfile() {
     this._rendererProfile.save();
@@ -9393,11 +9403,8 @@ Please call 'CubimRenderer_WebGL.startUp' function.`);
     this._modelRenderTargets[0].endDraw();
     CubismShaderManager_WebGL.getInstance().getShader(this.gl).setupShaderProgramForOffscreenRenderTarget(this);
     if (CubismShaderManager_WebGL.getInstance().getShader(this.gl)._isShaderLoaded) {
-      const indexBuffer = this.gl.createBuffer();
-      this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
-      this.gl.bufferData(this.gl.ELEMENT_ARRAY_BUFFER, s_renderTargetIndexArray, this.gl.STATIC_DRAW);
+      this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, this.getRenderTargetIndexBuffer());
       this.gl.drawElements(this.gl.TRIANGLES, s_renderTargetIndexArray.length, this.gl.UNSIGNED_SHORT, 0);
-      this.gl.deleteBuffer(indexBuffer);
     }
     this.gl.useProgram(null);
   }
@@ -9526,6 +9533,7 @@ Please call 'CubimRenderer_WebGL.startUp' function.`);
   _renderingFrameBuffer;
   _renderingViewport;
   _renderStateValid;
+  _renderTargetIndexBuffer;
   _bufferData;
   _extension;
   gl;

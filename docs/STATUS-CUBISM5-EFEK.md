@@ -4,6 +4,43 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## UPDATE 2026-09-18 (31) — ENTEng LANJUT: CACHE BUFFER INDEKS QUAD + KALIBRASI PENGUKURAN (COMMIT)
+
+Lanjutan permintaan user "buat lebih enteng lagi" setelah entri (30). Dua
+hasil: satu optimasi nyata, dan pemahaman penting soal pengukuran di mesin
+ini (penting untuk sesi berikutnya).
+
+- **Cache buffer indeks quad render-target** (`cubismrenderer_webgl.ts`):
+  dua jalur dulu melakukan `createBuffer`+`bufferData`+`deleteBuffer` tiap
+  panggilan — `drawOffscreenWebGL` (per offscreen per frame; ren 24×) dan
+  `afterDrawModelRenderTarget` (per frame) = 25 siklus alloc GPU per frame
+  untuk konten yang statis (`s_renderTargetIndexArray`). Kini satu buffer
+  di-cache (`getRenderTargetIndexBuffer()`), dihapus di `release()`. Aman
+  thd. VAO Pixi (binding ELEMENT_ARRAY_BUFFER dengan default-VAO tidak
+  menyentuh VAO milik Pixi).
+- **Kalibrasi pengukuran (penting!)**: loop mikro di mesin ini SANGAT
+  bimodal — jendela cepat (drawModel 2–7 ms) dan jendela lambat (23–33 ms)
+  bergantian antar-menit, kena SEMUA pipeline termasuk kontrol. Buktinya:
+  kontrol stack lama di-DOM-detach terukur 1,3 ms di jendela cepat;
+  A/B selang-seling dalam jendela yang sama menghasilkan rasio stabil
+  **baru 5,9–7,3 ms vs lama 2,9–3,9 ms** (drain `gl.finish` per frame,
+  termasuk GPU). Jangan pernah menyimpulkan dari satu jendela pengukuran —
+  selama-selang-seling atau pakai live rAF. Angka 30 ms sebelumnya pada
+  entri (30) adalah kombinasi stall glGet asli (sudah dihapus, efek nyata:
+  live 26 FPS dulu) + jendela interferensi host.
+- **Fakta pipeline yang terkonfirmasi**: histogram panggilan GL per frame
+  baru ≈ lama (705 vs 568 bindBuffer; 626 vs 564 bufferData) — biaya ekstra
+  stack baru berasal dari jalur v6 (pass offscreen + uniform 641 vs 204),
+  bukan pemborosan panggilan; render Pixi stage kosong hanya **0,2 ms**
+  (ide "skip render Pixi" tidak jalan — biarkan); `gl.getError()` bersih;
+  readPixels konten model opaque.
+- Gate: tsc bersih; 454 unit (3 gagal env data backup — pre-existing);
+  guard 450/451 (1 gagal env probe — pre-existing).
+- **Belum (Fase B lanjutan)**: sama seperti entri (30) — flip kepemilikan
+  blink→breath→gaze ke framework, lipsync updater, uji chat/brain end-to-end,
+  bersihkan instrumentasi debug, fade-out loader, rolePoke, mode
+  Assistant/Pet, pensiunkan stack lama.
+
 ## UPDATE 2026-09-18 (30) — FASE B: PERF + ZOOM/DRAG — STALL glGet DIHABISKAN (26→60 FPS) (COMMIT)
 
 Feedback user setelah Fase A: **stack baru terasa lebih berat**, **zoom

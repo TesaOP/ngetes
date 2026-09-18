@@ -701,6 +701,10 @@ export class CubismRenderer_WebGL extends CubismRenderer {
     this._renderStateValid = false;
     this._renderingFrameBuffer = null;
     this._renderingViewport = null;
+    if (this._renderTargetIndexBuffer != null && this.gl != null) {
+      this.gl.deleteBuffer(this._renderTargetIndexBuffer);
+      this._renderTargetIndexBuffer = null;
+    }
 
     if (this.gl == null) {
       return;
@@ -1392,14 +1396,13 @@ export class CubismRenderer_WebGL extends CubismRenderer {
     }
 
     // ポリゴンメッシュを描画する
+    // PATCH PERF (lumi): buffer indeks quad render-target di-cache — dulu
+    // createBuffer+bufferData+deleteBuffer per offscreen per frame (ren:
+    // 24×/frame). Isinya statis; dibuat sekali per context, dihapus di release().
     {
-      // インデックスバッファの作成とバインド
-      const indexBuffer = this.gl.createBuffer();
-      this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
-      this.gl.bufferData(
+      this.gl.bindBuffer(
         this.gl.ELEMENT_ARRAY_BUFFER,
-        s_renderTargetIndexArray,
-        this.gl.STATIC_DRAW
+        this.getRenderTargetIndexBuffer()
       );
 
       // 描画
@@ -1409,7 +1412,6 @@ export class CubismRenderer_WebGL extends CubismRenderer {
         this.gl.UNSIGNED_SHORT,
         0
       );
-      this.gl.deleteBuffer(indexBuffer);
     }
 
     // 後処理
@@ -1417,6 +1419,27 @@ export class CubismRenderer_WebGL extends CubismRenderer {
     this.gl.useProgram(null);
     this.setClippingContextBufferForMask(null);
     this.setClippingContextBufferForOffscreen(null);
+  }
+
+  /**
+   * PATCH PERF (lumi): buffer indeks quad render-target di-cache. Dua jalur
+   * (drawOffscreenWebGL — per offscreen per frame — dan
+   * afterDrawModelRenderTarget — per frame) dulu createBuffer+bufferData+
+   * deleteBuffer tiap panggilan (ren: 25 siklus alloc GPU per frame). Isi
+   * statis (s_renderTargetIndexArray); dibuat sekali per context GL.
+   */
+  private getRenderTargetIndexBuffer(): WebGLBuffer {
+    if (this._renderTargetIndexBuffer == null) {
+      const buf = this.gl.createBuffer();
+      this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, buf);
+      this.gl.bufferData(
+        this.gl.ELEMENT_ARRAY_BUFFER,
+        s_renderTargetIndexArray,
+        this.gl.STATIC_DRAW
+      );
+      this._renderTargetIndexBuffer = buf;
+    }
+    return this._renderTargetIndexBuffer;
   }
 
   /**
@@ -1490,13 +1513,11 @@ export class CubismRenderer_WebGL extends CubismRenderer {
     if (
       CubismShaderManager_WebGL.getInstance().getShader(this.gl)._isShaderLoaded
     ) {
-      // インデックスバッファの作成とバインド
-      const indexBuffer = this.gl.createBuffer();
-      this.gl.bindBuffer(this.gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
-      this.gl.bufferData(
+      // PATCH PERF (lumi): buffer indeks quad render-target di-cache (lihat
+      // getRenderTargetIndexBuffer) — dulu create+upload+delete tiap frame.
+      this.gl.bindBuffer(
         this.gl.ELEMENT_ARRAY_BUFFER,
-        s_renderTargetIndexArray,
-        this.gl.STATIC_DRAW
+        this.getRenderTargetIndexBuffer()
       );
 
       // 描画
@@ -1506,7 +1527,6 @@ export class CubismRenderer_WebGL extends CubismRenderer {
         this.gl.UNSIGNED_SHORT,
         0
       );
-      this.gl.deleteBuffer(indexBuffer);
     }
 
     this.gl.useProgram(null);
@@ -1789,6 +1809,7 @@ export class CubismRenderer_WebGL extends CubismRenderer {
   _renderingFrameBuffer: WebGLFramebuffer;
   _renderingViewport: number[];
   _renderStateValid: boolean;
+  _renderTargetIndexBuffer: WebGLBuffer;
 
   _bufferData: {
     vertex: WebGLBuffer;
