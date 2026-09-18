@@ -160,9 +160,13 @@ if (results) {
     JSON.stringify({hasFactorMap: results.v5 && results.v5.hasFactorMap}));
 }
 
-section('D. Shim stamp versi app.js tidak memakan moc v6 di core baru');
-ok('app.js shim try-genuine-first (stempel hanya bila core bilang NULL)',
-  appSrc.includes('const direct = orig(ab);') && appSrc.includes('if (direct) return direct;'));
+section('D. Fase 7: shim stamp versi app.js sudah dihapus — tidak boleh kembali');
+ok('app.js tidak lagi mem-patch core.Moc.fromArrayBuffer',
+  !appSrc.includes('patchCubismCore') && !appSrc.includes('core.Moc.fromArrayBuffer ='));
+ok('app.js tidak menulis byte versi moc (stamp buta u8[4]=4 hilang total)',
+  !appSrc.includes('u8[4] = 4'));
+ok('penanda Fase 7 ada di app.js (core 6.0.1 native, tanpa byte-stamp)',
+  appSrc.includes('Fase 7'));
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);
