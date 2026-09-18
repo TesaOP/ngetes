@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="id">
+<meta charset="utf-8">
+<title>Brain — Fase 12 proof</title>
+<style>html,body{margin:0;background:#e8e8e8}canvas{display:block}</style>
+<script src="js/live2dcubismcore.min.js"></script>
+<script type="importmap">{"imports":{"pixi.js":"./js/pixi8.mjs"}}</script>
+<script type="module">
+import * as PIXI from 'pixi.js';
+import { Live2DRenderer, MotionRegistry, MotionRuntime, MotionBridge, AgentBrain } from './js/live2d-render.mjs';
+
+const app = new PIXI.Application();
+await app.init({ width: 420, height: 640, background: '#e8e8e8' });
+document.body.appendChild(app.canvas);
+const gl = app.canvas.getContext('webgl2') || app.canvas.getContext('webgl');
+const renderer = new Live2DRenderer(app.canvas, gl);
+await renderer.loadModel('/model/ren_official_cubism/runtime/ren.model3.json');
+console.log('[fase12] roleMap', renderer.getRoleMap());
+
+const registry = new MotionRegistry();
+// gesture lib: wave_hi
+registry.registerGestureLibrary({ wave_hi: [{d:{ax:10, ay:-5}, ms:300},{d:{ax:-10}, ms:300},{d:{}, ms:200}] });
+const bridge = new MotionBridge(renderer);
+const runtime = new MotionRuntime(registry, bridge);
+
+// mock __live2dAgent yang dipakai AgentBrain
+const mockL2D = {
+  isReady: () => true,
+  getExpressibleEmotions: () => ({ senang: 'native', sedih: 'native' }),
+  setExpression: (name,int)=>{ console.log('[brain->expr]', name,int); return 'native'; },
+  setAIPose: (pose)=>{ console.log('[brain->pose]', JSON.stringify(pose)); if(pose.head) bridge.applyPoseDelta({ ax: pose.head.x, ay: pose.head.y }); if(pose.body) bridge.applyPoseDelta({ bodyX: pose.body.x, bodyY: pose.body.y, bodyZ: pose.body.z }); if(pose.eyes) bridge.applyPoseDelta({ ex: pose.eyes.x, ey: pose.eyes.y }); },
+  setAccessory: (id,val)=> console.log('[brain->acc]', id,val),
+  playMotion: (id,opts)=>{ console.log('[brain->motion]', id, opts); return runtime.play(id, opts); },
+  playGesture: (name)=>{ console.log('[brain->gesture]', name); return runtime.play(name, {priority:60}); },
+  lockAI: ()=>console.log('[brain] lockAI'),
+  unlockAI: ()=>console.log('[brain] unlockAI'),
+  setGazeIntent: ()=>{},
+  speak: (txt,cb)=>{ console.log('[brain->speak]', txt); setTimeout(cb, 300); }
+};
+window.__live2dAgent = mockL2D;
+window.__addChat = (r,t)=>console.log('[chat]', r, t);
+
+const brain = new AgentBrain();
+await brain.loadProfile();
+// inject capProfile biar tidak fetch
+brain.history.push({role:'user', content:'Halo'});
+// Simulate LLM output: segment with emotion+gesture+head
+const seg = { text:'Halo! Senang bertemu kamu~', actions:{ emotion:'senang', gesture:'wave_hi', head:{x:12,y:-8}, intensity:0.9 } };
+console.log('[fase12] applyActions test', seg.actions);
+brain['applyActions'](seg.actions, 0, seg.text);
+
+let frames=0;
+function frame(){
+  renderer.draw();
+  frames++;
+  if(frames===5){
+    console.log('[fase12] after apply angleX', renderer.getRole('angleX'), 'param', renderer.getParameter('ParamAngleX'), 'runtime playing', runtime.isPlaying());
+    window.__fase12 = { ok: true, angleX: renderer.getRole('angleX'), param: renderer.getParameter('ParamAngleX'), playing: runtime.isPlaying(), hasCanvas: !!app.canvas };
+  }
+  if(frames<15) requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</html>
