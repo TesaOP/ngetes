@@ -153,6 +153,17 @@
     } catch (e) {}
   }
 
+  // Flip gaze (Fase B #3): tulisan ADITIF untuk offset liveliness di stack
+  // baru — ditambahkan di atas motion + gaze framework (CubismLook), bukan
+  // menimpa. Stack lama tetap SET absolut (semantik beforeModelUpdate lama).
+  function pokeAddParam(id, value, weight) {
+    const cm = coreModel();
+    if (!cm || !cm.addParameterValueById) return;
+    try {
+      cm.addParameterValueById(id, value, weight === undefined ? 1 : weight);
+    } catch (e) {}
+  }
+
   function setSticky(id, value, weight) {
     state.overrides[id] =
       (weight === undefined ? 1 : weight) === 1
@@ -572,15 +583,22 @@
         // tetap dijalankan duluan supaya jalur rescue manifest tetap kerja.
         await window.__live2dViewWait;
         state.model = await window.__live2dView.loadModel(modelPath);
-        // Flip kepemilikan blink (Fase B #1) & breath (Fase B #2):
-        // framework memutar, app.js tetap pemegang pintu konfigurasi —
-        // gate dibaca live updater tiap frame.
+        // Flip kepemilikan blink (#1), breath (#2), gaze (#3): framework
+        // memutar, app.js tetap pemegang pintu konfigurasi — gate dibaca
+        // live updater tiap frame.
         window.__live2dView.setBlinkGate(function () {
           return state.blinkEnabled && !state.frozen;
         });
         window.__live2dView.setBreathGate(function () {
           return (
             state.hasBreath &&
+            !state.frozen &&
+            !(haveMotionSystem && motionRuntime && motionRuntime.isPlaying())
+          );
+        });
+        window.__live2dView.setLookGate(function () {
+          return (
+            !state.aiLock &&
             !state.frozen &&
             !(haveMotionSystem && motionRuntime && motionRuntime.isPlaying())
           );
@@ -810,6 +828,9 @@
         motionRuntime &&
         motionRuntime.isPlaying()
       );
+      // Flip gaze (Fase B #3): di stack baru gaze dimiliki framework
+      // (CubismLook) — liveliness menyusun offset sway TANPA term gaze.
+      const gazeFromFramework = RENDERER_PIXI8 && !state.aiLock;
       if (motionLayersActive) {
         const P = state.aiPose;
         const frozen = !!state.frozen;
@@ -832,13 +853,13 @@
         L.ey += (L.tey - L.ey) * k;
         L.bx += (L.tbx - L.bx) * k;
         L.by += (L.tby - L.by) * k;
-        bAx = L.ax + A1 * 0.5;
-        bAy = L.ay + A2 * 0.5;
-        bEx = L.ex + E1;
-        bEy = L.ey + E2;
+        bAx = gazeFromFramework ? A1 * 0.5 : L.ax + A1 * 0.5;
+        bAy = gazeFromFramework ? A2 * 0.5 : L.ay + A2 * 0.5;
+        bEx = gazeFromFramework ? E1 : L.ex + E1;
+        bEy = gazeFromFramework ? E2 : L.ey + E2;
         bMf = 0;
-        bBx = L.bx + bodyLeanLife * 0.4;
-        bBy = L.by;
+        bBx = gazeFromFramework ? bodyLeanLife * 0.4 : L.bx + bodyLeanLife * 0.4;
+        bBy = gazeFromFramework ? 0 : L.by;
         bBz = tiltLife * 0.4;
       } else {
         const frozen = !!state.frozen;
@@ -906,6 +927,15 @@
         const actual = roleClampActual(role, toActual(role, vRef));
         if (motionLayersActive) {
           pokeParam(id, actual, 1);
+          return;
+        }
+        // Flip gaze (Fase B #3): di stack baru (di luar aiLock) liveliness
+        // menulis ADITIF — offset sway ditambahkan di atas motion + gaze
+        // framework. Lerp absolut akan mengikis kontribusi gaze framework
+        // pada param yang sama. mouthForm tetap SET-lerp (look tak
+        // menyentuhnya).
+        if (RENDERER_PIXI8 && !state.aiLock && role !== "mouthForm") {
+          pokeAddParam(id, actual * poseAuthority, 1);
           return;
         }
         const cur = readParam(id);
@@ -1049,6 +1079,14 @@
 
       const ny = clamp(-rawY / (rawY < 0 ? upRoom : downRoom), -1, 1);
       const nx = clamp(rawX / (rawX < 0 ? leftRoom : rightRoom), -1, 1);
+
+      // Flip gaze (Fase B #3): di stack baru target gaze diteruskan ke
+      // framework (CubismTargetPoint — easing wajah resmi); state.look
+      // app.js tidak dipakai lagi di jalur ini.
+      if (RENDERER_PIXI8) {
+        window.__live2dView.setLookTarget(nx, ny);
+        return;
+      }
 
       state.look.tax = nx * REF_HALF;
       state.look.tay = ny * REF_HALF;
@@ -1195,6 +1233,9 @@
       state.look.tax = state.look.tay = state.look.tex = state.look.tey = 0;
       state.look.bx = state.look.by = state.look.tbx = state.look.tby = 0;
       state.look.ax = state.look.ay = state.look.ex = state.look.ey = 0;
+      // Flip gaze (Fase B #3): reset juga target gaze framework.
+      if (RENDERER_PIXI8 && window.__live2dView?.setLookTarget)
+        window.__live2dView.setLookTarget(0, 0);
       frameModel("reset");
     });
   }

@@ -31,9 +31,12 @@ import {
 const MODEL_UNIT_PX = 400;
 
 /** Flush tulisan app.js (pokeParam/applyOverrides/applyRawDrive) tiap
- * frame SETELAH semua efek framework — padanan beforeModelUpdate lama. */
+ * frame SETELAH semua efek framework — padanan beforeModelUpdate lama.
+ * Flip gaze (Fase B #3) menambah jalur ADITIF (pokeAddParam liveliness):
+ * offset sway ditambahkan di atas motion + gaze framework, bukan menimpa. */
 class AppWriteUpdater extends ICubismUpdater {
   private pending = new Map<string, { v: number; w: number }>();
+  private pendingAdd = new Map<string, { v: number; w: number }>();
   /** Cache id handle per string — getId membangun CubismId bila belum ada;
    * tanpa cache tiap poke app.js melewatinya tiap frame. */
   private ids = new Map<string, unknown>();
@@ -47,23 +50,36 @@ class AppWriteUpdater extends ICubismUpdater {
     setParameterValueById: (id: string, v: number, w = 1) => {
       this.pending.set(id, { v, w });
     },
+    addParameterValueById: (id: string, v: number, w = 1) => {
+      this.pendingAdd.set(id, { v, w });
+    },
     getParameterValueById: (_id: string) => 0, // di-overview Live2DView (butuh renderer)
     setPartOpacityById: (_id: string, _v: number) => {}, // idem
     getModel: () => null, // idem
   };
 
+  private idOf(idMgr: any, id: string): any {
+    let h: any = this.ids.get(id);
+    if (!h) {
+      h = idMgr.getId(id);
+      this.ids.set(id, h);
+    }
+    return h;
+  }
+
   onLateUpdate(model: CubismModel, _dt: number): void {
-    if (!this.pending.size) return;
+    if (!this.pending.size && !this.pendingAdd.size) return;
     const idMgr = CubismFramework.getIdManager();
+    // SET dulu (pose absolut brain/motion-layer), lalu ADD (offset
+    // liveliness di atas motion + gaze framework).
     for (const [id, { v, w }] of this.pending) {
-      let h: any = this.ids.get(id);
-      if (!h) {
-        h = idMgr.getId(id);
-        this.ids.set(id, h);
-      }
-      model.setParameterValueById(h, v, w);
+      model.setParameterValueById(this.idOf(idMgr, id), v, w);
     }
     this.pending.clear();
+    for (const [id, { v, w }] of this.pendingAdd) {
+      model.addParameterValueById(this.idOf(idMgr, id), v, w);
+    }
+    this.pendingAdd.clear();
   }
 }
 
@@ -75,12 +91,15 @@ export class Live2DView {
   private transform: FacadeTransform | null = null;
   private rafId: number | null = null;
   private initPromise: Promise<void> | null = null;
-  /** Flip kepemilikan blink (Fase B): gate diputuskan app.js (blinkEnabled
-   * sheet + frozen); framework yang memutar kedipnya. */
+  /** Flip kepemilikan blink (Fase B #1): gate diputuskan app.js
+   * (blinkEnabled sheet + frozen); framework yang memutar kedipnya. */
   private blinkGate: (() => boolean) | null = null;
   /** Flip kepemilikan breath (Fase B #2): gate diputuskan app.js
    * (hasBreath + frozen + motion layer). */
   private breathGate: (() => boolean) | null = null;
+  /** Flip kepemilikan gaze (Fase B #3): gate diputuskan app.js
+   * (aiLock + frozen + motion layer). */
+  private lookGate: (() => boolean) | null = null;
 
   /** Flip kepemilikan blink (Fase B): app.js memegang pintu konfigurasi,
    * framework memutar kedipnya. fn = () => boolean; null = selalu kedip. */
@@ -96,6 +115,18 @@ export class Live2DView {
     this.breathGate = fn;
     const um = (this.renderer as any)?.userModel as Live2DUserModel | undefined;
     if (um) um.breathGate = fn;
+  }
+
+  /** Flip kepemilikan gaze (Fase B #3): gate app.js (aiLock/frozen/motion
+   * layer) + target gaze ±1 view-coords (di-ease CubismTargetPoint). */
+  setLookGate(fn: (() => boolean) | null): void {
+    this.lookGate = fn;
+    const um = (this.renderer as any)?.userModel as Live2DUserModel | undefined;
+    if (um) um.lookGate = fn;
+  }
+
+  setLookTarget(x: number, y: number): void {
+    this.renderer?.setLookTarget(x, y);
   }
 
   /** Miliki canvas panggung: Pixi 8 Application di atas #live2d-canvas
@@ -170,18 +201,18 @@ export class Live2DView {
     this.facade = null;
 
     await this.renderer.loadModel(modelPath, {
-      // Flip kepemilikan efek (Fase B, satu commit per fitur): blink (#1)
-      // dan breath (#2) kini framework (gate runtime dari app.js). look
-      // masih driver app.js — flip menyusul (butuh komposisi aditif dengan
-      // liveliness). physics/pose/ekspresi tetap framework. autoIdle=false:
-      // app.js startIdleMotion pemilik idle.
-      effects: { blink: true, look: false, breath: true },
+      // Flip kepemilikan efek (Fase B, satu commit per fitur): blink (#1),
+      // breath (#2), gaze (#3) kini framework (gate runtime dari app.js).
+      // physics/pose/ekspresi tetap framework. autoIdle=false: app.js
+      // startIdleMotion pemilik idle.
+      effects: { blink: true, look: true, breath: true },
       autoIdle: false,
     });
 
     const userModel = (this.renderer as any).userModel as Live2DUserModel;
     userModel.blinkGate = this.blinkGate;
     userModel.breathGate = this.breathGate;
+    userModel.lookGate = this.lookGate;
     if (!(this.renderer as any).__writesRegistered) {
       userModel.updateScheduler.addUpdatableList(this.writes);
       userModel.updateScheduler.sortUpdatableList();
@@ -210,6 +241,9 @@ export class Live2DView {
     const backend = {
       setParameterValueById(id: string, v: number, w = 1) {
         self.writes.coreModel.setParameterValueById(id, v, w);
+      },
+      addParameterValueById(id: string, v: number, w = 1) {
+        self.writes.coreModel.addParameterValueById(id, v, w);
       },
       getParameterValueById(id: string) {
         return renderer.getParameter(id) ?? 0;

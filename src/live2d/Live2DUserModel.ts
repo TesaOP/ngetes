@@ -67,6 +67,10 @@ export class Live2DUserModel extends CubismUserModel {
    * dengan blinkGate — app.js memutuskan dari hasBreath + frozen + motion
    * layer aktif (kurva klip bisa membawa breath sendiri). */
   breathGate: (() => boolean) | null = null;
+  /** Gate runtime gaze (flip kepemilikan look, Fase B #3): app.js
+   * memutuskan dari aiLock + frozen + motion layer — saat otak/klip yang
+   * memegang pose, gaze framework diredam supaya tidak dobel. */
+  lookGate: (() => boolean) | null = null;
   private _setting: CubismModelSettingJson | null = null;
   private _baseUrl = "";
   private _motionCache = new Map<string, CubismMotion>();
@@ -122,8 +126,15 @@ export class Live2DUserModel extends CubismUserModel {
     if (en.look) {
       this._look = CubismLook.create();
       if (opts.look.length) this._look.setParameters(opts.look);
+      // Flip kepemilikan gaze (Fase B #3): framework menambah gaze (aditif
+      // resmi) di-ease CubismTargetPoint; gate runtime meredam saat
+      // aiLock/frozen/motion layer yang memegang pose sendiri.
       this.updateScheduler.addUpdatableList(
-        new CubismLookUpdater(this._look, this._dragManager),
+        new GatedUpdater(
+          new CubismLookUpdater(this._look, this._dragManager),
+          () => this.lookGate?.() ?? true,
+          CubismUpdateOrder.CubismUpdateOrder_Drag,
+        ),
       );
     }
     if (en.breath) {

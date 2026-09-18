@@ -17,10 +17,12 @@ w.__live2dView = {
   loadModel: (p: string) => view.loadModel(p),
   resize: (cw: number, ch: number) => view.resize(cw, ch),
   setBackground: (hex: number) => view.setBackground(hex),
-  // Flip kepemilikan blink (Fase B #1) & breath (Fase B #2): app.js tetap
+  // Flip kepemilikan blink (#1), breath (#2), gaze (#3): app.js tetap
   // pemegang pintu konfigurasi, framework yang memutar.
   setBlinkGate: (fn: (() => boolean) | null) => view.setBlinkGate(fn),
   setBreathGate: (fn: (() => boolean) | null) => view.setBreathGate(fn),
+  setLookGate: (fn: (() => boolean) | null) => view.setLookGate(fn),
+  setLookTarget: (x: number, y: number) => view.setLookTarget(x, y),
 };
 
 if (w.__live2dRendererRequested) {
