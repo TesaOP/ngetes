@@ -3,7 +3,8 @@
 Masalah umum dan solusinya. Detail arsitektur: [`AGENTS.md`](../AGENTS.md)
 untuk agent · README untuk ringkasan produk.
 
-- **Chat diam total?** Belum `bun run build` — `static/js/bundle.js` tidak ada (di-gitignore), jadi `window.__agent` tidak terpasang. Jalankan build, refresh.
+- **Chat diam total / panggung kosong?** Belum `bun run build` — `static/js/bundle.js` dan `static/js/live2d-view.mjs` tidak ada (dua-duanya di-gitignore), jadi `window.__agent` tidak terpasang dan renderer tidak termuat. Jalankan build, refresh.
+- **Karakter kurang/terlalu lebay mengikuti mouse?** Panel konfigurasi → slider **Ekspresif kepala/mata/badan (gaze)** — per-model, live-apply, persist lewat Simpan.
 - **Diam 30 menit?** Tab ⚙️ AI → **🎚️ Kelakuan** → **⚡ Hidup** → Simpan. Otak membaca `quietMs` langsung dari `window.__appEvents` (live, tanpa restart).
 - **0 emosi?** Console `[exp3] adopted N` — kalau 0, model memang tanpa `.exp3`; bikin preset `emosi` di tab Sheet.
 - **Fetch gagal?** Cek `location.origin` — jangan hardcode `127.0.0.1:8310`.

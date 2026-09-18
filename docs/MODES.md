@@ -213,11 +213,13 @@ terpisah. Peluncur memilih cangkang otomatis:
    Always-on-top via PowerShell `SetWindowPos(hwnd, -1, …, 0x0041)` (Win32
    resmi) 2,5 dtk setelah spawn — flag CLI Chromium tidak punya always-on-top.
    Jendela ini opaque dan tanpa klik-tembus.
-3. `pet.html` — PIXI + model Live2D `backgroundAlpha: 0`; mata/kepala ikut
-   kursor (`ParamAngleX/Y`, `ParamEyeBallX/Y`), sapaan berkala, tombol
-   Sapa/Bicara/Klik-tembus/Tutup (`POST /api/pet/close` mematikan proses).
-   Esc juga menutup. Bar bawah memakai `data-tauri-drag-region` (bisa
-   dipindah di shell Tauri).
+3. `pet.html` — adapter view stack baru (importmap pixi8.mjs +
+   `js/live2d-view.mjs`; model lewat `__live2dView.loadModel`). Blink/breath
+   diputar framework; gaze kursor via `setLookTarget(±1)` — semua sendi
+   (kepala/mata/badan) ikut, ter-skala range model, tanpa id param hardcode.
+   Sapaan berkala, tombol Sapa/Bicara/Klik-tembus/Tutup (`POST /api/pet/close`
+   mematikan proses). Esc juga menutup. Bar bawah memakai
+   `data-tauri-drag-region` (bisa dipindah di shell Tauri).
 4. Pindah mode dari app utama otomatis menutup jendela pet (`petClose()` di
    teardown).
 

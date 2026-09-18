@@ -123,10 +123,7 @@
 
   // ── "hidup" sebagai pet: goyang pelan + tatapan ke kursor + sapa berkala ──
   function startIdleLife() {
-    // dulu bernama `t` — MENIMPA fungsi penerjemah t() di scope yang sama,
-    // sehingga baris sapaan selalu melempar "t is not a function" (bug lama
-    // yang ikut tersalin; sapa berkala tidak pernah jalan di stack lama).
-    let tm = 0;
+    let tm = 0; // bukan `t` — nama itu menabrak penerjemah i18n di scope luar.
     setInterval(() => {
       const m = state.model;
       if (!m) return;

@@ -697,7 +697,7 @@ export class CubismRenderer_WebGL extends CubismRenderer {
       this._drawableClippingManager = null;
     }
 
-    // PATCH PERF (lumi): render state cache tidak valid lagi setelah release
+    // render state cache tidak valid lagi setelah release
     this._renderStateValid = false;
     this._renderingFrameBuffer = null;
     this._renderingViewport = null;
@@ -804,11 +804,10 @@ export class CubismRenderer_WebGL extends CubismRenderer {
     this.loadShaders(shaderPath);
     this.beforeDrawModelRenderTarget();
 
-    // PATCH PERF (lumi): sebelumnya gl.getParameter(FRAMEBUFFER_BINDING/VIEWPORT)
-    // tiap frame — satu glGet setelah draw submission cukup untuk memaksa CPU
-    // menunggu GPU mengosongkan antrean (seri penuh, 26 FPS). Nilainya identik
-    // dengan yang diset setRenderState() — glGet hanya fallback bila pemanggil
-    // tidak memanggil setRenderState (di luar kontrak resmi).
+    // Nilai ini milik setRenderState() (kontrak resmi: dipanggil sebelum
+    // drawModel) — jangan gl.getParameter di sini: glGet setelah draw
+    // submission memaksa sinkronisasi CPU–GPU penuh. Fallback hanya untuk
+    // pemanggil yang melanggar kontrak.
     const lastFbo = (
       this._renderStateValid
         ? this._renderingFrameBuffer
@@ -1396,9 +1395,8 @@ export class CubismRenderer_WebGL extends CubismRenderer {
     }
 
     // ポリゴンメッシュを描画する
-    // PATCH PERF (lumi): buffer indeks quad render-target di-cache — dulu
-    // createBuffer+bufferData+deleteBuffer per offscreen per frame (ren:
-    // 24×/frame). Isinya statis; dibuat sekali per context, dihapus di release().
+    // Buffer indeks quad di-cache — isinya statis (lihat
+    // getRenderTargetIndexBuffer).
     {
       this.gl.bindBuffer(
         this.gl.ELEMENT_ARRAY_BUFFER,
@@ -1422,11 +1420,9 @@ export class CubismRenderer_WebGL extends CubismRenderer {
   }
 
   /**
-   * PATCH PERF (lumi): buffer indeks quad render-target di-cache. Dua jalur
-   * (drawOffscreenWebGL — per offscreen per frame — dan
-   * afterDrawModelRenderTarget — per frame) dulu createBuffer+bufferData+
-   * deleteBuffer tiap panggilan (ren: 25 siklus alloc GPU per frame). Isi
-   * statis (s_renderTargetIndexArray); dibuat sekali per context GL.
+   * Buffer indeks quad render-target — isinya statis
+   * (s_renderTargetIndexArray); dibuat sekali per context GL dan dipakai
+   * ulang oleh drawOffscreenWebGL & afterDrawModelRenderTarget.
    */
   private getRenderTargetIndexBuffer(): WebGLBuffer {
     if (this._renderTargetIndexBuffer == null) {
@@ -1482,10 +1478,8 @@ export class CubismRenderer_WebGL extends CubismRenderer {
     }
 
     // 別バッファに描画を開始
-    // PATCH PERF (lumi): beginDraw() tanpa argumen membaca FBO aktif via
-    // glGet tiap frame (stall CPU–GPU). FBO pemulihnya adalah FBO yang
-    // diset setRenderState() — pass eksplisit; null FBO (framebuffer default)
-    // lewat sentinel supaya beginDraw tidak perlu membaca GL. Fallback jalur
+    // FBO pemulih dari setRenderState (sentinel utk framebuffer default) —
+    // beginDraw tidak perlu gl.getParameter (stall CPU–GPU). Fallback jalur
     // lama bila setRenderState belum dipanggil.
     this._modelRenderTargets[0].beginDraw(
       this._renderStateValid
@@ -1513,8 +1507,7 @@ export class CubismRenderer_WebGL extends CubismRenderer {
     if (
       CubismShaderManager_WebGL.getInstance().getShader(this.gl)._isShaderLoaded
     ) {
-      // PATCH PERF (lumi): buffer indeks quad render-target di-cache (lihat
-      // getRenderTargetIndexBuffer) — dulu create+upload+delete tiap frame.
+      // Buffer indeks quad di-cache (lihat getRenderTargetIndexBuffer).
       this.gl.bindBuffer(
         this.gl.ELEMENT_ARRAY_BUFFER,
         this.getRenderTargetIndexBuffer()
@@ -1561,11 +1554,9 @@ export class CubismRenderer_WebGL extends CubismRenderer {
     this.gl.bindFramebuffer(this.gl.FRAMEBUFFER, fbo);
     this.gl.viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
 
-    // PATCH PERF (lumi): simpan render state — doDrawModel & mask pass
-    // membutuhkan nilai ini tiap frame; membacanya via gl.getParameter
-    // memaksa sinkronisasi CPU–GPU (stall terukur ±40 ms/frame pada model
-    // 198 drawable + 24 offscreen). Kontrak resmi: setRenderState dipanggil
-    // sebelum drawModel (pola LAppView), jadi nilainya selalu mutakhir.
+    // Simpan render state — doDrawModel & mask pass membutuhkan nilai ini
+    // tiap frame tanpa gl.getParameter (stall CPU–GPU). Kontrak resmi:
+    // setRenderState dipanggil sebelum drawModel (pola LAppView).
     this._renderingFrameBuffer = fbo;
     this._renderingViewport = viewport;
     this._renderStateValid = true;
@@ -1804,8 +1795,8 @@ export class CubismRenderer_WebGL extends CubismRenderer {
 
   _modelRootFbo: WebGLFramebuffer; // モデルのルートフレームバッファ
 
-  // PATCH PERF (lumi): render state yang disimpan setRenderState (lihat
-  // doDrawModel) — tanpa ini glGet per frame menyebabkan stall CPU–GPU.
+  // Render state tersimpan setRenderState (dipakai doDrawModel — hindari
+  // glGet per frame yang menyebabkan stall CPU–GPU).
   _renderingFrameBuffer: WebGLFramebuffer;
   _renderingViewport: number[];
   _renderStateValid: boolean;

@@ -19,16 +19,14 @@ w.__live2dView = {
     view.loadModel(p, adoptedManifest),
   resize: (cw: number, ch: number) => view.resize(cw, ch),
   setBackground: (hex: number) => view.setBackground(hex),
-  // Flip kepemilikan blink (#1), breath (#2), gaze (#3): app.js tetap
-  // pemegang pintu konfigurasi, framework yang memutar.
+  // app.js memegang pintu konfigurasi; framework yang memutar efeknya.
   setBlinkGate: (fn: (() => boolean) | null) => view.setBlinkGate(fn),
   setBreathGate: (fn: (() => boolean) | null) => view.setBreathGate(fn),
   setLookGate: (fn: (() => boolean) | null) => view.setLookGate(fn),
   setLookTarget: (x: number, y: number) => view.setLookTarget(x, y),
   setGazeGain: (g: { head?: number; eyes?: number; body?: number } | null | undefined) =>
     view.setGazeGain(g),
-  // Flip kepemilikan lipsync (#4): app.js memasang penyedia 0..1 (sumber
-  // audio tetap di driver), framework menulis param mulut.
+  // Sumber audio tetap di app.js; framework menulis param mulut.
   setLipsyncProvider: (fn: (() => number | null) | null) =>
     view.setLipsyncProvider(fn),
 };

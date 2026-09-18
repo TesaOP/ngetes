@@ -83,10 +83,12 @@ sebagai tengah membuat kepalanya miring permanen.
 
 | Logika | Lokasi |
 |---|---|
-| `mapRoles()`, `pokeRole*`, resolusi role, `inspectModel()` | `static/js/app.js` (legacy — di-port saat disentuh) |
+| Role mapping client (`ROLE_KEYWORDS`, `pokeRole*`, `toActual`) | `src/client/engine/role-mapping.ts` → `static/js/bundle.js`; dipakai app.js |
+| Role mapping renderer (roleInfo, faktor look/breath, fallback blink) | `src/live2d/RoleController.ts` + `Live2DRenderer.ts` |
+| Tulis parameter dari driver/UI | backend `coreModel` di `src/live2d/view/Live2DView.ts` (SET + ADD, flush order 900) |
 | Pipeline motion (evaluator, sanitize, bounds) | `src/client/animation/motion-dsl.ts` → `static/js/bundle.js` |
 | Klasifikasi klip native (kurva + cdi3 + name-hint) | `src/client/engine/motion-taxonomy.ts` (server & bundle) |
-| Adopsi `.exp3` yatim (`discoverExpressions`) | `src/server/index.ts` |
+| Adopsi `.exp3` yatim (`discoverExpressions`) | `src/server/index.ts` → diteruskan ke renderer via `loadModel(path, settings)` |
 
 Aturan model-agnostic berlaku ke SEMUA lokasi itu — termasuk file TS baru: jangan
 pernah memasukkan nama model, id `Param…`, atau range spesifik ke
@@ -94,9 +96,9 @@ pernah memasukkan nama model, id `Param…`, atau range spesifik ke
 
 ## Cara membuktikan tidak melanggar
 
-Guard model-agnostic hidup di `test/legacy/` (381 assertion, 5 suite:
-role-mapping, param-scaling, sheet-schema, exp3-adoption, api-origin) plus
-`test/motion-taxonomy.test.ts` (bun test), dijalankan lewat runner sendiri:
+Guard model-agnostic hidup di `test/legacy/` (role-mapping, param-scaling,
+sheet-schema, exp3-adoption, api-origin, core6-compat, emotion-overlay, dst.)
+plus `test/motion-taxonomy.test.ts` (bun test), dijalankan lewat runner sendiri:
 
 ```bash
 bun run test:guards   # hanya guard legacy

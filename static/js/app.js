@@ -148,9 +148,8 @@
     } catch (e) {}
   }
 
-  // Flip gaze (Fase B #3): tulisan ADITIF untuk offset liveliness di stack
-  // baru — ditambahkan di atas motion + gaze framework (CubismLook), bukan
-  // menimpa. Stack lama tetap SET absolut (semantik beforeModelUpdate lama).
+  // Tulisan ADITIF untuk offset liveliness — ditambahkan di atas motion +
+  // gaze framework (CubismLook), bukan menimpa.
   function pokeAddParam(id, value, weight) {
     const cm = coreModel();
     if (!cm || !cm.addParameterValueById) return;
@@ -246,12 +245,11 @@
   }
   const _sz = stageSize();
 
-  // Fase A: shim permukaan PIXI yang dipakai app.js (screen/stage/renderer/
-  // ticker — lihat audit) saat renderer Pixi 8 aktif. Canvas resmi milik
-  // modul live2d-view (dieksekusi setelah skrip klasik); shim hanya mencatat
-  // state awal lalu meneruskan begitu view siap. Logika karakter TIDAK
-  // berubah: backend tulis (coreModel()) dialihkan ke pending-flush updater
-  // order 900 di stack baru — padanan semantik beforeModelUpdate lama.
+  // Shim permukaan PIXI yang dipakai app.js (screen/stage/renderer/ticker).
+  // Canvas resmi milik modul live2d-view (dieksekusi setelah skrip klasik);
+  // shim mencatat state awal lalu meneruskan begitu view siap. Backend tulis
+  // (coreModel()) dialihkan ke pending-flush updater order 900 — padanan
+  // semantik beforeModelUpdate.
   function makePixi8AppShim(sz) {
     const pendingBg = { v: null };
     const tickerFns = [];

@@ -1,17 +1,15 @@
 /**
- * Live2DView — integrasi view Pixi 8 ke panggung asli (Fase A: panggung + chat).
+ * Live2DView — satu-satunya jalur render: Pixi 8 + Cubism 5-r.5 di atas
+ * canvas panggung; dipakai app utama dan pet.html.
  *
- * Prinsip TRANSPLANT JIWA: seluruh perilaku karakter app.js — tick liveliness
- * (601-883), kedip, gaze kursor, lipsync, overlay emosi, preset/sheet, protokol
- * clipAuthority, MotionRuntime + bridge lama — TIDAK ditulis ulang. Semua
- * tulisan app.js bermuara di satu titik mati: coreModel() (app.js:137) →
- * backend di file ini. app.js tetap satu-satunya penulis pose; efek framework
- * blink/look/breath sengaja TIDAK didaftarkan (satu fitur satu pemilik),
- * physics/pose/ekspresi tetap milik framework.
+ * Pembagian kepemilikan: framework memutar motion/ekspresi/physics/pose dan
+ * efek blink/breath/gaze/lipsync (updater ber-gate di Live2DUserModel);
+ * app.js menyumbang komposisi jiwa secara ADITIF (liveliness, emosi, raw
+ * drive) lewat backend coreModel di file ini, di-flush updater order 900 —
+ * setelah semua efek framework, sebelum model.update.
  *
- * Urutan tulis per frame di stack baru = urutan stack lama: framework
- * (motion → efek → flush) dulu, lalu tulisan app.js (updater order 900) —
- * padanan semantik hook beforeModelUpdate pixi-live2d.
+ * Gaze kursor masuk lewat setLookTarget (CubismTargetPoint); target & gate
+ * (blink/breath/look/lipsync) dipasang app.js sesuai konfigurasi per-model.
  */
 import * as PIXI from "pixi.js";
 import { Live2DRenderer } from "../Live2DRenderer";
@@ -30,10 +28,9 @@ import {
  * menyetel scale agar model pas stage, jadi nilai ini terkompensasi. */
 const MODEL_UNIT_PX = 400;
 
-/** Flush tulisan app.js (pokeParam/applyOverrides/applyRawDrive) tiap
- * frame SETELAH semua efek framework — padanan beforeModelUpdate lama.
- * Flip gaze (Fase B #3) menambah jalur ADITIF (pokeAddParam liveliness):
- * offset sway ditambahkan di atas motion + gaze framework, bukan menimpa. */
+/** Flush tulisan app.js tiap frame SETELAH semua efek framework: SET dulu
+ * (pose absolut brain/motion-layer), lalu ADD (offset liveliness di atas
+ * motion + gaze framework). */
 class AppWriteUpdater extends ICubismUpdater {
   private pending = new Map<string, { v: number; w: number }>();
   private pendingAdd = new Map<string, { v: number; w: number }>();
@@ -91,34 +88,28 @@ export class Live2DView {
   private transform: FacadeTransform | null = null;
   private rafId: number | null = null;
   private initPromise: Promise<void> | null = null;
-  /** Flip kepemilikan blink (Fase B #1): gate diputuskan app.js
-   * (blinkEnabled sheet + frozen); framework yang memutar kedipnya. */
+  /** Gate kedip — diputuskan app.js (blinkEnabled + frozen). */
   private blinkGate: (() => boolean) | null = null;
-  /** Flip kepemilikan breath (Fase B #2): gate diputuskan app.js
-   * (hasBreath + frozen + motion layer). */
+  /** Gate breath — diputuskan app.js (hasBreath + frozen + motion layer). */
   private breathGate: (() => boolean) | null = null;
-  /** Flip kepemilikan gaze (Fase B #3): gate diputuskan app.js
-   * (aiLock + frozen + motion layer). */
+  /** Gate gaze — diputuskan app.js (aiLock + frozen + motion layer). */
   private lookGate: (() => boolean) | null = null;
 
-  /** Flip kepemilikan blink (Fase B): app.js memegang pintu konfigurasi,
-   * framework memutar kedipnya. fn = () => boolean; null = selalu kedip. */
+  /** Pasang gate kedip; null = selalu kedip. */
   setBlinkGate(fn: (() => boolean) | null): void {
     this.blinkGate = fn;
     const um = (this.renderer as any)?.userModel as Live2DUserModel | undefined;
     if (um) um.blinkGate = fn;
   }
 
-  /** Flip kepemilikan breath (Fase B #2): semantik sama dengan setBlinkGate
-   * — app.js memegang hasBreath/frozen/motion-layer, framework memutar. */
+  /** Pasang gate breath (hasBreath/frozen/motion-layer). */
   setBreathGate(fn: (() => boolean) | null): void {
     this.breathGate = fn;
     const um = (this.renderer as any)?.userModel as Live2DUserModel | undefined;
     if (um) um.breathGate = fn;
   }
 
-  /** Flip kepemilikan gaze (Fase B #3): gate app.js (aiLock/frozen/motion
-   * layer) + target gaze ±1 view-coords (di-ease CubismTargetPoint). */
+  /** Pasang gate gaze (aiLock/frozen/motion-layer). */
   setLookGate(fn: (() => boolean) | null): void {
     this.lookGate = fn;
     const um = (this.renderer as any)?.userModel as Live2DUserModel | undefined;
@@ -129,15 +120,12 @@ export class Live2DView {
     this.renderer?.setLookTarget(x, y);
   }
 
-  /** Gain keekspresivan gaze per grup sendi (kepala/mata/badan), 0..2 —
-   * dipasang dari config user; renderer membangun ulang data look. */
+  /** Gain keekspresivan gaze per grup sendi (kepala/mata/badan), 0..2. */
   setGazeGain(gain: { head?: number; eyes?: number; body?: number } | null | undefined): void {
     this.renderer?.setGazeGain(gain);
   }
 
-  /** Flip kepemilikan lipsync (Fase B #4): app.js memasang penyedia nilai
-   * 0..1 (sumber analisis audio TTS lokal tetap milik driver); framework
-   * menulis param mulut (role-resolved, skala range aktual). */
+  /** Pasang penyedia lipsync 0..1 (sumber audio tetap di app.js). */
   setLipsyncProvider(fn: (() => number | null) | null): void {
     const um = (this.renderer as any)?.userModel as Live2DUserModel | undefined;
     if (um) um.lipsyncProvider = fn;
@@ -215,15 +203,11 @@ export class Live2DView {
     this.facade = null;
 
     await this.renderer.loadModel(modelPath, {
-      // Flip kepemilikan efek (Fase B, satu commit per fitur): blink (#1),
-      // breath (#2), gaze (#3) kini framework (gate runtime dari app.js).
-      // physics/pose/ekspresi tetap framework. autoIdle=false: app.js
-      // startIdleMotion pemilik idle.
+      // Semua efek diputar framework; gate runtime dipasang app.js.
+      // autoIdle=false: app.js startIdleMotion pemilik idle.
       effects: { blink: true, look: true, breath: true },
       autoIdle: false,
-      // Adopsi .exp3 yatim (Fase B): manifest in-memory hasil
-      // buildModelSettings app.js — dipakai bila ada, fetch manifest asli
-      // bila null (model dengan deklarasi lengkap).
+      // Manifest adopsi exp3 dari app.js bila ada; null = manifest asli.
       adoptedManifest,
     });
 

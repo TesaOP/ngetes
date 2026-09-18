@@ -35,11 +35,10 @@ export const MotionPriority = {
   Force: 3,
 } as const;
 
-/** Updater lipsync (flip kepemilikan, Fase B #4): menulis param mulut
- * (role-resolved) dari penyedia nilai 0..1, diskalakan ke range aktual
- * param (role-space — bukan angka literal). Provider null = tidak bicara
- * → nilai base/motion yang tampil (tulisan frame-transien). SET, bukan
- * add: mulut terbuka pengganti base saat bicara — konsisten driver lama. */
+/** Updater lipsync: menulis param mulut (role-resolved) dari penyedia
+ * nilai 0..1, diskalakan ke range aktual param. Provider null = tidak
+ * bicara → nilai base/motion yang tampil (tulisan efek frame-transien).
+ * SET, bukan add: mulut terbuka menggantikan base saat bicara. */
 class LipsyncUpdater extends ICubismUpdater {
   constructor(
     private provider: () => number | null,
@@ -62,10 +61,10 @@ class LipsyncUpdater extends ICubismUpdater {
   }
 }
 
-/** Pembungkus updater dengan gate runtime (flip kepemilikan efek, Fase B).
- * Tulisan efek bersifat frame-transien (dibuang loadParameters frame
- * berikutnya) — gate false berarti nilai base motion yang tampil, tanpa
- * restore manual. Dipakai breath; blink memakai callback _motionUpdated. */
+/** Updater ber-gate runtime. Tulisan efek frame-transien (dibuang
+ * loadParameters frame berikutnya) — gate false berarti nilai base motion
+ * yang tampil, tanpa restore manual. Dipakai breath; blink memakai
+ * callback _motionUpdated. */
 class GatedUpdater extends ICubismUpdater {
   constructor(
     private inner: ICubismUpdater,
@@ -84,23 +83,17 @@ export class Live2DUserModel extends CubismUserModel {
   /** View integrasi mematikan ini: app.js punya idle scheduler sendiri
    * (startIdleMotion, interval 7 dtk) — dua idle = dua sumber motion. */
   autoIdle = true;
-  /** Gate runtime kedip (flip kepemilikan blink, Fase B): null = selalu
-   * kedip; false = updater melewatkan frame itu — tulisan blink bersifat
-   * frame-transien sehingga mata kembali ke nilai base motion tanpa
-   * restore. app.js (integrasi view) memutuskan dari konfigurasi sheet
-   * (blinkEnabled) + state.frozen. */
+  /** Gate kedip: false = updater melewatkan frame itu. Diputuskan app.js
+   * dari konfigurasi sheet (blinkEnabled) + state.frozen. */
   blinkGate: (() => boolean) | null = null;
-  /** Gate runtime napas (flip kepemilikan breath, Fase B): semantik sama
-   * dengan blinkGate — app.js memutuskan dari hasBreath + frozen + motion
-   * layer aktif (kurva klip bisa membawa breath sendiri). */
+  /** Gate napas: hasBreath + frozen + motion layer aktif (kurva klip bisa
+   * membawa breath sendiri). */
   breathGate: (() => boolean) | null = null;
-  /** Gate runtime gaze (flip kepemilikan look, Fase B #3): app.js
-   * memutuskan dari aiLock + frozen + motion layer — saat otak/klip yang
-   * memegang pose, gaze framework diredam supaya tidak dobel. */
+  /** Gate gaze: off saat otak/klip memegang pose (aiLock/frozen/motion
+   * layer) supaya tidak dobel dengan gaze driver. */
   lookGate: (() => boolean) | null = null;
-  /** Penyedia lipsync (flip kepemilikan, Fase B #4): nilai 0..1 saat
-   * karakter bicara, null saat tidak — dipasang app.js (sumber analisis
-   * audio TTS lokal tetap milik driver). */
+  /** Penyedia lipsync: nilai 0..1 saat bicara, null saat tidak — dipasang
+   * app.js (analisis audio TTS lokal milik driver). */
   lipsyncProvider: (() => number | null) | null = null;
 
   /** Pasang updater lipsync untuk SATU param mulut (role-resolved).
@@ -118,14 +111,9 @@ export class Live2DUserModel extends CubismUserModel {
     this._look?.setParameters(list);
   }
 
-  /** Fallback blink role-resolved (model-agnostic, Fase B): rig tanpa grup
-   * EyeBlink di manifest (CubismEyeBlink.create → null) tetap harus kedip —
-   * id mata dari role mapping, bukan grup manifest. No-op bila grup ada
-   * (instance resmi sudah dibuat attachSetting) atau id kosong. */
-  /** Fallback blink role-resolved (model-agnostic, Fase B): rig tanpa grup
-   * EyeBlink di manifest menghasilkan instance dengan 0 id — isi dengan id
-   * mata dari role mapping (by-name, bukan grup). Deklarasi rigger yang
-   * punya id selalu menang (no-op). */
+  /** Fallback blink: rig tanpa grup EyeBlink di manifest menghasilkan
+   * instance ber-0 id — isi id mata dari role mapping (by-name). Id milik
+   * deklarasi rigger selalu menang (no-op bila sudah ada). */
   ensureEyeBlink(ids: CubismIdHandle[]): void {
     if (!ids.length) return;
     if (this._eyeBlink) {
@@ -174,10 +162,8 @@ export class Live2DUserModel extends CubismUserModel {
   }): void {
     const en = { blink: true, look: true, breath: true, ...(opts.enabled ?? {}) };
     if (this._eyeBlink && en.blink) {
-      // Flip kepemilikan blink (Fase B): framework memutar kedip. Callback
-      // _motionUpdated resmi membuat kedip mundur saat motion menganimasikan
-      // param frame itu (anti tabrak wink) — gate runtime flip menumpang
-      // mekanisme skip yang sama (blinkEnabled=false / frozen → skip).
+      // Kedip mundur otomatis saat motion menganimasikan param frame itu
+      // (callback resmi _motionUpdated) atau saat gate ditutup.
       this.updateScheduler.addUpdatableList(
         new CubismEyeBlinkUpdater(
           () => this._motionUpdated || !(this.blinkGate?.() ?? true),
@@ -191,9 +177,7 @@ export class Live2DUserModel extends CubismUserModel {
     if (en.look) {
       this._look = CubismLook.create();
       if (opts.look.length) this._look.setParameters(opts.look);
-      // Flip kepemilikan gaze (Fase B #3): framework menambah gaze (aditif
-      // resmi) di-ease CubismTargetPoint; gate runtime meredam saat
-      // aiLock/frozen/motion layer yang memegang pose sendiri.
+      // Gaze aditif; target di-ease CubismTargetPoint.
       this.updateScheduler.addUpdatableList(
         new GatedUpdater(
           new CubismLookUpdater(this._look, this._dragManager),
@@ -205,9 +189,8 @@ export class Live2DUserModel extends CubismUserModel {
     if (en.breath) {
       this._breath = CubismBreath.create();
       if (opts.breath.length) this._breath.setParameters(opts.breath);
-      // Flip kepemilikan breath (Fase B): framework menambah napas (aditif
-      // resmi — addParameterValueById) di atas motion; gate runtime menahan
-      // saat frozen / motion layer membawa kurva breath sendiri.
+      // Napas aditif di atas motion; gate menahan saat frozen / motion
+      // layer membawa kurva breath sendiri.
       this.updateScheduler.addUpdatableList(
         new GatedUpdater(
           new CubismBreathUpdater(this._breath),

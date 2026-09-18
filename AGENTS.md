@@ -12,8 +12,10 @@ Aplikasi Live2D yang dikendalikan AI: karakter Cubism 4/5 **apa pun** di
 (directive → MotionRuntime), bersuara (TTS multi-provider), proaktif saat idle,
 membaca mood dari webcam, dan punya 3 mode (VTuber / Assistant / Pet).
 Runtime **Bun**, inti logika **TypeScript** (`src/`, di-bundle ke
-`static/js/bundle.js`), engine/UI legacy di `static/js/app.js` (±8.600 baris —
-dijaga guard, di-port potongan saat disentuh).
+`static/js/bundle.js` + `static/js/live2d-view.mjs`), driver karakter & UI di
+`static/js/app.js` (dijaga guard). Renderer satu jalur: **Pixi 8 + Cubism SDK
+5-r.5 (Core 6.0.1)** di `src/live2d/view/` — stack lama (Pixi 6 + pixi-live2d)
+sudah dipensiunkan (entri 27–40 STATUS).
 
 Produk ini juga membawa **agent-nya sendiri** sebagai fitur (loop + 21 tool +
 permission gate di `src/server/agent/`) — jangan tertukar: itu kode produk,
@@ -34,7 +36,7 @@ bukan instruksi untukmu.
 
 ```bash
 bun run build          # WAJIB sebelum run — static/js/bundle.js di-gitignore
-bun run test           # SEMUA: 336 unit test (bun test) + 512 guard (11 suite)
+bun run test           # SEMUA: 457 unit test (bun test) + 416 guard (10 suite)
 bun run test:unit      # hanya unit test TS
 bun run test:guards    # hanya guard legacy
 bunx tsc --noEmit      # type-check (harus bersih)
@@ -72,18 +74,17 @@ Tidak ada test yang memanggil jaringan (endpoint LLM di-stub ke provider
 
 ## Aturan kerja
 
-- **"Port saat disentuh"** — bagian legacy (`static/js/app.js`) yang perlu
-  diubah di-port potongannya ke TS **di commit yang sama** bersama guard-nya.
-  Dua area bernilai di-port bila kelak disentuh: sistem sheet
-  (`migrateSheet`/`resolvePresets`) dan role mapping (`mapRoles`/`pokeRole*`).
-  Chat UI utama (bubble `#chat-log`, quick phrase, dsb. di app.js) tidak
-  direncanakan di-port. Panel agent **sudah** di-port ke TS
-  (`src/client/agent/panel/`, remake ala ZCode) — `mode-runtime.js` kini hanya
-  bridge `window.__agentPanel.start()`; logic panel baru ditulis di TS, bukan
-  di legacy JS.
-- **Guard legacy menguji kode asli** — fungsi diekstrak dari `app.js` via
-  `vm`, bukan salinan. Saat mem-port, guard ikut dikonversi ke bun test,
-  bukan dibuang.
+- **Satu jalur render** — stack lama (Pixi 6 + pixi-live2d) sudah dipensiunkan;
+  jangan menambah cabang dual-stack. Kepemilikan gerak: framework memutar
+  motion/ekspresi/physics/pose + efek blink/breath/gaze/lipsync (updater
+  ber-gate di `Live2DUserModel`); app.js menyumbang liveliness/emosi secara
+  **aditif** lewat `pokeAddParam` — jangan menulis SET absolut di atas param
+  yang sama di luar aiLock/motion-layer.
+- **Panel agent** sudah TS (`src/client/agent/panel/`) — `mode-runtime.js`
+  hanya bridge `window.__agentPanel.start()`; logic panel baru ditulis di TS.
+- **Guard menguji kode asli** — guard legacy mengekstrak fungsi dari
+  `app.js` via `vm`, bukan salinan. Saat mengubah kontrak fungsi yang dijaga,
+  guard ikut diperbarui di commit yang sama — bukan dihapus.
 - **Invariansi nama** — logika penyimpulan makna harus tetap benar setelah
   semua nama diganti (`m_001`, hash, bahasa lain). Guard sudah menguji ini
   (role-mapping); kalau menambah logika baru, uji ulang dengan nama yang
@@ -98,8 +99,9 @@ Tidak ada test yang memanggil jaringan (endpoint LLM di-stub ke provider
 
 ## Jebakan yang sering terjadi
 
-- Lupa `bun run build` → `window.__agent` tidak terpasang → chat **diam-diam**
-  (engine degrade gracefully, bukan crash).
+- Lupa `bun run build` → `bundle.js` dan `live2d-view.mjs` tidak ada (dua-duanya
+  di-gitignore) → chat **dan panggung** mati (agent degrade gracefully, bukan
+  crash).
 - Hardcode `127.0.0.1:8310` → pakai `location.origin` (frontend) / `appRoot()`
   (`src/shared/paths.ts` — akar app dev vs exe compile).
 - Menulis angka literal ke param role (bypass skala) → gagal senyap, karakter
@@ -134,7 +136,12 @@ src/build.ts                 bundle-entry → static/js/bundle.js (IIFE)
 src/dist.ts                  bun run dist — rakit dist/Live2D-Agent/ (exe + static)
 src/cli/agent.ts             bun run agent — REPL Assistant di terminal
 agent-shell/                 cangkang Tauri (Rust) — jendela utama, pet, sidecar
-static/js/app.js             engine/UI legacy (±8.600 baris) — dijaga guard
+src/live2d/                  renderer satu jalur — Pixi 8 + Cubism 5-r.5 (Core 6.0.1)
+  ├─ view/                   Live2DView (facade + backend tulis) + framing + entry
+  ├─ Live2DUserModel.ts      pipeline update dua fase + updater efek ber-gate
+  ├─ Live2DRenderer.ts       draw, tekstur, role/arbiter, setGazeGain
+  └─ cubism/                 Cubism Framework 5-r.5 vendored + PATCH renderOrders/blend
+static/js/app.js             driver karakter & UI (±8.900 baris) — dijaga guard
 static/js/mode-runtime.js    switcher mode — panel assistant tinggal bridge
                              window.__agentPanel
 static/js/{voice-input,emotion-overlay,motion-editor,camera-presence}.js

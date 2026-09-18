@@ -102,10 +102,9 @@ export class Live2DRenderer {
     effects?: { blink?: boolean; look?: boolean; breath?: boolean };
     /** false = tanpa idle otomatis framework (app.js punya scheduler idle sendiri) */
     autoIdle?: boolean;
-    /** Adopsi .exp3 yatim (Fase B): manifest in-memory hasil buildModelSettings
-     * app.js (hanya menambah yang belum dideklarasikan rigger; aturan user>ai
-     * dan opt-out per-file dipatuhi di sana). Null/undefined = fetch manifest
-     * asli. Jangan pernah ditulis balik ke disk. */
+    /** Manifest adopsi .exp3 yatim dari buildModelSettings (hanya menambah
+     * yang belum dideklarasikan rigger; aturan user>ai dan opt-out dipatuhi
+     * di sana). Null = pakai manifest asli. Tidak pernah ditulis ke disk. */
     adoptedManifest?: unknown;
   }): Promise<{ mocVersion: number; drawable: number; offscreen: number }> {
     const res = await fetch(model3Path);
@@ -250,9 +249,7 @@ export class Live2DRenderer {
       breath: this.buildBreathData(),
       enabled: opts?.effects,
     });
-    // Flip kepemilikan lipsync (Fase B #4): updater mulut dari provider
-    // (dipasang app.js), role-resolved + diskalakan range aktual. Model
-    // tanpa role mulut tidak mendaftar apa pun (model-agnostic).
+    // Updater mulut dari provider; model tanpa role mulut tidak mendaftar.
     const mouth = this.roleCtrl?.roleInfo("mouthOpenY");
     if (mouth) {
       const idMgr = CubismFramework.getIdManager();
@@ -265,12 +262,8 @@ export class Live2DRenderer {
     return { mocVersion, drawable, offscreen };
   }
 
-  /** Faktor look std resmi (±30 kepala, ±10 badan, ±1 bola mata)
-   * diskalakan proporsional ke range aktual model. bodyAngleY ikut
-   * (Fase B #3 lanjutan): stack lama menulis badan atas-bawah via
-   * tby = ny·REF_HALF·0.25 → ±0,75 half-range — fy 7.5 dengan
-   * stdHalf 10 mereproduksi tepat besaran itu. Gain keekspresivan
-   * per grup (kepala/mata/badan) dikalikan saat build. */
+  /** Faktor look per sendi (±30 kepala, ±10 badan, ±1 bola mata; bodyAngleY
+   * ±0,75 half-range) dikalikan gain keekspresivan grup saat build. */
   private buildLookData(): LookParameterData[] {
     const SPEC: Record<string, {
       stdHalf: number; fx: number; fy: number; fxy: number;

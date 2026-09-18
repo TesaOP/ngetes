@@ -3,17 +3,18 @@
 ![Runtime](https://img.shields.io/badge/runtime-Bun-f472b6?logo=bun&logoColor=white)
 ![Bahasa](https://img.shields.io/badge/inti%20logika-TypeScript-3178c6?logo=typescript&logoColor=white)
 ![Live2D](https://img.shields.io/badge/Cubism-4%20%2F%205-1ca9c4)
-![Test](https://img.shields.io/badge/test-228%20unit%20%2B%20512%20guard-3fb950)
+![Test](https://img.shields.io/badge/test-457%20unit%20%2B%20416%20guard-3fb950)
 ![Portable](https://img.shields.io/badge/portable-Windows-0078d6?logo=windows11&logoColor=white)
 
 Karakter Live2D yang dikendalikan AI — ngobrol lewat teks atau suara, menjawab dengan gerak,
 ekspresi, dan suara (TTS), dan **tetap hidup saat kamu diam**: bicara sendiri saat idle,
 menyapa saat kamu pergi/balik, membaca mood dari webcam. Runtime **Bun** (zero-dep),
-inti logika **TypeScript**, engine UI teruji dijaga guard otomatis.
+inti logika **TypeScript**, renderer satu jalur **Pixi 8 + Cubism SDK 5-r.5** (Core 6.0.1,
+tanpa MOC-version-hack).
 
 > **Model-agnostic:** jalan dengan model Cubism 4/5 **apa pun** yang kamu impor — tanpa
-> hardcode nama model, id parameter, atau range. Aturannya mengikat dan dijaga 512 assertion
-> guard: [`docs/MODEL-AGNOSTIC-RULES.md`](docs/MODEL-AGNOSTIC-RULES.md).
+> hardcode nama model, id parameter, atau range. Aturannya mengikat dan dijaga guard
+> otomatis: [`docs/MODEL-AGNOSTIC-RULES.md`](docs/MODEL-AGNOSTIC-RULES.md).
 
 ## ✨ Sorotan
 
@@ -34,8 +35,11 @@ inti logika **TypeScript**, engine UI teruji dijaga guard otomatis.
 - **Tiga mode, satu aplikasi** — 🎥 **AI VTuber** (Twitch / YouTube Live / mock + overlay
   OBS Browser Source anti-dobel balasan) · 🧠 **Assistant** (agent ber-tool) · 🐾 **Desktop
   Pet** (shell Tauri: transparan, always-on-top, klik-tembus).
-- **Teruji, bukan cukup jalan** — 336 unit test + 512 assertion guard yang menguji kode
-  asli (bukan salinan), termasuk uji invariansi: rig yang sama dalam kosakata Inggris /
+- **Renderer tunggal + efek framework** — Pixi 8 + Cubism SDK 5-r.5 (Core 6.0.1) memutar
+  motion/ekspresi/physics/pose dan efek blink/breath/gaze/lip-sync dengan gate konfigurasi
+  per-model; slider keekspresivan per sendi (kepala/mata/badan) langsung terasa saat digeser.
+- **Teruji, bukan cukup jalan** — 457 unit test + 416 assertion guard yang menguji kontrak
+  kode asli (bukan salinan), termasuk uji invariansi: rig yang sama dalam kosakata Inggris /
   Jepang / Mandarin harus resolve ke role yang sama.
 - **Distribusi rapi** — `bun run dist` menghasilkan folder portable (server di-compile ke
   exe, shell WebView2 ±3 MB sebagai sidecar) atau installer Inno Setup ±32 MB tanpa admin.
@@ -74,8 +78,9 @@ jalan. Server bisa di-cross-compile lintas OS (`bun run dist -- bun-linux-x64`).
 ```mermaid
 flowchart LR
     subgraph client["Browser / WebView2 (Tauri)"]
-        APP["app.js — render loop & UI (legacy, dijaga guard)"]
+        APP["app.js — driver karakter & UI (dijaga guard)"]
         BUNDLE["bundle.js — TypeScript<br/>Motion DSL · Registry · Runtime<br/>otak agent · i18n"]
+        VIEW["live2d-view.mjs — Pixi 8 + Cubism 5-r.5<br/>efek framework: blink/breath/gaze/lip-sync"]
     end
     subgraph server["Server Bun (loopback default)"]
         API["index.ts — 40+ route API<br/>+ static + upload"]
@@ -91,14 +96,18 @@ flowchart LR
     API --> AGENT --> LLM
     API --> MODES
     API --> LLM --> PROVIDERS
+    APP -- "pose komposisi jiwa (aditif)" --> VIEW
+    BUNDLE -- "pilih motion · ekspresi" --> VIEW
+    VIEW -- "Cubism Core 6.0.1" --> MODEL
     BUNDLE -- "poke role → range model" --> MODEL
 ```
 
 Dua lapisan yang saling menopang: **inti logika di TypeScript** (punya unit test) dan
-**engine/UI legacy di `static/js/app.js`** (sudah teruji jalan, dijaga guard, di-port
-potongan saat disentuh). Kode TS client di-bundle oleh `src/build.ts` dan dimuat
-**sebelum** `app.js`, memasang bridge `window.MotionTaxonomy / MotionDSL / MotionRegistry
-/ MotionRuntime / __agent`.
+**driver karakter & UI di `static/js/app.js`** (teruji jalan, dijaga guard). Renderer
+berada di adapter TS `src/live2d/view/` — di-bundle oleh `src/build.ts` menjadi
+`live2d-view.mjs` dan dimuat sebagai module; TS client lain dimuat **sebelum** `app.js`,
+memasang bridge `window.MotionTaxonomy / MotionDSL / MotionRegistry / MotionRuntime /
+__agent / __i18n`.
 
 | Lapisan | Lokasi | Karakter |
 |---|---|---|
@@ -108,8 +117,9 @@ potongan saat disentuh). Kode TS client di-bundle oleh `src/build.ts` dan dimuat
 | Panel agent — workspace 4 kolom | `src/client/agent/panel/` + `src/client/shell/` | TASK/chat + Review/Terminal/Browser; TS penuh |
 | Motion core — DSL, registry, runtime, easing | `src/client/animation/*.ts` | TS penuh, teruji unit |
 | Mode system — VTuber / Assistant / Pet | `src/server/{vtuber,assistant,pet}.ts` | satu mode aktif, teardown sebelum pindah |
+| **Renderer — satu jalur render + efek framework** | `src/live2d/view/` + `src/live2d/` | TS penuh; Cubism 5-r.5 vendored + Core 6.0.1 |
 | Release portable — compile + rakit folder | `src/dist.ts` → `dist/Live2D-Agent/` | sidecar shell Tauri |
-| Engine/UI — render loop, chat, sheet | `static/js/app.js` (±8.600 baris) | legacy — dijaga guard |
+| Driver karakter & UI — pose komposisi jiwa, konfigurasi, sheet | `static/js/app.js` (±8.900 baris) | dijaga guard |
 
 Alur LLM: `browser → POST /api/chat → llmForRole('chat') → llmWithFallback → provider →
 parseSegments → animateTextViaDirector (role 'motion') → MotionRuntime`. Persona
@@ -132,7 +142,7 @@ native + user) → Runtime (priority + blend + watchdog rAF) → Live2D`.
 ## 🧪 Kualitas
 
 ```bash
-bun run test         # 336 unit test (bun test) + 512 guard legacy (11 suite)
+bun run test         # 457 unit test (bun test) + 416 guard legacy (10 suite)
 bun run test:unit    # hanya unit test TS
 bun run test:guards  # hanya guard legacy
 bunx tsc --noEmit    # type-check
@@ -189,7 +199,8 @@ identik, tidak ada konversi.
 ## ⚠️ Model assets
 
 `data/model/` **tidak di-commit**. Letakkan model Cubism 4 atau 5 sendiri di
-`data/model/<nama>/<file>.model3.json` — runtime mendukung keduanya (moc3 v4.2 dan
-v5.0/5.3; detail efek rig v5: [`docs/STATUS-CUBISM5-EFEK.md`](docs/STATUS-CUBISM5-EFEK.md)).
-Catatan: model v4 tetap kompatibel dengan runtime Cubism 5, tapi jangan buka & re-save di
-Editor v5 kalau mau balik ke v4.
+`data/model/<nama>/<file>.model3.json` — runtime mendukung semuanya lewat Core 6.0.1
+(moc3 v4.2, v5.0/5.3, dan v6 — native, tanpa byte-hack; sejarah migrasi:
+[`docs/STATUS-CUBISM5-EFEK.md`](docs/STATUS-CUBISM5-EFEK.md)). Catatan: model v4 tetap
+kompatibel dengan runtime Cubism 5, tapi jangan buka & re-save di Editor v5 kalau mau
+balik ke v4.

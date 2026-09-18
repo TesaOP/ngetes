@@ -4,6 +4,46 @@
 > hapus keputusan yang masih berlaku. Kode yang dirujuk: sudah ter-commit di
 > master (lihat daftar commit di bawah).
 
+## ARSITEKTUR SAAT INI (post-migrasi Pixi 8 — entri 27–40 selesai)
+
+Satu jalur render untuk SEMUA permukaan (app utama & pet.html):
+
+```text
+LLM → Motion/Behavior Director → app.js komposisi jiwa (ADITIF)
+      → framework Cubism 5-r.5 (motion/ekspresi/physics/pose
+        + blink/breath/gaze/lipsync updater ber-gate)
+      → Pixi 8 renderer → model
+```
+
+- **Renderer**: `src/live2d/view/` (Live2DView facade + framing) di-bundle ke
+  `static/js/live2d-view.mjs` (gitignored — `bun run build`). Framework
+  Cubism 5-r.5 vendored di `src/live2d/cubism/` dengan Core 6.0.1 — tanpa
+  MOC-version-hack (moc3 v4.2/v5/v6 native).
+- **Kepemilikan**: framework memutar motion/ekspresi/physics/pose +
+  blink/breath/gaze/lipsync (updater ber-gate); app.js menyumbang liveliness
+  & emosi secara ADITIF lewat backend `coreModel` (SET utk aiLock/motion-
+  layer/mouthForm, ADD untuk komposisi). Gaze kursor & pet via
+  `setLookTarget` (CubismTargetPoint). Slider keekspresivan per grup sendi
+  (kepala/mata/badan, 0–2×) di panel konfigurasi, persist per-model.
+- **Stack lama (Pixi 6 + pixi-live2d + MOC-hack) sudah DIHAPUS** — git
+  history menyimpan semuanya. PixiJS 6 global tersisa hanya sebagai utilitas
+  renderer overlay efek emosi (emotion-overlay.js, canvas terpisah).
+- **Gate**: 457 unit test + 416 guard (10 suite) + tsc — hijau penuh.
+
+### Belum teruji (konsolidasi — catatan untuk sesi berikutnya)
+
+1. **Pet klik-tembus di shell Tauri nyata** — halaman pet.html terverifikasi
+   di browser, tapi `setIgnoreCursorEvents`/destroy jendela hanya bisa
+   diuji dengan build `bun run build:pet` (butuh toolchain Rust).
+2. **Uji rasa user jangka panjang** — zoom/drag dalam pemakaian nyata,
+   VTuber Twitch/YouTube asli (baru mock), TTS berkala, Motion Studio UI
+   visual penuh (baru pipeline dasarnya yang teruji).
+3. Konversi guard override ke bun test atas AppWriteUpdater (opsional —
+   perilaku sticky-override kini diuji lewat verifikasi browser).
+
+Dokumentasi publik (README/AGENTS/MODES/TROUBLESHOOTING/MODEL-AGNOSTIC)
+sudah diselaraskan dengan arsitektur ini.
+
 ## UPDATE 2026-09-19 (41) — MATRIKS VERIFIKASI SEMUA MODE DI STACK BARU (COMMIT)
 
 Sweep verifikasi lintas mode setelah pensiunan penuh (tanpa perubahan kode):
