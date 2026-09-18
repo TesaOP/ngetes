@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="id">
+<meta charset="utf-8">
+<title>Pipeline runtime — bukti update dua fase (skill cubism-web)</title>
+<style>html,body{margin:0;background:#e8e8e8}canvas{display:block;border:1px solid #ccc}</style>
+<script src="js/live2dcubismcore.min.js"></script>
+<script type="importmap">{"imports":{"pixi.js":"./js/pixi8.mjs"}}</script>
+<script type="module">
+import * as PIXI from 'pixi.js';
+import { Live2DRenderer, MotionPriority } from './js/live2d-render.mjs';
+
+const app = new PIXI.Application();
+await app.init({ width: 420, height: 640, background: '#e8e8e8', backgroundAlpha: 1, antialias: true });
+document.body.appendChild(app.canvas);
+const gl = app.canvas.getContext('webgl2') || app.canvas.getContext('webgl');
+
+const renderer = new Live2DRenderer(app.canvas, gl);
+const out = { ok: false };
+window.__pipeline = out;
+try {
+  const info = await renderer.loadModel('/model/ren_official_cubism/runtime/ren.model3.json');
+  out.load = info;
+  out.roleMap = renderer.getRoleMap();
+
+  // 1) role → actual: setRole angleX ref 15 (rig ren ±30 → actual harus = 15)
+  renderer.setRole('angleX', 15, 'manual');
+  out.roleSet = { angleX: renderer.getParameter('ParamAngleX') };
+
+  // 2) motion native: grup Idle ada di manifest ren → handle antrean >= 0
+  out.nativeIdle = await renderer.playNativeMotion('Idle', 0, MotionPriority.Normal);
+
+  // 3) ekspresi native: exp_01 ada di manifest → true
+  out.expression = await renderer.playExpression('exp_01');
+
+  // 4) grup yang tidak ada di manifest harus gagal dengan jelas (bukan crash)
+  out.nativeUnknown = await renderer.playNativeMotion('GrupNggakAda', 0, MotionPriority.Normal);
+
+  // 5) reset ke default via arbiter — angleX kembali 0; nama role salah → false
+  out.roleDefaultSalahNama = renderer.setRoleDefault('anglex', 'manual'); // harus false
+  renderer.setRoleDefault('angleX', 'manual');
+  out.roleDefault = { angleX: renderer.getParameter('ParamAngleX') };
+
+  // rAF: bukti animasi — pixel tengah harus berubah antar frame.
+  // Loop TIDAK berhenti: context Pixi dibuat preserveDrawingBuffer=false,
+  // jadi begitu rAF berhenti kompositor menampilkan buffer ter-invalidate
+  // (hitam) — bukti visual harus diambil saat loop masih menggambar.
+  let frames = 0;
+  const samples = [];
+  function frame() {
+    renderer.draw();
+    frames++;
+    if (frames === 1 || frames === 45 || frames === 90) {
+      const px = new Uint8Array(4);
+      gl.readPixels((gl.drawingBufferWidth >> 1), (gl.drawingBufferHeight >> 1), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      samples.push(Array.from(px));
+    }
+    if (frames < 95) {
+      requestAnimationFrame(frame);
+      return;
+    }
+    if (!out.pixelSamples) {
+      out.pixelSamples = samples;
+      out.animasi = samples.length >= 2 && samples.some(s => s.join(',') !== samples[0].join(','));
+      out.ok = !!(out.load && out.roleMap && out.nativeIdle >= 0 && out.expression === true
+        && out.nativeUnknown === -1 && out.roleDefault.angleX === 0 && out.animasi);
+      console.log('[pipeline]', JSON.stringify(out, null, 1));
+    }
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+} catch (e) {
+  console.error('[pipeline] FAIL', e);
+  out.error = String(e && e.message || e);
+}
+</script>
+</html>
