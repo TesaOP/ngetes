@@ -10136,9 +10136,606 @@ class Live2DModel {
     return loadLive2DModel(modelPath, options);
   }
 }
+// src/live2d/MotionBridge.ts
+class MotionBridge {
+  renderer;
+  poseBase = {};
+  ownedParams = new Set;
+  constructor(renderer) {
+    this.renderer = renderer;
+  }
+  getPoseBase() {
+    return { ...this.poseBase };
+  }
+  applyPoseDelta(delta) {
+    const alias = { ax: "angleX", ay: "angleY", ex: "eyeBallX", ey: "eyeBallY", bodyX: "bodyAngleX", bodyY: "bodyAngleY", bodyZ: "bodyAngleZ", mouthForm: "mouthForm" };
+    for (const k in delta) {
+      const role = alias[k] || k;
+      const v = delta[k] ?? 0;
+      this.renderer.setRole(role, v);
+    }
+  }
+  clearPoseDelta() {
+    const map = this.renderer.getRoleMap();
+    if (!map)
+      return;
+    for (const role in map)
+      this.renderer.setRole(role, 0);
+  }
+  applyParamDrive(params) {
+    for (const id in params) {
+      this.renderer.setParameter(id, params[id]);
+      this.ownedParams.add(id);
+    }
+  }
+  releaseParamDrive(paramIds) {
+    for (const id of paramIds) {
+      this.ownedParams.delete(id);
+      const info = this.renderer.getParameterInfo(id);
+      if (info)
+        this.renderer.setParameter(id, info.default);
+    }
+  }
+  readParam(id) {
+    return this.renderer.getParameter(id) ?? 0;
+  }
+  getSupports() {
+    const map = this.renderer.getRoleMap();
+    const caps = new Set;
+    if (!map)
+      return caps;
+    if (map.angleX || map.angleY)
+      caps.add("head");
+    if (map.eyeBallX || map.eyeBallY)
+      caps.add("eyes");
+    if (map.mouthForm || map.mouthOpenY)
+      caps.add("mouth");
+    if (map.bodyAngleX || map.bodyAngleY || map.bodyAngleZ)
+      caps.add("body");
+    if (caps.size === 0)
+      caps.add("head");
+    return caps;
+  }
+  getOwnedParams() {
+    return new Set(this.ownedParams);
+  }
+  playNative(_group) {
+    console.log(`[MotionBridge] playNative ${_group} (stub Fase 11)`);
+  }
+  now() {
+    return typeof performance !== "undefined" ? performance.now() : Date.now();
+  }
+}
+// src/client/animation/easing.ts
+function ease(t, mode) {
+  switch (mode) {
+    case "stepped":
+      return 0;
+    case "ease-in":
+      return t * t * t;
+    case "ease-out":
+      return 1 - Math.pow(1 - t, 3);
+    case "ease-in-out":
+      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    case "linear":
+    default:
+      return t;
+  }
+}
+function clamp2(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+// src/client/animation/motion-dsl.ts
+var FIELD_BOUNDS = {
+  ax: 30,
+  ay: 30,
+  bodyX: 30,
+  bodyY: 30,
+  bodyZ: 30,
+  ex: 1,
+  ey: 1,
+  mouthForm: 1
+};
+var ROLE_ALIASES = {
+  angleX: "ax",
+  angleY: "ay",
+  eyeX: "ex",
+  eyeY: "ey",
+  bodyX: "bodyX",
+  bodyY: "bodyY",
+  bodyZ: "bodyZ",
+  mouthForm: "mouthForm"
+};
+function isFiniteNum(v) {
+  return typeof v === "number" && Number.isFinite(v);
+}
+function normalizeTarget(name) {
+  if (typeof name !== "string")
+    return null;
+  const k = name.trim();
+  if (Object.prototype.hasOwnProperty.call(FIELD_BOUNDS, k))
+    return k;
+  if (Object.prototype.hasOwnProperty.call(ROLE_ALIASES, k))
+    return ROLE_ALIASES[k];
+  return null;
+}
+function ease2(t, mode) {
+  return ease(t, mode);
+}
+function evalTrack(track, t) {
+  const keys = track.keys;
+  if (!keys.length)
+    return 0;
+  if (t <= keys[0].t)
+    return keys[0].v;
+  const last = keys[keys.length - 1];
+  if (t >= last.t)
+    return last.v;
+  for (let i = 1;i < keys.length; i++) {
+    if (t <= keys[i].t) {
+      const a = keys[i - 1], b = keys[i];
+      const span = b.t - a.t;
+      const mode = a.easing || track.interp || "linear";
+      const f = span <= 0 ? 1 : ease2((t - a.t) / span, mode);
+      return a.v + (b.v - a.v) * f;
+    }
+  }
+  return last.v;
+}
+function fieldCapability(field) {
+  if (field === "ax" || field === "ay")
+    return "head";
+  if (field === "ex" || field === "ey")
+    return "eyes";
+  if (field === "mouthForm")
+    return "mouth";
+  return "body";
+}
+function evaluateAsset(asset, t, intensity, supports, ownedParams) {
+  const roles = {};
+  const params = {};
+  const inten = isFiniteNum(intensity) ? clamp2(intensity, 0, 1) : asset.intensity ? asset.intensity.default : 0.8;
+  for (const track of asset.tracks || []) {
+    const tt = Math.max(0, t);
+    if (track.kind === "param") {
+      const id = typeof track.param === "string" ? track.param : null;
+      if (!id)
+        continue;
+      if (ownedParams && ownedParams.size && !ownedParams.has(id))
+        continue;
+      params[id] = evalTrack(track, tt);
+      continue;
+    }
+    const target = normalizeTarget(track.target);
+    if (!target)
+      continue;
+    if (supports && supports.size && !supports.has(fieldCapability(target)))
+      continue;
+    const scale = isFiniteNum(track.intensityScale) ? clamp2(track.intensityScale, 0, 2) : 1;
+    roles[target] = clamp2(evalTrack(track, tt) * inten * scale, -FIELD_BOUNDS[target], FIELD_BOUNDS[target]);
+  }
+  const out = { roles, params, __roles: roles, __params: params };
+  Object.assign(out, roles, params);
+  return out;
+}
+function assetDurationMs(asset) {
+  let maxT = 0;
+  for (const tr of asset.tracks || [])
+    for (const k of tr.keys || [])
+      if (k.t > maxT)
+        maxT = k.t;
+  const base = (asset.duration || 0) * 1000;
+  return Math.max(base, maxT * 1000, 200);
+}
+function stepsToTracks(steps) {
+  const touched = [];
+  const vals = {};
+  const keysByField = {};
+  let t = 0;
+  for (const step of steps || []) {
+    const d = step && step.d || {};
+    const ms = step && step.ms || 0;
+    const mentioned = new Set;
+    for (const k in d) {
+      const target = normalizeTarget(k);
+      if (!target || !isFiniteNum(d[k]))
+        continue;
+      if (!(target in vals)) {
+        touched.push(target);
+        vals[target] = 0;
+        keysByField[target] = [];
+      }
+      vals[target] = d[k];
+      mentioned.add(target);
+    }
+    for (const f of touched)
+      if (!mentioned.has(f))
+        vals[f] = 0;
+    if (ms > 0 && touched.length) {
+      const tt = +(t / 1000).toFixed(3);
+      for (const f of touched) {
+        const v = +(vals[f] || 0).toFixed(3);
+        const keys = keysByField[f];
+        if (keys.length && keys[keys.length - 1].v === v)
+          continue;
+        keys.push({ t: tt, v });
+      }
+      t += ms;
+    }
+  }
+  return Object.keys(keysByField).map((target) => ({ target, interp: "linear", keys: keysByField[target] }));
+}
+function summaryForLLM(asset) {
+  const compatible = Object.entries(asset.emotionCompatibility || {}).filter(([, v]) => v >= 0.5).map(([k]) => k);
+  return { id: asset.id, description: asset.description || asset.name, tags: asset.tags || [], compatibleEmotions: compatible, source: asset.source, duration: asset.duration };
+}
+
+// src/client/animation/motion-registry.ts
+class MotionRegistry {
+  byId = new Map;
+  cooldownUntil = new Map;
+  register(asset, opts) {
+    if (!asset || typeof asset !== "object" || !asset.id)
+      return { ok: false, error: "asset kosong / tanpa id" };
+    const prev = this.byId.get(asset.id);
+    if (prev && !(opts && opts.overwrite)) {
+      if (prev.source !== asset.source)
+        return { ok: false, error: `id "${asset.id}" sudah dipakai entri ${prev.source} ("${prev.name}")` };
+    }
+    this.byId.set(asset.id, { ...asset });
+    return { ok: true };
+  }
+  get(id) {
+    const a = this.byId.get(id);
+    return a ? { ...a } : null;
+  }
+  has(id) {
+    return this.byId.has(id);
+  }
+  remove(id, source) {
+    const a = this.byId.get(id);
+    if (!a)
+      return false;
+    if (source && a.source !== source)
+      return false;
+    this.byId.delete(id);
+    this.cooldownUntil.delete(id);
+    return true;
+  }
+  list() {
+    return Array.from(this.byId.values());
+  }
+  search(q) {
+    const want = q && q.tags || [];
+    let out = this.list();
+    if (q && q.source)
+      out = out.filter((a) => a.source === q.source);
+    if (want.length)
+      out = out.filter((a) => want.every((t) => (a.tags || []).includes(String(t).toLowerCase())));
+    if (q && q.emotion)
+      out = out.filter((a) => (a.emotionCompatibility || {})[q.emotion] >= 0.5);
+    return out;
+  }
+  registerGestureLibrary(lib, emotionGestureMap) {
+    const emo2gest = emotionGestureMap || {};
+    const gest2emo = {};
+    for (const [emo, gest] of Object.entries(emo2gest))
+      gest2emo[gest] = Math.max(gest2emo[gest] || 0, 1);
+    for (const [name, steps] of Object.entries(lib || {})) {
+      const tracks = stepsToTracks(steps);
+      const totalMs = (steps || []).reduce((s, st) => s + (st && st.ms || 0), 0);
+      this.register({ version: 1, id: name, name, source: "builtin", type: "gesture", description: "Gerakan bawaan: " + name.replace(/_/g, " "), tags: ["builtin"], duration: +(totalMs / 1000).toFixed(3), loop: false, intensity: { min: 0.3, max: 1, default: 0.8 }, emotionCompatibility: gest2emo[name] ? { normal: 0.7 } : {}, cooldown: 0, priority: 60, aiEnabled: true, requires: [], tracks });
+    }
+  }
+  registerNativeGroups(groups, info) {
+    const meta = info || {};
+    for (const g of groups || []) {
+      if (!g)
+        continue;
+      const m = meta[g] || {};
+      this.register({ version: 1, id: "motion_" + g, name: g, source: "native", type: "motion3", description: m.description || "Motion bawaan model: " + g, tags: m.tags || [], duration: m.duration || 2, loop: false, intensity: { min: 0.3, max: 1, default: 0.8 }, emotionCompatibility: m.emotionCompatibility || {}, cooldown: 0, priority: 90, aiEnabled: true, requires: [], tracks: [] }, { overwrite: true });
+    }
+  }
+  replaceUserMotions(assets) {
+    for (const [id, a] of Array.from(this.byId))
+      if (a.source === "user")
+        this.byId.delete(id);
+    let n = 0;
+    for (const a of assets || [])
+      if (this.register({ ...a, source: "user" }, { overwrite: true }).ok)
+        n++;
+    return n;
+  }
+  catalogForLLM() {
+    return this.list().filter((a) => a.aiEnabled !== false).map((a) => summaryForLLM(a));
+  }
+  canPlay(id, now) {
+    const a = this.byId.get(id);
+    if (!a)
+      return false;
+    const until = this.cooldownUntil.get(id) || 0;
+    return now == null || now >= until;
+  }
+  markPlayed(id, now) {
+    const a = this.byId.get(id);
+    if (!a || !a.cooldown)
+      return;
+    this.cooldownUntil.set(id, (now || 0) + a.cooldown);
+  }
+  static createRegistry() {
+    return new MotionRegistry;
+  }
+}
+// src/client/animation/motion-runtime.ts
+var HISTORY_MAX = 20;
+var MAX_LAYERS = 4;
+var STRETCH_MAX = 2;
+function computePlaybackPlan(asset, opts) {
+  const durMs = assetDurationMs(asset);
+  const blendIn = Math.max(0, opts.blendIn ?? 120);
+  const blendOut = Math.max(0, opts.blendOut ?? 250);
+  const fitMs = opts.fitToMs && !asset.loop && opts.fitToMs > durMs ? opts.fitToMs : 0;
+  const spanMs = fitMs ? Math.max(1, fitMs - blendIn) : durMs;
+  const speed = fitMs ? Math.max(durMs / spanMs, 1 / STRETCH_MAX) : 1;
+  const fadeStartMs = fitMs || durMs;
+  return { durMs, blendIn, blendOut, fitMs, speed, fadeStartMs, totalMs: fadeStartMs + blendOut };
+}
+function envelopeAt(plan, tMs) {
+  let amp = 1;
+  let tSec = (tMs - plan.blendIn) * plan.speed / 1000;
+  if (tMs < plan.blendIn) {
+    amp = plan.blendIn > 0 ? tMs / plan.blendIn : 1;
+    tSec = 0;
+  }
+  if (tMs > plan.fadeStartMs) {
+    const f = (tMs - plan.fadeStartMs) / (plan.blendOut || 1);
+    amp = 1 - Math.min(1, f);
+    tSec = plan.durMs / 1000;
+  }
+  return { amp, tSec };
+}
+function prioOf(l) {
+  return l.opts.priority ?? l.asset.priority ?? 60;
+}
+
+class MotionRuntime {
+  registry;
+  bridge;
+  layers = [];
+  history = [];
+  rafId = null;
+  watchdogId = null;
+  constructor(registry, bridge) {
+    this.registry = registry;
+    this.bridge = bridge ?? {};
+  }
+  attach(bridge) {
+    this.bridge = bridge;
+    this.stopAll();
+  }
+  play(id, opts = {}) {
+    const asset = this.registry.get(id);
+    if (!asset)
+      return false;
+    if (asset.aiEnabled === false && opts.fromLLM)
+      return false;
+    if (!this.registry.canPlay(id, this.now())) {
+      if (opts.fromLLM)
+        return false;
+    }
+    if (asset.source === "native") {
+      this.registry.markPlayed(id, this.now());
+      this.bridge.playNative?.(asset.id.replace(/^motion_/, ""));
+      return true;
+    }
+    if (!asset.tracks?.length)
+      return false;
+    const prio = opts.priority ?? asset.priority ?? 60;
+    const survivors = this.layers.filter((l) => prioOf(l) > prio);
+    if (survivors.length >= MAX_LAYERS)
+      return false;
+    const replaced = this.layers.filter((l) => prioOf(l) <= prio);
+    for (const l of replaced)
+      this.dropLayer(l, false);
+    this.registry.markPlayed(id, this.now());
+    const base = this.bridge.getPoseBase?.() ?? {};
+    const paramIds = [];
+    const paramBase = {};
+    for (const tr of asset.tracks) {
+      if (tr.kind === "param" && tr.param) {
+        paramIds.push(tr.param);
+        paramBase[tr.param] = this.bridge.readParam?.(tr.param) ?? 0;
+      }
+    }
+    const startTime = this.now();
+    const plan = computePlaybackPlan(asset, opts);
+    this.layers.push({
+      asset,
+      opts: { ...opts, priority: prio },
+      plan,
+      startTime,
+      fadeStartAt: startTime + plan.fadeStartMs,
+      base,
+      paramBase,
+      paramIds
+    });
+    if (replaced.length)
+      this.recombine();
+    this.scheduleTick();
+    return true;
+  }
+  stop(id) {
+    const targets = this.layers.filter((l) => !id || l.asset.id === id);
+    if (!targets.length)
+      return false;
+    for (const l of targets)
+      this.dropLayer(l, true);
+    if (!this.layers.length)
+      this.stopLoop();
+    return true;
+  }
+  stopAll() {
+    if (!this.layers.length)
+      return false;
+    for (const l of [...this.layers])
+      this.dropLayer(l, true);
+    this.stopLoop();
+    return true;
+  }
+  isPlaying(id) {
+    return id ? this.layers.some((l) => l.asset.id === id) : this.layers.length > 0;
+  }
+  getActive() {
+    const top = this.layers[this.layers.length - 1];
+    return top ? { id: top.asset.id, asset: top.asset } : null;
+  }
+  getHistory() {
+    return [...this.history];
+  }
+  listAvailable() {
+    return this.registry.list().filter((a) => a.source !== "native" || a.aiEnabled !== false);
+  }
+  sampleForTest() {
+    if (!this.layers.length)
+      return null;
+    return this.combinedDelta();
+  }
+  now() {
+    return this.bridge.now?.() ?? (typeof performance !== "undefined" ? performance.now() : Date.now());
+  }
+  dropLayer(l, recombineAfter) {
+    const idx = this.layers.indexOf(l);
+    if (idx === -1)
+      return;
+    this.layers.splice(idx, 1);
+    this.history.unshift({ id: l.asset.id, at: this.now() });
+    if (this.history.length > HISTORY_MAX)
+      this.history.length = HISTORY_MAX;
+    const stillOwned = new Set;
+    for (const other of this.layers)
+      for (const p of other.paramIds)
+        stillOwned.add(p);
+    const releaseIds = l.paramIds.filter((p) => !stillOwned.has(p));
+    if (releaseIds.length)
+      this.bridge.releaseParamDrive?.(releaseIds);
+    l.opts.onDone?.(l.asset.id);
+    if (recombineAfter)
+      this.recombine();
+  }
+  recombine() {
+    if (typeof this.bridge.applyPoseDelta === "function") {
+      const { roles, params } = this.combinedDelta();
+      this.bridge.applyPoseDelta(roles);
+      if (this.bridge.applyParamDrive)
+        this.bridge.applyParamDrive(params);
+    } else {
+      this.bridge.clearPoseDelta?.();
+    }
+  }
+  combinedDelta() {
+    const ordered = [...this.layers].sort((a, b) => prioOf(b) - prioOf(a));
+    const roles = {};
+    const params = {};
+    const owned = new Set;
+    let amp = 0;
+    for (const l of ordered) {
+      const tMs = this.now() - l.startTime;
+      const { amp: layerAmp, tSec } = envelopeAt(l.plan, tMs);
+      amp = Math.max(amp, layerAmp);
+      const ev = evaluateAsset(l.asset, Math.max(0, tSec), l.opts.intensity, this.bridge.getSupports?.(), this.bridge.getOwnedParams?.());
+      for (const k in ev.roles) {
+        if (owned.has(k))
+          continue;
+        owned.add(k);
+        roles[k] = ev.roles[k] * layerAmp;
+      }
+      for (const id in ev.params) {
+        if (owned.has(id))
+          continue;
+        owned.add(id);
+        const from = Number.isFinite(l.paramBase[id]) ? l.paramBase[id] : ev.params[id];
+        params[id] = from + (ev.params[id] - from) * layerAmp;
+      }
+    }
+    return { roles, params, amp };
+  }
+  tick() {
+    this.rafId = null;
+    if (this.watchdogId != null) {
+      clearTimeout(this.watchdogId);
+      this.watchdogId = null;
+    }
+    if (!this.layers.length) {
+      this.stopLoop();
+      return;
+    }
+    const now = this.now();
+    for (const l of [...this.layers]) {
+      if (now - l.startTime >= l.plan.totalMs) {
+        if (l.asset.loop) {
+          l.startTime = now;
+          l.fadeStartAt = now + l.plan.fadeStartMs;
+        } else {
+          this.dropLayer(l, true);
+        }
+      }
+    }
+    if (!this.layers.length) {
+      this.stopLoop();
+      return;
+    }
+    const { roles, params } = this.combinedDelta();
+    if (typeof this.bridge.applyPoseDelta === "function")
+      this.bridge.applyPoseDelta(roles);
+    if (this.bridge.applyParamDrive)
+      this.bridge.applyParamDrive(params);
+    for (const l of this.layers) {
+      l.opts.onProgress?.(Math.min(1, (now - l.startTime) / l.plan.totalMs));
+    }
+    this.scheduleTick();
+  }
+  scheduleTick() {
+    if (typeof requestAnimationFrame === "function") {
+      if (this.rafId == null) {
+        this.rafId = requestAnimationFrame(() => this.tick());
+      }
+      if (this.watchdogId == null) {
+        this.watchdogId = setTimeout(() => {
+          this.watchdogId = null;
+          this.tick();
+        }, 250);
+      }
+      return;
+    }
+    if (this.rafId == null) {
+      this.rafId = setTimeout(() => this.tick(), 16);
+    }
+  }
+  stopLoop() {
+    if (this.rafId != null) {
+      if (typeof cancelAnimationFrame === "function") {
+        cancelAnimationFrame(this.rafId);
+      } else {
+        clearTimeout(this.rafId);
+      }
+      this.rafId = null;
+    }
+    if (this.watchdogId != null) {
+      clearTimeout(this.watchdogId);
+      this.watchdogId = null;
+    }
+  }
+  static createRuntime(registry, bridge) {
+    return new MotionRuntime(registry, bridge);
+  }
+}
 export {
   Live2DModel,
   Live2DRenderer,
+  MotionBridge,
+  MotionRegistry,
+  MotionRuntime,
   ParameterController,
   RoleController,
   inspectModel,

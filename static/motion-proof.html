@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="id">
+<meta charset="utf-8">
+<title>MotionRuntime — Fase 11 proof</title>
+<style>html,body{margin:0;background:#e8e8e8}canvas{display:block}</style>
+<script src="js/live2dcubismcore.min.js"></script>
+<script type="importmap">{"imports":{"pixi.js":"./js/pixi8.mjs"}}</script>
+<script type="module">
+import * as PIXI from 'pixi.js';
+import { Live2DRenderer } from './js/live2d-render.mjs';
+import { MotionRegistry } from './js/live2d-render.mjs';
+import { MotionRuntime } from './js/live2d-render.mjs';
+import { MotionBridge } from './js/live2d-render.mjs';
+
+const app = new PIXI.Application();
+await app.init({ width: 420, height: 640, background: '#e8e8e8' });
+document.body.appendChild(app.canvas);
+const gl = app.canvas.getContext('webgl2') || app.canvas.getContext('webgl');
+const renderer = new Live2DRenderer(app.canvas, gl);
+await renderer.loadModel('/model/ren_official_cubism/runtime/ren.model3.json');
+console.log('[fase11] roleMap', renderer.getRoleMap());
+
+// registry + runtime via bridge
+const registry = new MotionRegistry();
+const bridge = new MotionBridge(renderer);
+const runtime = new MotionRuntime(registry, bridge);
+
+// buat motion sederhana: angleX nod (role ax)
+const asset = {
+  version:1, id:'test_nod', name:'Test Nod', source:'builtin', type:'keyframe', description:'nod test', tags:['test'], duration:1.0, loop:false, intensity:{min:0.3,max:1.0,default:0.8}, emotionCompatibility:{}, cooldown:0, priority:60, aiEnabled:true, requires:[], tracks:[
+    { kind:'role', target:'ax', interp:'linear', keys:[{t:0,v:0},{t:0.5,v:15},{t:1,v:0}] }
+  ]
+};
+registry.register(asset);
+console.log('[fase11] registered', registry.list().map(a=>a.id));
+
+// play
+const ok = runtime.play('test_nod', { intensity:1.0 });
+console.log('[fase11] play ok', ok, 'isPlaying', runtime.isPlaying('test_nod'));
+
+// sample loop
+let frames=0;
+const samples=[];
+function frame(){
+  renderer.draw();
+  frames++;
+  if(frames===5){
+    const v = renderer.getRole('angleX');
+    const p = renderer.getParameter('ParamAngleX');
+    console.log('[fase11] frame5 angleX role', v, 'param', p);
+    samples.push({frame:frames, role:v, param:p});
+  }
+  if(frames===15){
+    const v = renderer.getRole('angleX');
+    const p = renderer.getParameter('ParamAngleX');
+    console.log('[fase11] frame15 angleX role', v, 'param', p);
+    samples.push({frame:frames, role:v, param:p});
+    window.__fase11 = { ok, samples, hasCanvas: !!app.canvas, roleMap: renderer.getRoleMap() };
+  }
+  if(frames<20) requestAnimationFrame(frame);
+  else {
+    console.log('[fase11] done samples', samples);
+  }
+}
+requestAnimationFrame(frame);
+</script>
+</html>
