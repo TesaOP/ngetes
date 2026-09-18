@@ -208,7 +208,7 @@ identik, tidak ada konversi.
 |---|---|---|
 | Kode aplikasi (`src/`, `static/js/app.js`, dll.) | milik kamu | — |
 | PixiJS 8 & 6 (vendored) | MIT | bebas didistribusikan |
-| **Cubism Core** (`live2dcubismcore.min.js`) | **Live2D Proprietary** (Redistributable Code) | TIDAK di-commit — diunduh via `bun run setup:core` dari CDN resmi; lisensinya melarang Core dipublish berdiri sendiri di repo publik |
+| **Cubism Core** (`live2dcubismcore.min.js`) | **Live2D Proprietary** (Redistributable Code) | TIDAK di-commit — diunduh via `bun run setup:core` dari CDN resmi; lisensinya melarang Core dipublish berdiri sendiri di repo publik. Teruji dengan Core 6.0.1 |
 | **Cubism Framework** (`src/live2d/cubism/`, `static/shaders/cubism/`) | Live2D Open Software License | header lisensi resmi ikut ter-commit di tiap file |
 | Model Live2D (aset) | milik pembuat model | tidak di-commit |
 
