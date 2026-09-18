@@ -1,8 +1,9 @@
-# Catatan: Cubism 5.3 (SDK Web 5-r.5 / Core 6.0.1) + PixiJS 8 (Pendahuluan)
+# Catatan: Cubism 5.3 (SDK Web 5-r.5 / Core 6.0.1) + PixiJS 8 (Pendahuluan → Fase 2 terkunci)
 
 > Wajib sebelum Fase 0. Sumber SDK lokal `F:\CubismSdkForWeb-5-r.5.zip` diekstrak ke
 > `C:\Users\Admin\AppData\Local\Temp\opencode\lumi-cubism5r5-research-20260917`.
 > Tidak ada kode aplikasi yang diubah di fase ini; hanya riset + spike terisolasi.
+> Fase 2 (2026-09-18): versi di atas dikunci sebagai target; hack `static/js/app.js:8` `patchCubismCore` tetap utuh (v5 stamp + v6 fail-loud, tidak dihapus sampai Fase 7).
 
 ## 1. Versi yang dipakai + alasan
 
