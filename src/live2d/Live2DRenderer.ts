@@ -264,13 +264,17 @@ export class Live2DRenderer {
   }
 
   /** Faktor look std resmi (±30 kepala, ±10 badan, ±1 bola mata)
-   * diskalakan proporsional ke range aktual model. */
+   * diskalakan proporsional ke range aktual model. bodyAngleY ikut
+   * (Fase B #3 lanjutan): stack lama menulis badan atas-bawah via
+   * tby = ny·REF_HALF·0.25 → ±0,75 half-range — fy 7.5 dengan
+   * stdHalf 10 mereproduksi tepat besaran itu. */
   private buildLookData(): LookParameterData[] {
     const SPEC: Record<string, { stdHalf: number; fx: number; fy: number; fxy: number }> = {
       angleX: { stdHalf: 30, fx: 30, fy: 0, fxy: 0 },
       angleY: { stdHalf: 30, fx: 0, fy: 30, fxy: 0 },
       angleZ: { stdHalf: 30, fx: 0, fy: 0, fxy: -30 },
       bodyAngleX: { stdHalf: 10, fx: 10, fy: 0, fxy: 0 },
+      bodyAngleY: { stdHalf: 10, fx: 0, fy: 7.5, fxy: 0 },
       eyeBallX: { stdHalf: 1, fx: 1, fy: 0, fxy: 0 },
       eyeBallY: { stdHalf: 1, fx: 0, fy: 1, fxy: 0 },
     };
