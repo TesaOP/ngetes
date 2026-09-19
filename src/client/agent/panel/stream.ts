@@ -9,8 +9,9 @@
  *     POST /ask; busy=true → request sudah sampai → follow (bus).
  *   - Kasus B: SSE putus setelah ≥1 event → loop server pasti masih jalan →
  *     JANGAN pernah kirim ulang, langsung follow.
- * Defense-in-depth server: POST /ask saat busy ditolak ("masih memproses"),
- * jadi dobel-task mustahil walau protokol klien dilanggar.
+ * Defense-in-depth server (task identity Worker §9): POST /ask saat slot
+ * dipegang task lain → task BARU DI-PARK (antrean FIFO-20, penuh ditolak
+ * eksplisit) — dobel-eksekusi mustahil dan antrean balas `done{parked}`.
  */
 
 export type AsSseEvent =
@@ -19,7 +20,18 @@ export type AsSseEvent =
   | { type: "tool_result"; name: string; text: string }
   | { type: "approval"; id: string; tool: string; args: any }
   | { type: "speak"; text: string }
-  | { type: "done"; ok: boolean; reply?: string; error?: string };
+  | {
+      type: "done";
+      ok: boolean;
+      reply?: string;
+      error?: string;
+      /** §9: task di-park (slot dipegang task lain) — bukan task ini jalan. */
+      parked?: boolean;
+      taskId?: string;
+      position?: number;
+      /** §10: loop berhenti menunggu approval — slot tetap milik task ini. */
+      paused?: boolean;
+    };
 
 /**
  * Parse buffer SSE ("data: {...}\n\n") menjadi event utuh. Sisa potongan

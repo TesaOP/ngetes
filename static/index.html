@@ -224,6 +224,12 @@
               <span class="cfg-label" data-i18n="vt.cooldown">Jeda antar balas (dtk)</span>
               <input id="vt-cooldown" type="number" min="5" max="120" value="12" />
             </label>
+            <!-- Operator (§7 arsitektur): instruksi eksplisit streamer → antrean
+                 operator di server (didahulukan setelah donasi). -->
+            <div class="note-row">
+              <input id="vt-operator" type="text" data-i18n-ph="vt.operatorPh" placeholder="instruksi untuk karakter…" />
+              <button id="vt-operator-send" class="mini-btn" data-i18n="vt.operatorSend">Kirim Operator</button>
+            </div>
             <div class="note-row">
               <button id="vt-overlay-open" class="mini-btn" data-i18n="vt.overlayBtn">Buka Overlay OBS</button>
               <span class="hint" data-i18n="vt.overlayHint">URL bersih untuk Browser Source: /vtuber.html</span>

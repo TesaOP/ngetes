@@ -14,6 +14,10 @@ import { agentRunApproved } from "../src/server/agent/loop";
 import { revertUndo, undoList } from "../src/server/agent/undo";
 
 const workDir = mkdtempSync(join(tmpdir(), "agent-undo-"));
+// Isolasi sesi (lihat agent/state.ts): agentRunApproved di bawah memanggil
+// pushMsg → saveSession — tanpa ini workDir temp test MENIMPA sesi aktif
+// user (inilah asal workDir "agent-undo-*" yang dulu nyangkut di sesi user).
+process.env.LIVE2D_TEST_SESSION_ROOT = workDir;
 const rt = makeRuntime({}, workDir, []);
 setRuntime(rt);
 

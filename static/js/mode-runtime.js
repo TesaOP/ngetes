@@ -33,18 +33,6 @@
     return d;
   }
 
-  // Panggilan LLM generik (dipakai vtuber untuk membalas chat)
-  async function askLLM(messages, system) {
-    const r = await fetch(API + "/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages, system }),
-    });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok || d.error) throw new Error(d.error || "LLM error");
-    return d.reply || "";
-  }
-
   // ── Mode switching ───────────────────────────────────────────
   function setPanel(mode) {
     $$(".mode-panel").forEach((p) => p.classList.add("hidden"));
@@ -70,9 +58,12 @@
   async function switchMode(mode) {
     if (mode === active) { setPanel(mode); return; }
     // 1) hancurkan runtime client lama (UI saja — assistant & pet di server
-    //    adalah layanan mandiri, tidak ikut dimatikan)
+    //    adalah layanan mandiri, tidak ikut dimatikan). Speech aktif ikut
+    //    dihentikan (checklist §36 arsitektur: bicara tidak menyambung silang
+    //    antar mode).
     try { if (destroyFn) destroyFn(); } catch (e) { console.warn("[mode] teardown lama gagal:", e); }
     destroyFn = null;
+    try { window.__live2dAgent && window.__live2dAgent.stopSpeaking && window.__live2dAgent.stopSpeaking(); } catch (e) {}
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
     // 2) mode aktif untuk PANEL; server hanya membongkar runtime vtuber
     try { await post("/api/mode", { mode }); } catch (e) { console.warn("[mode] server switch:", e.message); }
@@ -85,7 +76,12 @@
   }
 
   // ═════════════════════════════════════════════════════════════
-  // VTUBER — feed live + balasan AI + alert donasi
+  // VTUBER — feed live + alert donasi + bicara balasan server.
+  // Behavior (dedup/cooldown audience, antrean donation FIFO-20, antrean
+  // operator + precedence, LLM balasan) hidup di SERVER
+  // (vtuber-scheduler.ts) — klien ini hanya LAYAR: render feed, alert
+  // donasi, dan memutar balasan (event "agent") saat overlay OBS tidak
+  // on-air (heartbeat server yang memutuskan siapa yang bicara).
   // ═════════════════════════════════════════════════════════════
   function startVtuberClient() {
     const feed = $("#vt-feed");
@@ -93,10 +89,9 @@
     const alertBox = $("#vt-alert");
     let cursor = 0;
     let stopped = false;
-    let lastSpeakAt = 0;
-    let speakQueue = [];
-    // Overlay OBS (vtuber.html) terhubung → app utama mundur dari balasan
-    // otomatis supaya chat tidak dibalas dobel (di sini DAN di overlay).
+    let running = false;
+    // Overlay OBS (vtuber.html) terhubung → app utama mundur: balasan
+    // dibicarakan overlay, bukan di dua tempat sekaligus.
     let overlayOn = false;
 
     function line(ev) {
@@ -116,39 +111,13 @@
       setTimeout(() => alertBox.classList.add("hidden"), 6000);
     }
 
-    // suara + bubble via app utama kalau ada
+    // Balasan server dibicarakan lewat pipeline speech app utama
+    // (__debugSpeak → policy speech kelas "vtuber", Fase 2).
     function speak(text) {
       try {
         if (window.__debugSpeak) window.__debugSpeak(text);
         else if (window.__addChat) window.__addChat("agent", text);
       } catch (e) {}
-    }
-
-    async function maybeRespond(ev) {
-      // Overlay OBS yang pegang balasan → app utama hanya jadi penonton feed.
-      if (overlayOn) return;
-      const respond = $("#vt-respond") && $("#vt-respond").checked;
-      if (!respond) return;
-      const cooldown = Math.max(5, Number(($("#vt-cooldown") || {}).value) || 12) * 1000;
-      if (Date.now() - lastSpeakAt < cooldown) return; // antrean sederhana: skip
-      lastSpeakAt = Date.now();
-      const persona = ($("#vt-persona") || {}).value || "ceria dan ramah";
-      const isDono = ev.type === "donation";
-      const prompt = isDono
-        ? __t("vt.donatePrompt", { user: ev.user, amount: ev.amount || "", text: ev.text })
-        : __t("vt.chatPrompt", { user: ev.user, text: ev.text });
-      try {
-        const reply = await askLLM(
-          [{ role: "user", content: prompt }],
-          "Kamu adalah VTuber Live2D yang sedang streaming. Gaya bicara: " + persona + ". Jawab HANYA kalimat yang akan diucapkan, tanpa awalan nama.",
-        );
-        if (reply && !stopped) {
-          vtuberAgentSay(reply);
-          speak(reply);
-        }
-      } catch (e) {
-        line({ type: "system", user: "system", text: __t("vt.aiFail", { msg: e.message }) });
-      }
     }
 
     async function poll() {
@@ -164,7 +133,9 @@
         for (const ev of d.events || []) {
           line(ev);
           if (ev.type === "donation") alert(ev);
-          if (ev.type === "chat" || ev.type === "donation") maybeRespond(ev);
+          // Balasan behavior server — app utama bicara saat overlay tidak
+          // on-air; overlay memutar sendiri versinya di jendelanya.
+          if (ev.type === "agent" && !overlayOn) speak(ev.text);
         }
       } catch (e) { /* server restart dsb — coba lagi */ }
     }
@@ -176,10 +147,10 @@
       status.textContent = text;
       status.style.color = color || "";
     };
-    const reflectRunning = (running) => {
+    const reflectRunning = (r) => {
       // State tombol = state stream: tidak ada dua aksi aktif sekaligus.
-      vtStartBtn.disabled = running;
-      vtStopBtn.disabled = !running;
+      vtStartBtn.disabled = r;
+      vtStopBtn.disabled = !r;
     };
     reflectRunning(false);
     const onStart = async () => {
@@ -190,9 +161,16 @@
         body.videoId = ($("#vt-video-id") || {}).value || "";
         body.apiKey = ($("#vt-yt-key") || {}).value || "";
       }
+      // Behavior engine (§7): config dikirim sekali di start; perubahan form
+      // selama runtime jalan lewat onConfigChange (POST /api/vtuber/config).
+      body.persona = ($("#vt-persona") || {}).value || "";
+      body.cooldownMs = Math.max(5, Number(($("#vt-cooldown") || {}).value) || 12) * 1000;
+      body.respondChat = !!($("#vt-respond") || {}).checked;
+      body.respondDonation = !!($("#vt-donate-respond") || {}).checked;
       vtStartBtn.disabled = true; // cegah dobel-klik selama request
       try {
         await post("/api/vtuber/start", body);
+        running = true;
         setStatus("AKTIF (" + provider + ")", "var(--mint)");
         reflectRunning(true);
         cursor = 0;
@@ -203,12 +181,34 @@
       }
     };
     const onStop = async () => {
-      stopped = true;
+      running = false;
       vtStopBtn.disabled = true;
       try { await post("/api/vtuber/stop"); } catch (e) {}
       setStatus(__t("vt.inactive"));
       reflectRunning(false);
     };
+    // Perubahan form saat runtime JALAN diteruskan tanpa restart stream.
+    const onConfigChange = () => {
+      if (!running || stopped) return;
+      post("/api/vtuber/config", {
+        persona: ($("#vt-persona") || {}).value || "",
+        cooldownMs: Math.max(5, Number(($("#vt-cooldown") || {}).value) || 12) * 1000,
+        respondChat: !!($("#vt-respond") || {}).checked,
+        respondDonation: !!($("#vt-donate-respond") || {}).checked,
+      }).catch(() => {});
+    };
+    // Operator (§7): instruksi eksplisit streamer → antrean operator server.
+    const onOperatorSend = async () => {
+      const input = $("#vt-operator");
+      if (!input) return;
+      const text = (input.value || "").trim();
+      if (!text) return;
+      try {
+        await post("/api/vtuber/operator", { text });
+        input.value = "";
+      } catch (e) { /* runtime belum jalan — biarkan teks di input */ }
+    };
+    const onOperatorKey = (e) => { if (e.key === "Enter") onOperatorSend(); };
     const onProviderChange = () => {
       const v = ($("#vt-provider") || {}).value;
       $("#vt-row-channel").classList.toggle("hidden", v !== "twitch");
@@ -218,6 +218,14 @@
     $("#vt-start").addEventListener("click", onStart);
     $("#vt-stop").addEventListener("click", onStop);
     $("#vt-provider").addEventListener("change", onProviderChange);
+    for (const id of ["#vt-persona", "#vt-cooldown", "#vt-respond", "#vt-donate-respond"]) {
+      const elx = $(id);
+      if (elx) elx.addEventListener("change", onConfigChange);
+    }
+    const operatorBtn = $("#vt-operator-send");
+    if (operatorBtn) operatorBtn.addEventListener("click", onOperatorSend);
+    const operatorInput = $("#vt-operator");
+    if (operatorInput) operatorInput.addEventListener("keydown", onOperatorKey);
     onProviderChange();
     // Overlay OBS: halaman transparan untuk Browser Source. Dibuka dengan
     // ?hud=1 (panel preferensi tampil); URL untuk OBS = tanpa ?hud=1.
@@ -230,21 +238,18 @@
       $("#vt-start").removeEventListener("click", onStart);
       $("#vt-stop").removeEventListener("click", onStop);
       $("#vt-provider").removeEventListener("change", onProviderChange);
+      for (const id of ["#vt-persona", "#vt-cooldown", "#vt-respond", "#vt-donate-respond"]) {
+        const elx = $(id);
+        if (elx) elx.removeEventListener("change", onConfigChange);
+      }
+      if (operatorBtn) operatorBtn.removeEventListener("click", onOperatorSend);
+      if (operatorInput) operatorInput.removeEventListener("keydown", onOperatorKey);
       $("#vt-overlay-open").removeEventListener("click", onOverlayOpen);
       if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
       post("/api/vtuber/stop").catch(() => {});
       feed.textContent = "";
       reflectRunning(false);
     };
-  }
-
-  // Helper dipanggil dari vtuber client untuk mencatat balasan AI di feed
-  function vtuberAgentSay(text) {
-    fetch(API + "/api/vtuber/mock-event", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "agent", user: "AI", text }),
-    }).catch(() => {});
   }
 
   // ═════════════════════════════════════════════════════════════

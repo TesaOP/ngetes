@@ -145,6 +145,8 @@ async function main() {
         else if (obj.type === "done") {
           process.stdout.write("\n");
           if (obj.ok === false) errored = obj.error || "gagal";
+          // §9: task di-park — slot dipegang task lain; antrean FIFO-20.
+          else if (obj.parked) console.log(`  ⏳ diantrekan (posisi ${obj.position ?? 1}) — task lain sedang berjalan`);
           // Kasus langka: teks final tidak pernah ter-stream (hasil tool di
           // putaran ke-6) — cetak sekarang, jangan sampai jawaban hilang.
           else if (obj.reply && !streamedAny) console.log("agent › " + obj.reply);

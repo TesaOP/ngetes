@@ -430,9 +430,10 @@ export const DICT_ID: Record<string, string> = {
   "conn.switchTip": "Aktif / nonaktifkan koneksi (nonaktif = dilewati semua role)",
 
   // ── mode-runtime ───────────────────────────────────────────────
-  "vt.donatePrompt": "Penonton bernama {user} baru saja donasi {amount} dengan pesan: \"{text}\". Ucapkan terima kasih hangat yang khas (1-2 kalimat). Berbicaralah dalam bahasa Indonesia.",
-  "vt.chatPrompt": "Penonton bernama {user} bilang di live chat: \"{text}\". Balas singkat (1 kalimat) yang fun dan personal. Berbicaralah dalam bahasa Indonesia.",
-  "vt.aiFail": "AI gagal balas: {msg}",
+  // (prompt donate/chat kini protokol server — vtuber-scheduler.ts, bahasa
+  //  Indonesia terkunci; tidak lagi key i18n klien.)
+  "vt.operatorPh": "instruksi untuk karakter…",
+  "vt.operatorSend": "Kirim Operator",
   "vt.overlayBtn": "Buka Overlay OBS",
   "vt.overlayHint": "URL bersih untuk Browser Source: /vtuber.html",
   "vt.overlayYield": "Overlay OBS aktif — balasan otomatis dipindah ke jendela overlay.",
@@ -458,6 +459,7 @@ export const DICT_ID: Record<string, string> = {
   "as.planTitle": "Rencana kerja:",
   "as.task": "TUGAS",
   "as.task.empty": "Belum ada tugas aktif — jelaskan apa yang ingin dikerjakan.",
+  "as.task.parked": "Diantrekan — ada task lain yang berjalan (posisi {n})",
   "as.tech.collapse": "Ciutkan panel teknis",
   "as.tech.expand": "Buka panel teknis",
   "as.plan.progress": "{done}/{total} selesai",

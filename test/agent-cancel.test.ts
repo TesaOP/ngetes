@@ -17,6 +17,9 @@ import { agentAsk } from "../src/server/agent/loop";
 import { assistantCancel, assistantStart } from "../src/server/assistant";
 
 const workDir = mkdtempSync(join(tmpdir(), "agent-cancel-"));
+// Isolasi sesi (lihat agent/state.ts): assistantStart/agentAsk di bawah
+// mem-persist history — arahkan ke folder temp test, jangan sesi user.
+process.env.LIVE2D_TEST_SESSION_ROOT = workDir;
 afterAll(() => { setRuntime(null); try { rmSync(workDir, { recursive: true, force: true }); } catch {} });
 
 function makeMockConfig(): any {

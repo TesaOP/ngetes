@@ -26,7 +26,10 @@ export const MAX_ITERATIONS = 25;
 /** Nama semua tool terdaftar — untuk stripToolDirective (filter baris tool-call). */
 const TOOL_NAMES = TOOLS.map((t) => t.name);
 
-export type AskResult = { ok: boolean; error?: string; reply?: string };
+/** paused=true = loop berhenti untuk menunggu approval — slot task TETAP
+ *  dipegang (busy tidak dilepas oleh loop; facade assistant.ts yang memutuskan
+ *  kapan task benar-benar terminal, §10 ARSITEKTUR-TARGET). */
+export type AskResult = { ok: boolean; error?: string; reply?: string; paused?: boolean };
 
 function buildSystem(lang: string, workDir: string): string {
   const t = {
@@ -180,6 +183,9 @@ export async function agentAsk(
 
   rt.busy = true;
   rt.cancelRequested = false; // cancel berlaku satu tugas — reset di awal ask
+  // Pause approval: kelihatan dari finally (deklarasi HARUS di luar try —
+  // slot task ditentukan oleh flag ini, lihat catatan §10 di finally).
+  let paused = false;
   emitEvent("thinking_start", String(text || "").slice(0, 120));
   emit({ type: "delta", text: "" });
   pushMsg(rt, { role: "user", content: String(text || "").slice(0, 4000) });
@@ -258,6 +264,7 @@ export async function agentAsk(
         });
         emitEvent("permission_request", detected.name);
         emit({ type: "approval", id, tool: detected.name, args: publicArgs });
+        paused = true;
         final = stripToolDirective(reply, TOOL_NAMES) + "\n\n⏳ Aku butuh izinmu untuk " + detected.name + " — cek panel Assistant.";
         break;
       }
@@ -282,13 +289,15 @@ export async function agentAsk(
     pushMsg(rt, { role: "assistant", content: stripToolDirective(final, TOOL_NAMES) });
     const finalText = stripToolDirective(final, TOOL_NAMES);
     emitEvent("final_answer", (rt.plan.length ? "[" + planLabel(rt.plan) + "] " : "") + finalText.slice(0, 120));
-    return { ok: true, reply: finalText };
+    return paused ? { ok: true, reply: finalText, paused: true } : { ok: true, reply: finalText };
   } catch (e: any) {
     pushMsg(rt, { role: "assistant", content: "⚠️ " + e.message });
     emitEvent("error", String(e.message || "").slice(0, 120));
     return { ok: false, error: e.message };
   } finally {
-    rt.busy = false;
+    // Pause = slot masih milik task (menunggu approval) — busy JANGAN dilepas
+    // di sini; facade melepasnya saat task benar-benar terminal (§10).
+    if (!paused) rt.busy = false;
   }
 }
 

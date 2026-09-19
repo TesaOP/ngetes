@@ -36,10 +36,15 @@ function getT() {
   return (k: string, v?: Record<string, string | number>) => (i ? i.t(k, v) : k);
 }
 
-function speakAsCharacter(text: string): void {
+/** Suara sebagai karakter — kelas speech menentukan hak preempt/queue
+ *  (policy §15–16): narasi hasil akhir = konten (tier 1), quip/filler
+ *  actor = dekoratif (tier 0). Teks tetap masuk chat log apa pun keputusan
+ *  policy — yang digatur audio-nya saja. Kelas dinormalkan policy
+ *  (tak dikenal → "direct"). */
+function speakAsCharacter(text: string, cls: string = "worker_actor"): void {
   if (!text) return;
   try { window.__addChat?.("agent", text); } catch {}
-  try { window.__live2dAgent?.speak?.(text); } catch {}
+  try { window.__live2dAgent?.speak?.(text, undefined, { cls }); } catch {}
 }
 
 export function startAssistantPanel(): () => void {
@@ -161,7 +166,13 @@ export function startAssistantPanel(): () => void {
   // ── Stream: ask & approve (protokol dua-kasus) ──────────────────
   function handleSse(ev: AsSseEvent): void {
     if (ev.type === "speak") {
-      speakAsCharacter(ev.text);
+      speakAsCharacter(ev.text, "worker_narration");
+    }
+    // §9: task di-park karena slot dipegang task lain — info antrean.
+    if (ev.type === "done" && ev.parked) {
+      transcript.status(t("as.task.parked", { n: ev.position ?? 1 }), "warn");
+      render();
+      return;
     }
     // Registry perubahan file + log terminal (tab Review/Terminal)
     if (ev.type === "tool_call") {
@@ -234,9 +245,11 @@ export function startAssistantPanel(): () => void {
       if (decideFallback({ receivedAnyEvent: false, busyNow }) === "resend") {
         try {
           const d = await postJson(API + fallback.path, fallback.body);
-          if (d.reply) {
+          if (d.parked) {
+            transcript.status(t("as.task.parked", { n: d.position ?? 1 }), "warn");
+          } else if (d.reply) {
             transcript.appendFinal(d.reply);
-            if (d.speak) speakAsCharacter(d.speak);
+            if (d.speak) speakAsCharacter(d.speak, "worker_narration");
           }
         } catch (e2: any) {
           transcript.status("✗ " + (e2?.message || e2), "err");

@@ -28,6 +28,7 @@ import {
   EMOTION_GESTURE_FALLBACK,
 } from "./directive-parser";
 import { scaleRoleFraction } from "./param-range";
+import { estimateSpeechMs as estimateSpeechMsShared } from "../../shared/speech-timing";
 import type {
   ChatMessage,
   ParsedSegment,
@@ -92,15 +93,10 @@ function l2d(): any {
   return (window as any).__live2dAgent;
 }
 
-// Estimasi durasi bicara TTS satu segmen (heuristik: ±16 karakter/detik plus
-// lead-in) — dipakai MotionRuntime untuk melar playback [MOTION:id] supaya
-// mengisi seluruh omongan, bukan selesai di tengah lalu diam. Tidak bisa
-// eksak: durasi TTS sebenarnya baru diketahui saat audio selesai.
-export function estimateSpeechMs(text: string): number {
-  const t = String(text || "").trim();
-  if (!t) return 0;
-  return Math.min(12000, Math.round(500 + t.length * 62));
-}
+// Estimasi durasi bicara TTS satu segmen — rumusnya kini tinggal di
+// shared/speech-timing (dipakai juga scheduler VTuber server); re-export
+// supaya impor lama (motion-runtime dsb.) tetap valid.
+export const estimateSpeechMs = estimateSpeechMsShared;
 function addChat(role: "user" | "agent", text: string): void {
   try {
     (window as any).__addChat?.(role, text);
@@ -146,6 +142,18 @@ export class AgentBrain {
   // jadi field ini TIDAK boleh dibuat private (QA/debug membacanya langsung).
   history: ChatMessage[] = [];
   private busy = false;
+  // Generasi request (§33 ARSITEKTUR-TARGET): setiap think/reactEvent baru
+  // menaikkan gen; reply telat dari generasi lama dibuang, dan hanya
+  // generasi TERBARU yang boleh me-reset busy/thinking di finally.
+  private gen = 0;
+  // AbortController request berjalan — satu mekanisme untuk merge (think
+  // baru membatalkan request lama) dan timeout (§32).
+  private ctrl: AbortController | null = null;
+  // Epoch model (§34): dinaikkan invalidateCapabilityProfile() — loadProfile
+  // yang sedang menunggu untuk model lama membuang hasilnya sendiri.
+  private modelEpoch = 0;
+  // Batas tunggu /api/chat (§32) — statis supaya test bisa memperpendek.
+  static REQUEST_TIMEOUT_MS = 90_000;
   private capProfile: CapabilityProfile | null = null;
   private userMood = "normal";
   private moodSource: string | null = null;
@@ -411,18 +419,23 @@ Contoh pendek:
   }
 
   async think(userText: string): Promise<void> {
-    if (this.busy) return;
     if (!l2d()?.isReady?.()) {
       console.warn("[agent] model not ready");
       return;
     }
-    // Loading the character sheet must never be able to abort the chat.
-    if (!this.capProfile)
-      try {
-        await this.loadProfile();
-      } catch (e) {
-        console.warn("[agent] profile unavailable", e);
-      }
+    // Setiap permintaan user = generasi baru (§33).
+    const myGen = ++this.gen;
+    // MERGE (§6): pesan baru saat masih MIKIR tidak diabaikan — request lama
+    // dibatalkan, kedua teks sudah ada di history, satu fetch baru menjawab
+    // keduanya (server stateless, balasan digenerate dari history penuh).
+    // Input user juga otomatis menggulingkan reactEvent yang sedang mikir
+    // (§18: input user eksplisit > proactive).
+    if (this.busy) {
+      this.ctrl?.abort();
+      console.log("[agent] merge: pesan baru saat masih mikir — request lama dibatalkan");
+    }
+    // busy diset SINKRON sebelum await pertama — menutup race dua think yang
+    // sama-sama lolos cek (dulu diset setelah await loadProfile).
     this.busy = true;
     this.history.push({ role: "user", content: userText });
     if (this.history.length > HISTORY_LIMIT * 2)
@@ -431,7 +444,18 @@ Contoh pendek:
     // Fase mikir: alih pandang ke atas-samping (intent "think"); balik
     // menghadap user otomatis saat mulai bicara (lockAI) atau lewat timer.
     l2d()?.setGazeIntent?.("think", { hold: 7000 });
+    const ctrl = (this.ctrl = new AbortController());
+    // §32: satu mekanisme untuk cancellation (merge) + timeout.
+    const to = setTimeout(() => ctrl.abort(), AgentBrain.REQUEST_TIMEOUT_MS);
     try {
+      // Loading the character sheet must never be able to abort the chat.
+      if (!this.capProfile)
+        try {
+          await this.loadProfile();
+        } catch (e) {
+          console.warn("[agent] profile unavailable", e);
+        }
+      if (this.gen !== myGen) return; // digulingkan saat menunggu profile
       const resp = await fetch(API + "/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -439,12 +463,14 @@ Contoh pendek:
           messages: this.history,
           system: this.buildSystemPrompt("") + this.moodSuffix(),
         }),
+        signal: ctrl.signal,
       });
       if (!resp.ok) {
         const e = await resp.json().catch(() => ({}));
         throw new Error(e.error || "HTTP " + resp.status);
       }
       const data = await resp.json();
+      if (this.gen !== myGen) return; // reply telat generasi lama → buang (§33)
       const reply = (data.reply || "").trim();
       if (reply) {
         const clean = stripDirectives(reply);
@@ -452,26 +478,36 @@ Contoh pendek:
         // Plain prose (no directives) → run Pass 2 (Animation Director)
         if (!hasDirectives(reply) || segments.length <= 1)
           segments = await this.animateTextViaDirector(clean, this.capProfile);
+        if (this.gen !== myGen) return; // digulingkan saat director pass
         console.log("[agent] speaking reply with", segments.length, "animation segments");
         this.playSegments(segments);
       } else {
         const msg = "Hmm, aku bingung jawabnya...";
-        l2d()?.speak?.(msg);
+        l2d()?.speak?.(msg, undefined, { cls: "companion" });
         addChat("agent", msg);
       }
     } catch (err: any) {
+      if (this.gen !== myGen) return; // abort karena merge = senyap, bukan error
       console.error("[agent]", err);
       const msg =
         "Maaf, aku lagi gak bisa mikir sekarang. Cek koneksi atau api key ya.";
-      l2d()?.speak?.(msg);
+      l2d()?.speak?.(msg, undefined, { cls: "companion" });
       addChat("agent", msg);
     } finally {
-      setThinking(false);
-      this.busy = false;
+      clearTimeout(to);
+      if (this.gen === myGen) {
+        // Hanya generasi TERBARU yang boleh me-reset state — finally flow
+        // lama (sudah digulingkan) jadi no-op total.
+        setThinking(false);
+        this.busy = false;
+        this.ctrl = null;
+      }
     }
   }
 
   async reactEvent(type: string): Promise<void> {
+    // Proactive selalu tunduk (§18): tidak pernah merge dan tidak pernah
+    // menggulingkan think yang sedang berjalan.
     if (this.busy) return;
     if (type === "idle" && !this.getEvents().idleSpeak) return;
     if (this.inQuietPeriod()) {
@@ -482,15 +518,32 @@ Contoh pendek:
       console.warn("[agent] reactEvent skipped, model not ready");
       return;
     }
-    if (!this.capProfile)
-      try {
-        await this.loadProfile();
-      } catch {}
+    const myGen = ++this.gen;
+    // Slot diklaim SEBELUM await gate supaya think yang datang saat gate
+    // menunggu tetap menang lewat gen-guard (bukan merebut slot).
     this.busy = true;
-    setThinking(true);
-    // Sama seperti chat(): saat "menyadari" event, pandangan melamun dulu.
-    l2d()?.setGazeIntent?.("think", { hold: 7000 });
+    const ctrl = (this.ctrl = new AbortController());
+    const to = setTimeout(() => ctrl.abort(), AgentBrain.REQUEST_TIMEOUT_MS);
     try {
+      // §17: policy gate SEBELUM LLM/director/speech/side-effect. Semua event
+      // proaktif (idle/user_left/user_returned/mood:*) bermuara di sini —
+      // away/return dari setPresence pun ikut tertangkap.
+      const gate = await this.proactiveAllowed();
+      if (this.gen !== myGen) return; // think datang saat gate menunggu
+      if (!gate.allowed) {
+        console.log("[agent] proactive", type, "ditekan:", gate.reason);
+        return;
+      }
+      setThinking(true);
+      // Sama seperti chat(): saat "menyadari" event, pandangan melamun dulu.
+      l2d()?.setGazeIntent?.("think", { hold: 7000 });
+      if (!this.capProfile)
+        try {
+          await this.loadProfile();
+        } catch (e) {
+          console.warn("[agent] profile unavailable", e);
+        }
+      if (this.gen !== myGen) return; // digulingkan saat menunggu profile
       const system =
         this.buildSystemPrompt("") +
         `\n\n[EVENT: ${type}] ${EVENT_PROMPTS[type] || ""}${this.moodSuffix()}\nBalas SINGKAT dan natural (1-3 kalimat), seperti karakter merespons kejadian, BUKAN menjawab pertanyaan. Jangan pakai bahasa bahwa kamu adalah AI.`;
@@ -503,41 +556,65 @@ Contoh pendek:
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messages, system }),
+        signal: ctrl.signal,
       });
       if (!resp.ok) {
         const e = await resp.json().catch(() => ({}));
         throw new Error(e.error || "HTTP " + resp.status);
       }
+      if (this.gen !== myGen) return; // digulingkan think() — senyap
       const data = await resp.json();
+      if (this.gen !== myGen) return;
       const reply = (data.reply || "").trim();
       if (reply) {
         const clean = stripDirectives(reply);
         let segments = parseSegments(reply);
         if (!hasDirectives(reply) || segments.length <= 1)
           segments = await this.animateTextViaDirector(clean, this.capProfile);
-        this.playSegments(segments);
+        if (this.gen !== myGen) return;
+        // Kelas speech proactive (tier 1): tidak boleh memotong bicara user,
+        // worker narration, atau VTuber (matriks policy Fase 2).
+        this.playSegments(segments, "companion_proactive");
       }
     } catch (err) {
+      if (this.gen !== myGen) return; // abort karena digulingkan = senyap
       console.error("[agent] reactEvent", type, err);
     } finally {
-      setThinking(false);
-      this.busy = false;
+      clearTimeout(to);
+      if (this.gen === myGen) {
+        setThinking(false);
+        this.busy = false;
+        this.ctrl = null;
+      }
     }
   }
 
   // ── Speak segments sequentially with ACTUAL TTS callback timing (kompat legacy) ──
-  private playSegments(segments: ParsedSegment[]): void {
+  // cls = kelas speech policy (Fase 2): "companion" untuk balasan input user
+  // (tier 2), "companion_proactive" untuk event ambient (tier 1 — tidak boleh
+  // memotong bicara user/narasi/VTuber).
+  private playSegments(segments: ParsedSegment[], cls: string = "companion"): void {
     const L = l2d();
     if (!L || !segments.length) return;
 
     // Lock: AI takes control — freezes fidget clock, pauses user interaction.
+    // Sekali-saja: chain selesai alami ATAU chain digulingkan policy speech
+    // (preempt §6) — dua-duanya melepas lock, tidak boleh dobel.
     L.lockAI?.();
+    let unlocked = false;
+    let preempted = false;
+    const unlock = () => {
+      if (unlocked) return;
+      unlocked = true;
+      L.unlockAI?.();
+    };
 
     let i = 0;
     const nextSegment = () => {
+      if (preempted) return;
       if (i >= segments.length) {
         // All done — release lock
-        L.unlockAI?.();
+        unlock();
         console.log("[agent] all", segments.length, "segments done, AI lock released");
         return;
       }
@@ -555,10 +632,20 @@ Contoh pendek:
         "actions:", seg.actions
       );
 
-      // Speak with callback — next segment starts when THIS one finishes
+      // Speak with callback — next segment starts when THIS one finishes.
+      // Speech yang dipotong policy ≠ completed (§6): onDone tidak jalan,
+      // onPreempted yang membersihkan chain + lock.
       L.speak(seg.text, () => {
+        if (preempted) return;
         // Small pause between segments for natural rhythm
         setTimeout(nextSegment, 180);
+      }, {
+        cls,
+        onPreempted: () => {
+          preempted = true;
+          unlock();
+          console.log("[agent] chain preempted by speech policy, AI lock released");
+        },
       });
     };
     nextSegment();
@@ -843,12 +930,21 @@ Contoh pendek:
   invalidateCapabilityProfile(): void {
     if (this.capProfile) console.log("[agent] capability profile invalidated (model changed)");
     this.capProfile = null;
+    // Epoch model (§34): loadProfile yang sedang menunggu untuk model lama
+    // membuang hasilnya sendiri saat epoch sudah berpindah.
+    this.modelEpoch++;
   }
 
   async loadProfile(): Promise<void> {
+    const epoch = this.modelEpoch;
     const L = l2d();
     if (L?.getCapabilityProfile) {
-      this.capProfile = await L.getCapabilityProfile();
+      const profile = await L.getCapabilityProfile();
+      if (epoch !== this.modelEpoch) {
+        console.log("[agent] profile dibuang — model berganti saat menunggu (§34)");
+        return;
+      }
+      this.capProfile = profile;
       console.log("[agent] capability profile loaded", this.capProfile);
       return;
     }
@@ -856,6 +952,7 @@ Contoh pendek:
     // konteks dasar alih-alih prompt kosong.
     try {
       const resp = await fetch(API + "/api/config");
+      if (epoch !== this.modelEpoch) return; // jangan timpa profil model baru
       if (resp.ok) {
         this.capProfile = {
           emotions: DEFAULT_EMOTIONS,
@@ -873,6 +970,41 @@ Contoh pendek:
     } catch (e) {
       console.warn("[agent] profile load failed", e);
     }
+  }
+
+  // ── Policy gate proactive (§17–18 ARSITEKTUR-TARGET) ──────────────
+  // Dipanggil reactEvent() SEBELUM LLM/director/speech/side-effect. Urutan
+  // cek dari yang paling murah (DOM, sinkron) ke fetch ringan.
+  // 1. Mode Otak mati → proactive tidak berjalan (§18 "Brain OFF"). Toggle
+  //    dibaca dari elemen yang sama dengan jalur chat (submitUtterance di
+  //    app.js), jadi dua pintu tidak bisa desinkron; toggle absen (halaman
+  //    lain) → tidak menggate.
+  // 2. Mode aktif ≠ stage → ditekan: VTuber punya event model sendiri (§18),
+  //    Pet punya idle-chatter sendiri di jendelanya — proactive app utama
+  //    akan bikin karakter bicara dobel.
+  // 3. Worker task sedang jalan (assistant.busy) → ditekan supaya tidak
+  //    mengganggu pekerjaan; runtime assistant hidup di server walau panel
+  //    ditutup, jadi state dibaca dari /api/mode, bukan dari UI.
+  // Fetch /api/mode gagal → fail-open + warning: gangguan transien tidak
+  // boleh mematikan perilaku hidup.
+  private async proactiveAllowed(): Promise<{ allowed: boolean; reason?: string }> {
+    const toggle =
+      typeof document !== "undefined"
+        ? document.getElementById("toggle-brain")
+        : null;
+    if (toggle && !(toggle as HTMLInputElement).checked)
+      return { allowed: false, reason: "mode otak mati" };
+    try {
+      const r = await fetch(API + "/api/mode");
+      const m = await r.json();
+      if (m && m.active && m.active !== "stage")
+        return { allowed: false, reason: "mode aktif " + m.active };
+      if (m && m.assistant && m.assistant.busy)
+        return { allowed: false, reason: "worker task sedang berjalan" };
+    } catch (e: any) {
+      console.warn("[agent] gate proactive: /api/mode tak terbaca — fail-open:", e?.message ?? e);
+    }
+    return { allowed: true };
   }
 
   private moodSuffix(): string {
@@ -916,6 +1048,9 @@ Contoh pendek:
       presenceState: this.presenceState,
       quietMs: this.quietMs(),
       events: this.getEvents(),
+      // QA/verifikasi runtime: posisi lifecycle request companion (§32–33).
+      busy: this.busy,
+      gen: this.gen,
     };
   }
   _pickSupportedEmotion(p: string[]) {

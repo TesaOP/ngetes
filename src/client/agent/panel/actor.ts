@@ -30,8 +30,9 @@ export type ActorDeps = {
   t?: (key: string, vars?: Record<string, string | number>) => string;
   /** POST JSON ke server (dipakai /api/assistant/quip). */
   post?: (path: string, body: any) => Promise<any>;
-  /** Suara sebagai karakter (bubble + TTS). */
-  speakAsCharacter?: (text: string) => void;
+  /** Suara sebagai karakter (bubble + TTS) — kelas default worker_actor
+   *  (dekoratif, tier 0 policy speech §15–16). */
+  speakAsCharacter?: (text: string, cls?: string) => void;
   /** Jam untuk cooldown — di-inject agar test deterministik. */
   now?: () => number;
   fallbacks?: { think?: string; tool?: string; done?: string; error?: string; revised?: string };

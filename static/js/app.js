@@ -487,6 +487,9 @@
       state._zoomCursor = null;
 
       if (state.model) {
+        // Speech aktif milik model lama — mati bersama modelnya (checklist
+        // transisi §36: speech aktif dihentikan saat konteks berganti).
+        stopSpeaking();
         try {
           app.stage.removeChild(state.model);
           // Destroy penuh: tanpa opsi, Container.destroy PIXI tidak
@@ -2270,16 +2273,22 @@
     return out.length ? out : [t];
   }
 
-  async function fetchTTSAudio(text, ttsLang) {
+  async function fetchTTSAudio(text, ttsLang, parentSignal) {
     // Timeout + retry: kadang koneksi request pertama (dari handler klik)
     // menggantung di server tanpa jawaban. Abort menutup socket beku; retry
     // memakai koneksi segar — dan teks yang sama biasanya sudah ter-cache
     // di server sehingga nyaris instan. Saat bahasa suara tetap aktif,
     // server menerjemahkan dulu (+latensi LLM) → batas dilonggarkan 45 dtk.
+    // parentSignal = abort claim speech: preempt memutus juga request
+    // in-flight (hemat billing provider).
     const hasLang = !!ttsLang;
     for (let attempt = 0; ; attempt++) {
       const ctrl = new AbortController();
       const to = setTimeout(() => ctrl.abort(), hasLang ? 45000 : 20000);
+      if (parentSignal)
+        parentSignal.addEventListener("abort", () => ctrl.abort(), {
+          once: true,
+        });
       try {
         const resp = await fetch(API + "/api/tts", {
           method: "POST",
@@ -2305,8 +2314,11 @@
     }
   }
 
-  function playTTSAudio(blob, onDone) {
+  function playTTSAudio(blob, onDone, sess) {
     const url = URL.createObjectURL(blob);
+    // URL dicatat di sesi claim — preempt me-revoke semuanya. Tanpa ini,
+    // handler elemen audio yang ditimpa claim baru bikin URL lama bocor.
+    if (sess) sess.urls.push(url);
     const audio = (state.ttsAudio = state.ttsAudio || new Audio());
     audio.src = url;
     // Pace untuk suara remote — slider "Kecepatan bicara" per-model
@@ -2358,13 +2370,13 @@
     return out;
   }
 
-  async function doRemoteTTS(text, markDone, fallbackTimer, reveal, ttsLang) {
+  async function doRemoteTTS(text, markDone, sess, reveal, ttsLang) {
     if (!ttsRemoteActive()) {
       reveal && reveal();
-      browserTTS(text, markDone, fallbackTimer);
+      browserTTS(text, markDone, sess.fallbackTimer);
       return;
     }
-    clearTimeout(fallbackTimer);
+    if (sess.fallbackTimer) clearTimeout(sess.fallbackTimer);
     // `let` — regroup adaptif mengganti isi segments setelah latensi diukur
     let segments = splitSpeechSegments(text);
     // Mode hemat request (API yang menagih per request): gabung semua kalimat
@@ -2374,18 +2386,27 @@
     if (TTS_CFG.hematRequest && segments.length > 1) {
       segments = regroupByTarget(splitSpeechSegments(text), 800);
     }
+    // Abort claim: preempt memutus semua fetch TTS in-flight pipeline ini.
+    if (!sess.abort) sess.abort = new AbortController();
+    const sig = sess.abort.signal;
     // Teks pendek → jalur lama (satu request), tanpa overhead pipeline.
     if (segments.length <= 1) {
       try {
-        const blob = await fetchTTSAudio(text, ttsLang);
+        const blob = await fetchTTSAudio(text, ttsLang, sig);
+        if (!sess.isActive()) return; // digulingkan saat menunggu sintesis
         reveal && reveal();
-        const fallbackTimer2 = setTimeout(markDone, 45000);
-        playTTSAudio(blob, () => {
-          clearTimeout(fallbackTimer2);
-          markDone();
-        });
+        sess.fallbackTimer = setTimeout(markDone, 45000);
+        playTTSAudio(
+          blob,
+          () => {
+            if (sess.fallbackTimer) clearTimeout(sess.fallbackTimer);
+            markDone();
+          },
+          sess,
+        );
       } catch (e) {
         console.warn("[TTS] remote gagal, fallback ke browser:", e && e.message);
+        if (!sess.isActive()) return;
         reveal && reveal();
         browserTTS(text, markDone, null);
       }
@@ -2395,10 +2416,14 @@
     // Pipeline: latensi request pertama diukur nyata, lalu sisa kalimat
     // dikelompokkan ulang sehingga durasi audio per segmen ≥ waktu fetch
     // (prefetch selesai pas sebelum giliran putarnya → jeda ≈ nol).
+    // `dead()` = claim speech digulingkan policy — semua penerusan loop,
+    // bubble segmen, dan fetch baru berhenti; cleanup preempt yang
+    // me-resolve Promise segmen yang menggantung.
     let aborted = false;
+    const dead = () => !sess.isActive();
     const guard = () => {
-      clearTimeout(fallbackTimer);
-      fallbackTimer = setTimeout(() => {
+      if (sess.fallbackTimer) clearTimeout(sess.fallbackTimer);
+      sess.fallbackTimer = setTimeout(() => {
         aborted = true;
         markDone();
       }, 60000);
@@ -2407,10 +2432,10 @@
 
     const pending = new Map(); // i -> Promise<blob>
     const prefetch = (i) => {
-      if (aborted || i >= segments.length || pending.has(i)) return;
+      if (aborted || dead() || i >= segments.length || pending.has(i)) return;
       pending.set(
         i,
-        fetchTTSAudio(segments[i], ttsLang).catch((e) => {
+        fetchTTSAudio(segments[i], ttsLang, sig).catch((e) => {
           pending.delete(i);
           throw e;
         }),
@@ -2427,12 +2452,13 @@
         // Segmen gagal → jatuh ke suara browser untuk sisa kalimat, tanpa
         // mengulang API (hemat billing).
         console.warn("[TTS] segmen " + i + " gagal:", e && e.message);
+        if (dead()) return;
         if (i === 0) reveal && reveal();
         const remaining = segments.slice(i).join(" ");
         browserTTS(remaining, markDone, null);
         return;
       }
-      if (aborted) return;
+      if (aborted || dead()) return;
       if (i === 0) {
         // Latensi nyata Gemini dkk besar (terukur 10–16 dtk). Kalau segmen
         // per-kalimat (audio ±3 dtk), prefetch tak akan pernah kejar →
@@ -2457,29 +2483,104 @@
       // Bubble menampilkan kalimat yang sedang dibacakan.
       showBubble(segText, 1e9);
       await new Promise((resolve) => {
-        playTTSAudio(blob, resolve);
+        sess.segResolve = resolve;
+        playTTSAudio(
+          blob,
+          () => {
+            sess.segResolve = null;
+            resolve();
+          },
+          sess,
+        );
         guard();
       });
+      if (aborted || dead()) return;
       // state.talking & mulut dikelola reveal(); antar segmen tetap "talking".
     }
-    if (!aborted) markDone();
+    if (!aborted && !dead()) markDone();
   }
 
-  function speak(text, onDone) {
-    if (!state.model) {
-      showBubble(text);
-      if (onDone) setTimeout(onDone, 500);
+  // ── Boundary speech (ARSITEKTUR-TARGET §15–16) ─────────────────
+  // Satu pintu audio: producer → policy (window.__speech, bundle TS) →
+  // runSpeech (executor di sini). Claim = kepemilikan slot bicara.
+  // Claim yang digulingkan TIDAK menulis state global lagi (bug lama:
+  // markDone telat menginjak bubble/mulut/talking claim baru) dan onDone
+  // TIDAK dipanggil — cleanup producer lewat opts.onPreempted (mis.
+  // unlockAI brain). Tanpa bundle (belum `bun run build`) perilaku legacy
+  // persis seperti sebelum policy ada: semua request dijalankan.
+  function speak(text, onDone, opts) {
+    const job = {
+      text: String(text || ""),
+      cls: (opts && opts.cls) || "direct",
+      onDone: typeof onDone === "function" ? onDone : null,
+      onPreempted:
+        opts && typeof opts.onPreempted === "function" ? opts.onPreempted : null,
+    };
+    let r = null;
+    if (window.__speech && typeof window.__speech.request === "function") {
+      try {
+        r = window.__speech.request(job);
+      } catch (e) {
+        console.warn("[speech] policy error → jalur legacy:", e && e.message);
+        r = null;
+      }
+    }
+    if (!r) {
+      runSpeech(job, null);
       return;
     }
+    if (r.status === "SUPPRESS") {
+      console.log("[speech] suppress kelas", job.cls);
+      return;
+    }
+    if (r.status === "QUEUED") return; // controller mengeksekusi saat slot bebas
+    runSpeech(job, r.claim);
+  }
+
+  /** Hentikan bicara aktif + kosongkan antrean (CANCEL §15) — teardown & model switch. */
+  function stopSpeaking() {
+    if (window.__speech && typeof window.__speech.stopAll === "function") {
+      try {
+        window.__speech.stopAll("stopSpeaking");
+      } catch (e) {}
+      return;
+    }
+    // Legacy tanpa controller: hentikan audio seadanya.
+    try {
+      if (typeof speechSynthesis !== "undefined") speechSynthesis.cancel();
+    } catch (e) {}
+    try {
+      if (state.ttsAudio) state.ttsAudio.pause();
+    } catch (e) {}
+  }
+
+  function runSpeech(job, claim) {
+    const text = job.text;
+    const onDone = job.onDone;
+    const isActive = () => (claim ? claim.isActive() : true);
+
+    if (!state.model) {
+      showBubble(text);
+      setTimeout(() => {
+        const alive = isActive();
+        if (claim && alive && window.__speech) {
+          try {
+            window.__speech.release(claim.id);
+          } catch (e) {}
+        }
+        if (onDone && alive) onDone();
+      }, 500);
+      return;
+    }
+
     let ttsDone = false,
       revealed = false;
-    const markDone = () => {
-      if (ttsDone) return;
-      ttsDone = true;
+    // Settle visual speech (BUKAN onDone): dipakai markDone (selesai alami)
+    // dan cleanup preempt — mulut/bubble/talking kembali netral.
+    const settleVisuals = () => {
       hideBubble();
       state.talking = false;
       if (state.activeLip) state.activeLip.reset();
-
       const mId = roleId("mouthOpenY");
       if (mId) {
         delete state.overrides[mId];
@@ -2488,6 +2589,18 @@
           state.mouthRest != null ? state.mouthRest : roleDefault("mouthOpenY"),
           1,
         );
+      }
+    };
+    const markDone = () => {
+      if (ttsDone) return;
+      ttsDone = true;
+      // Claim sudah digulingkan → state global milik claim baru; jangan sentuh.
+      if (!isActive()) return;
+      settleVisuals();
+      if (claim && window.__speech) {
+        try {
+          window.__speech.release(claim.id);
+        } catch (e) {}
       }
       if (onDone) onDone();
     };
@@ -2500,6 +2613,7 @@
       if (state.mouthTimer) clearTimeout(state.mouthTimer);
       const dur = Math.max(1400, text.length * 75);
       state.mouthTimer = setTimeout(() => {
+        if (!isActive()) return; // timer claim lama: mulut/talking milik claim baru
         state.talking = false;
         const mId = roleId("mouthOpenY");
         if (mId) {
@@ -2515,20 +2629,72 @@
       }, dur);
     };
 
+    // Sesi audio claim ini — satu objek supaya preempt bisa memutus
+    // semuanya: timer, fetch in-flight, elemen audio, blob URL (dulu URL
+    // claim lama bocor karena handler elemen audio ditimpa claim baru).
+    const sess = {
+      fallbackTimer: null,
+      segResolve: null,
+      abort: null,
+      urls: [],
+      isActive,
+    };
+
+    if (claim) {
+      claim.onPreempted(() => {
+        if (sess.fallbackTimer) {
+          clearTimeout(sess.fallbackTimer);
+          sess.fallbackTimer = null;
+        }
+        if (sess.segResolve) {
+          const r = sess.segResolve;
+          sess.segResolve = null;
+          r();
+        }
+        if (sess.abort) {
+          try {
+            sess.abort.abort();
+          } catch (e) {}
+        }
+        try {
+          if (typeof speechSynthesis !== "undefined")
+            speechSynthesis.cancel();
+        } catch (e) {}
+        if (state.ttsAudio) {
+          try {
+            state.ttsAudio.pause();
+          } catch (e) {}
+        }
+        for (const u of sess.urls) {
+          try {
+            URL.revokeObjectURL(u);
+          } catch (e) {}
+        }
+        sess.urls.length = 0;
+        if (state.mouthTimer) {
+          clearTimeout(state.mouthTimer);
+          state.mouthTimer = null;
+        }
+        // Cleanup berjalan sinkron SEBELUM claim baru reveal, jadi settle
+        // di sini aman: mulut/bubble kembali netral untuk penerus/teardown.
+        settleVisuals();
+      });
+    }
+
     // Fase menunggu audio TTS (latensi remote 10-16 dtk): bubble "…" MATI
     // terasa seperti karakter hang. Class "waiting" menghidupkannya — tiga
     // titik berkedip, dibersihkan showBubble() berikutnya / markDone().
     $("#bubble").classList.add("waiting");
     showBubble("…", 1e9);
-    let fallbackTimer = setTimeout(
+    sess.fallbackTimer = setTimeout(
       markDone,
       ttsRemoteActive() ? 45000 : Math.max(1400, text.length * 75) + 800,
     );
     const rearmFallback = () => {
       // Terjemahan ucapan menambah latensi sebelum audio — timer mati-diam
       // di-re-arm supaya markDone tidak memotong di tengah menunggu.
-      clearTimeout(fallbackTimer);
-      fallbackTimer = setTimeout(
+      clearTimeout(sess.fallbackTimer);
+      sess.fallbackTimer = setTimeout(
         markDone,
         ttsRemoteActive() ? 45000 : Math.max(1400, text.length * 75) + 800,
       );
@@ -2546,16 +2712,23 @@
         : "";
     // Hook bicara lintas-scope (mode-runtime VTuber dsb.) — terpasang
     // apa pun providernya, sehingga SEMUA omongan lewat satu pipeline ini.
-    window.__debugSpeak = (t) => speak(String(t || ""));
+    // Default kelas "vtuber": satu-satunya konsumen produksi hook ini
+    // adalah balasan VTuber app utama.
+    window.__debugSpeak = (t, cls) =>
+      speak(String(t || ""), null, { cls: cls || "vtuber" });
     if (ttsRemoteActive()) {
-      doRemoteTTS(text, markDone, fallbackTimer, reveal, fixedLang);
+      doRemoteTTS(text, markDone, sess, reveal, fixedLang);
       return;
     }
     // Jalur suara browser: Web Speech membaca teks lokal → terjemahkan dulu
     // via /api/tts/translate (gagal → teks asli, suara tetap jalan).
     if (fixedLang) {
+      sess.abort = sess.abort || new AbortController();
       const ctrl = new AbortController();
       const to = setTimeout(() => ctrl.abort(), 30000);
+      sess.abort.signal.addEventListener("abort", () => ctrl.abort(), {
+        once: true,
+      });
       fetch(API + "/api/tts/translate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2569,13 +2742,27 @@
         .catch(() => text)
         .then((spoken) => {
           clearTimeout(to);
+          if (!isActive()) return; // digulingkan saat menerjemahkan
           rearmFallback();
           reveal();
-          browserTTS(spoken, markDone, fallbackTimer);
+          browserTTS(spoken, markDone, sess.fallbackTimer);
         });
     } else {
       reveal();
-      browserTTS(text, markDone, fallbackTimer);
+      browserTTS(text, markDone, sess.fallbackTimer);
+    }
+  }
+
+  // Executor policy: controller (bundle) memanggil ini saat antrean speech
+  // dikosongkan — tetap satu jalur eksekusi (runSpeech), tidak ada audio
+  // yang bisa start dari tempat lain.
+  if (window.__speech && typeof window.__speech.setExecutor === "function") {
+    try {
+      window.__speech.setExecutor(function (job, claim) {
+        runSpeech(job, claim);
+      });
+    } catch (e) {
+      console.warn("[speech] executor gagal dipasang:", e && e.message);
     }
   }
 
@@ -6765,6 +6952,7 @@
 
   window.__live2dAgent = {
     speak,
+    stopSpeaking,
     setExpression: applyExpression,
 
     setAccessory: (paramIdOrName, val) => {

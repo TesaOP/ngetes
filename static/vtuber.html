@@ -29,8 +29,9 @@
     font: 13px/1.4 "Segoe UI", -apple-system, system-ui, sans-serif;
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.48);
   }
-  /* HUD hanya muncul dengan ?hud=1 (dibuka dari app utama). URL tanpa ?hud=1
-     dipakai di OBS Browser Source → tampilan murni karakter saja. */
+  /* HUD hanya muncul dengan ?hud=1 (dibuka dari app utama). Behavior
+     (balasan LLM/antrean) hidup di SERVER — HUD tinggal alat bantu URL;
+     URL tanpa ?hud=1 dipakai di OBS Browser Source → tampilan murni. */
   #hud {
     position: fixed; bottom: 8px; left: 50%; transform: translateX(-50%);
     display: none; gap: 10px; align-items: center; padding: 5px 10px;
@@ -45,13 +46,6 @@
     font: 12px "Segoe UI", -apple-system, system-ui, sans-serif;
   }
   #hud .btn:hover { background: #212734; border-color: #333B4B; color: #EDF0F4; }
-  #hud input[type="text"] { width: 170px; }
-  #hud input[type="number"] { width: 44px; }
-  #hud input {
-    background: #0D0D10; color: #EDF0F4; border: 1px solid #232936;
-    border-radius: 4px; padding: 3px 6px; font: 12px "Segoe UI", system-ui, sans-serif;
-  }
-  #hud label { display: flex; gap: 5px; align-items: center; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -60,25 +54,25 @@
 <div id="bubble"><span id="bubble-text"></span></div>
 <div id="alert"></div>
 <div id="hud">
-  <label><input id="ov-respond" type="checkbox" checked /> <span data-i18n="vtOv.respond">Balas otomatis</span></label>
-  <label><span data-i18n="vt.persona">Gaya jawab</span> <input id="ov-persona" type="text" /></label>
-  <label><span data-i18n="vt.cooldown">Jeda antar balas (dtk)</span> <input id="ov-cooldown" type="number" min="5" max="120" value="12" /></label>
   <button class="btn" id="ov-copy" data-i18n="vtOv.copyUrl">Salin URL OBS</button>
 </div>
-<script src="js/pixi.6.5.10.min.js"></script>
 <script src="js/live2dcubismcore.min.js"></script>
-<script src="js/pixi-live2d-0.4.0.js?v=3"></script>
 <!-- bundle.js = core TS utuh: window.__i18n (sweep data-i18n saat init) +
      window.LipSync (AudioLipSync untuk sinkron bibir audio remote). Tanpa
-     render loop — halaman ini yang punya loop sendiri. -->
+     render loop — halaman ini memakai stack view di bawah. -->
 <script src="js/bundle.js"></script>
+<!-- Stack render baru (Pixi 8 + Cubism 5-r.5 via adapter src/live2d) —
+     pola pet.html: importmap pixi.js → pixi8.mjs, modul view mengambil
+     alih #live2d-canvas saat __live2dRendererRequested. -->
+<script type="importmap">{"imports":{"pixi.js":"./js/pixi8.mjs"}}</script>
+<script type="module" src="js/live2d-view.mjs"></script>
 <script>
 (function () {
   const API = location.origin;
   const t = (k, v) => (window.__i18n ? window.__i18n.t(k, v) : k);
   const qs = new URLSearchParams(location.search);
   const $ = (id) => document.getElementById(id);
-  const state = { model: null, app: null, bubbleTimer: null, alertTimer: null, dir: 1 };
+  const state = { model: null, bubbleTimer: null, alertTimer: null, mouthActive: false, audioLip: null };
 
   function setStatus(msg) { $("status").textContent = "overlay — " + msg; }
   function bubble(text, ms) {
@@ -96,16 +90,9 @@
     state.alertTimer = setTimeout(() => (a.style.display = "none"), 6000);
   }
 
-  // ── HUD (?hud=1 saja) — preferensi disimpan lokal per browser ────────────
-  function hudInit() {
-    if (!qs.has("hud")) return;
+  // ── HUD (?hud=1 saja) — tinggal alat salin URL OBS ─────────────────────
+  if (qs.has("hud")) {
     $("hud").classList.add("visible");
-    const saved = lsGet();
-    $("ov-respond").checked = saved.respond !== false;
-    $("ov-persona").value = saved.persona || "";
-    if (saved.cooldown) $("ov-cooldown").value = saved.cooldown;
-    for (const id of ["ov-respond", "ov-persona", "ov-cooldown"])
-      $(id).addEventListener("change", lsSave);
     $("ov-copy").addEventListener("click", () => {
       const clean = location.origin + "/vtuber.html";
       navigator.clipboard && navigator.clipboard.writeText(clean).then(
@@ -114,24 +101,8 @@
       );
     });
   }
-  function lsGet() {
-    try { return JSON.parse(localStorage.getItem("vtuber_overlay") || "{}"); }
-    catch (e) { return {}; }
-  }
-  function lsSave() {
-    try {
-      localStorage.setItem("vtuber_overlay", JSON.stringify({
-        respond: $("ov-respond").checked,
-        persona: $("ov-persona").value.trim(),
-        cooldown: Number($("ov-cooldown").value) || 12,
-      }));
-    } catch (e) {}
-  }
-  const respondOn = () => { const s = lsGet(); return s.respond !== false; };
-  const personaText = () => { const s = lsGet(); return s.persona || "ceria dan ramah"; };
-  const cooldownMs = () => Math.max(5, (lsGet().cooldown || 12)) * 1000;
 
-  // ── Muat model (pola sama dengan pet.html) ───────────────────────────────
+  // ── Muat model (pola pet.html, stack baru) ──────────────────────────────
   async function resolveModelPath() {
     let path = qs.get("model");
     if (path) return path;
@@ -146,31 +117,45 @@
     } catch (e) { return ""; }
   }
 
+  // Minta modul view mengambil alih canvas + janji siapnya (modul dieksekusi
+  // setelah parsing, jadi flag aman dipasang dari sini).
+  window.__live2dRendererRequested = true;
+  window.__live2dStageSize = () => ({ w: window.innerWidth, h: window.innerHeight });
+  if (!window.__live2dViewWait) {
+    window.__live2dViewWait = new Promise((res) => {
+      window.__live2dViewReadyResolve = res;
+    });
+  }
+
+  // Bibir: satu provider untuk semua jalur — audio remote (AudioLipSync dari
+  // bundle) atau osilasi sintetis saat browser TTS. Framework yang menulis
+  // param mulut (role-resolved) — tidak ada id param hardcode.
+  function lipsyncSample() {
+    const lip = state.audioLip;
+    if (lip && lip.active) return lip.sample();
+    if (!state.mouthActive) return null;
+    const tNow = performance.now() / 1000;
+    const base = 0.35 + 0.4 * Math.abs(Math.sin(tNow * 9));
+    const jitter = Math.random() < 0.25 ? 0.25 : 0;
+    return Math.min(1, base + jitter);
+  }
+
   async function boot() {
     setStatus(t("vtOv.loadingModel"));
     const path = await resolveModelPath();
     if (!path) { setStatus(t("vtOv.noModel")); return; }
-    // registerTicker adalah static di Live2DModel (jebakan yang sama dengan
-    // pet.html: memanggilnya lewat namespace PIXI.live2d melempar TypeError).
-    PIXI.live2d.Live2DModel.registerTicker(PIXI.Ticker);
-    const app = new PIXI.Application({
-      view: $("live2d-canvas"),
-      width: window.innerWidth, height: window.innerHeight,
-      backgroundAlpha: 0, autoDensity: true, resolution: Math.min(devicePixelRatio || 1, 2),
-    });
-    state.app = app;
-    const model = await PIXI.live2d.Live2DModel.from(API + "/" + path, { autoInteract: false });
-    state.model = model;
-    app.stage.addChild(model);
-    // Skala pas jendela lalu pusatkan; bounds dibaca ulang setelah scale.set()
-    // (rumus pra-skala mendorong karakter keluar canvas — lihat catatan pet.html).
-    const nat = model.getBounds();
-    const natW = nat.width / model.scale.x;
-    const natH = nat.height / model.scale.y;
+    await window.__live2dViewWait;
+    state.model = await window.__live2dView.loadModel(path);
+    const m = state.model;
+    // Skala pas jendela lalu pusatkan; bounds dibaca via facade pasca-scale.
+    const nat = m.getBounds();
+    const natW = nat.width / m.scale.x;
+    const natH = nat.height / m.scale.y;
     const s = Math.min((window.innerWidth * 0.9) / natW, (window.innerHeight * 0.92) / natH);
-    model.scale.set(s);
-    model.x = (window.innerWidth - natW * s) / 2;
-    model.y = (window.innerHeight - natH * s) / 2 - window.innerHeight * 0.03;
+    m.scale.set(s);
+    m.x = (window.innerWidth - natW * s) / 2;
+    m.y = (window.innerHeight - natH * s) / 2 - window.innerHeight * 0.03;
+    try { window.__live2dView.setLipsyncProvider(lipsyncSample); } catch (e) {}
     loadVoiceCfg(path);
     startIdleLife();
     startPolling();
@@ -189,8 +174,8 @@
 
   // ── Param suara (sheet model = sumber sama dengan app utama) ─────────────
   // app.js menyimpan ttsLang/ttsRate/ttsPitch/ttsVoiceName di character sheet
-  // per model (POST /api/sheet, kunci = path model yang di-sanitize). Overlay
-  // membaca sheet yang sama supaya suara overlay = suara app utama.
+  // per model. Overlay membaca sheet yang sama supaya suara overlay = suara
+  // app utama.
   const VOICE = { lang: "id-ID", rate: 1, pitch: 1.15, voiceName: "" };
   async function loadVoiceCfg(modelPath) {
     try {
@@ -222,27 +207,11 @@
     return parts.map((p) => p.trim()).filter(Boolean);
   }
 
-  // Gerakkan bibir saat browser TTS (yang tak punya data audio analisis):
-  // ParamMouthOpenY berdenyut halus sampai utterance selesai.
-  function mouthPulse() {
-    let on = true, t0 = 0;
-    const iv = setInterval(() => {
-      const m = state.model;
-      if (!m || !on) return;
-      t0 += 0.06;
-      try {
-        const core = m.internalModel.coreModel;
-        core.setParameterValueById("ParamMouthOpenY", 0.25 + Math.abs(Math.sin(t0 * 5.2)) * 0.55);
-      } catch (e) {}
-    }, 50);
-    return () => { on = false; clearInterval(iv); try { state.model.internalModel.coreModel.setParameterValueById("ParamMouthOpenY", 0); } catch (e) {} };
-  }
-
   function speakBrowser(text) {
     return new Promise((resolve) => {
       let done = false;
-      const finish = () => { if (!done) { done = true; stopMouth(); resolve(); } };
-      const stopMouth = mouthPulse();
+      const finish = () => { if (!done) { done = true; state.mouthActive = false; resolve(); } };
+      state.mouthActive = true; // osilasi sintetis via lipsyncProvider
       try {
         if (typeof speechSynthesis === "undefined") return finish();
         speechSynthesis.cancel();
@@ -272,7 +241,7 @@
   function speakRemote(text) {
     return new Promise((resolve, reject) => {
       let done = false;
-      const finish = () => { if (!done) { done = true; resolve(); } };
+      const finish = () => { if (!done) { done = true; state.audioLip = null; resolve(); } };
       fetch(API + "/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -289,6 +258,7 @@
           lip.reset();
           if (!lip.attach(audio)) lip = null;
         }
+        state.audioLip = lip;
         audio.onended = () => { URL.revokeObjectURL(url); finish(); };
         audio.onerror = () => { URL.revokeObjectURL(url); finish(); };
         audio.play().catch(() => { URL.revokeObjectURL(url); finish(); });
@@ -313,54 +283,16 @@
     } finally { speaking = false; }
   }
 
-  // ── Runtime vtuber: poll event + balas ───────────────────────────────────
+  // ── Runtime vtuber: poll event (render + bicara balasan server) ─────────
+  // Behavior (dedup/cooldown/antrean donation+operator/LLM) hidup di server
+  // (vtuber-scheduler.ts). Overlay = permukaan on-air: alert donasi +
+  // memutar balasan (event "agent") yang dihasilkan scheduler.
   let cursor = 0;
-  let lastReplyAt = 0;
-
-  async function askLLM(prompt, persona) {
-    const r = await fetch(API + "/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: [{ role: "user", content: prompt }],
-        system: "Kamu adalah VTuber Live2D yang sedang streaming. Gaya bicara: " + persona + ". Jawab HANYA kalimat yang akan diucapkan, tanpa awalan nama.",
-      }),
-    });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok || d.error) throw new Error(d.error || "LLM error");
-    return d.reply || "";
-  }
-
-  // Balasan dicatat ke feed server (type "agent") supaya muncul juga di
-  // feed app utama — persis pola vtuberAgentSay() mode-runtime.
-  function logAgentEvent(text) {
-    fetch(API + "/api/vtuber/mock-event", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "agent", user: "AI", text }),
-    }).catch(() => {});
-  }
-
-  async function maybeRespond(ev) {
-    if (!respondOn()) return;
-    if (Date.now() - lastReplyAt < cooldownMs()) return; // antrean sederhana: skip
-    lastReplyAt = Date.now();
-    const isDono = ev.type === "donation";
-    const prompt = isDono
-      ? t("vt.donatePrompt", { user: ev.user, amount: ev.amount || "", text: ev.text })
-      : t("vt.chatPrompt", { user: ev.user, text: ev.text });
-    try {
-      const reply = await askLLM(prompt, personaText());
-      if (reply) { logAgentEvent(reply); speak(reply); }
-    } catch (e) {
-      setStatus(t("vt.aiFail", { msg: e.message }));
-    }
-  }
 
   async function startPolling() {
     loadTTSProvider();
     setInterval(() => {
-      // heartbeat: app utama menahan balasannya selama ini segar
+      // heartbeat: app utama menahan bicaranya selama ini segar
       fetch(API + "/api/vtuber/overlay", { method: "POST" }).catch(() => {});
     }, 3000);
     setInterval(async () => {
@@ -370,14 +302,12 @@
         cursor = d.cursor || cursor;
         for (const ev of d.events || []) {
           if (ev.type === "donation") donationAlert(ev.user, ev.amount);
-          // type "agent" = balasan (milik sendiri / app utama) — jangan dibalas lagi
-          if (ev.type === "chat" || ev.type === "donation") maybeRespond(ev);
+          if (ev.type === "agent") speak(ev.text);
         }
       } catch (e) { /* runtime belum aktif / server restart — coba lagi */ }
     }, 2000);
   }
 
-  hudInit();
   boot().catch((e) => setStatus(t("sys.errGeneric", { msg: e.message })));
 })();
 </script>

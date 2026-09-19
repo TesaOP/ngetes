@@ -8,6 +8,20 @@
 export type AsMsg = { role: "user" | "assistant" | "tool"; content: string; ts: number };
 export type AsApproval = { id: string; tool: string; args: any; ts: number };
 
+/** Identitas satu task Worker (§9 ARSITEKTUR-TARGET): agent bukan sekadar
+ *  busy=true — ada slot aktif + antrean, dan tiap task punya taskId yang bisa
+ *  ditunjuk untuk cancel/modify. */
+export type WorkerTask = {
+  taskId: string;
+  prompt: string;
+  status: "running" | "awaiting_approval";
+  createdAt: number;
+};
+
+/** §9: antrean task FIFO maksimum 20 — item baru saat penuh DITOLAK eksplisit,
+ *  item lama tidak pernah dibuang senyap. */
+export const MAX_PARKED_TASKS = 20;
+
 /** Catatan state penting yang WAJIB selamat dari summarization history. */
 export type SessionNotes = {
   /** File yang pernah ditulis/diubah agent (path relatif). */
@@ -68,6 +82,18 @@ export type Runtime = {
   /** Permintaan cancel kooperatif (POST /api/assistant/cancel) — dicek loop
    *  antar-langkah; tool yang sedang jalan selesai dulu (run_command ≤30 dtk). */
   cancelRequested: boolean;
+  // ── Task identity Worker (§9–12) ────────────────────────────────
+  /** Slot task aktif — satu-satunya; null = slot kosong. Saat loop pause
+   *  menunggu approval, slot TETAP dipegang task ini (status awaiting_approval). */
+  activeTask: WorkerTask | null;
+  /** Antrean task menunggu (FIFO, cap MAX_PARKED_TASKS). Prompt TIDAK masuk
+   *  history sebelum task-nya benar-benar jalan (isolasi §14). */
+  parkedTasks: WorkerTask[];
+  /** Replacement dari assistantModify untuk task aktif (§12) — mewarisi slot
+   *  begitu task lama terminal, didahulukan dari antrean. */
+  pendingReplacement: WorkerTask | null;
+  /** Penghitung taskId (t_1, t_2, …). */
+  nextTaskSeq: number;
 };
 
 let runtime: Runtime | null = null;
@@ -106,6 +132,10 @@ export function makeRuntime(cfg: any, workDir: string, history: AsMsg[]): Runtim
     undo: [],
     sessionId: "",
     cancelRequested: false,
+    activeTask: null,
+    parkedTasks: [],
+    pendingReplacement: null,
+    nextTaskSeq: 1,
   };
 }
 
@@ -119,19 +149,31 @@ export function pushMsg(rt: Runtime, m: Omit<AsMsg, "ts">): void {
 // loadSession/saveSession adalah wrapper kompatibilitas: CLI & panel tidak
 // perlu tahu store-nya; sesi aktif disimpan di assistant-sessions.json
 // (migrasi otomatis dari assistant-history.json format lama).
+// Store dibuat LAZY: test mengisolasi lewat LIVE2D_TEST_SESSION_ROOT
+// (folder root berbeda, diset sebelum operasi sesi pertama). Tanpa ini,
+// test yang menulis history ikut menimpa sesi AKTIF user di data/ —
+// pencemaran nyata (pernah terjadi: workDir sesi user berubah jadi
+// folder temp test).
 import { appRoot } from "../../shared/paths";
 import { makeSessionsStore } from "./sessions";
 
-const store = makeSessionsStore(appRoot());
+let store: ReturnType<typeof makeSessionsStore> | null = null;
+function sessionStore(): ReturnType<typeof makeSessionsStore> {
+  if (!store)
+    store = makeSessionsStore(
+      process.env.LIVE2D_TEST_SESSION_ROOT || appRoot(),
+    );
+  return store;
+}
 
 export function loadSession(): { history: AsMsg[]; workDir: string | null; sessionId?: string } | null {
-  const rec = store.activeRec();
+  const rec = sessionStore().activeRec();
   if (!rec) return null;
   return { history: rec.messages, workDir: rec.workDir || null, sessionId: rec.id };
 }
 
 export function saveSession(rt: Runtime): void {
-  store.persistActive(rt.history, rt.workDir);
+  sessionStore().persistActive(rt.history, rt.workDir);
 }
 
 /** Pencatatan state penting — dipanggil loop setelah tool mutating sukses. */

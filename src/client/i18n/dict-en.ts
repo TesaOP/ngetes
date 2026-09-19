@@ -422,9 +422,10 @@ export const DICT_EN: Record<string, string> = {
   "conn.switchTip": "Enable/disable connection (disabled = skipped for all roles)",
 
   // ── mode-runtime ───────────────────────────────────────────────
-  "vt.donatePrompt": "Viewer {user} just donated {amount} with the message: \"{text}\". Give a warm, in-character thank-you (1-2 sentences). Speak English.",
-  "vt.chatPrompt": "Viewer {user} said in live chat: \"{text}\". Reply briefly (1 sentence), fun and personal. Speak English.",
-  "vt.aiFail": "AI failed to reply: {msg}",
+  // (donate/chat prompts are now server-side protocol — vtuber-scheduler.ts,
+  //  locked Indonesian; no longer client i18n keys.)
+  "vt.operatorPh": "instruction for the character…",
+  "vt.operatorSend": "Send Operator",
   "vt.overlayBtn": "Open OBS Overlay",
   "vt.overlayHint": "Clean URL for Browser Source: /vtuber.html",
   "vt.overlayYield": "OBS overlay connected — auto-replies moved to the overlay window.",
@@ -450,6 +451,7 @@ export const DICT_EN: Record<string, string> = {
   "as.planTitle": "Working plan:",
   "as.task": "TASK",
   "as.task.empty": "No active task — describe what you want the agent to do.",
+  "as.task.parked": "Queued — another task is running (position {n})",
   "as.tech.collapse": "Collapse technical pane",
   "as.tech.expand": "Open technical pane",
   "as.plan.progress": "{done}/{total} done",

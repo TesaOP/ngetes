@@ -24,6 +24,7 @@ import * as Framing from "./engine/framing";
 import * as RoleMapping from "./engine/role-mapping";
 import { collectNativeExpressions } from "./engine/native-expressions";
 import * as LipSync from "./speech/lip-sync";
+import { createSpeechPolicy } from "./speech/speech-policy";
 import * as i18n from "./i18n/index";
 import "./agent/directive-parser";
 import "./agent/brain"; // installs window.__agent at module load
@@ -38,6 +39,10 @@ if (typeof window !== "undefined") {
   window.MotionRuntime = MotionRuntime;
   window.MotionTaxonomy = MotionTaxonomy;
   window.LipSync = LipSync;
+  // Policy/kepemilikan speech (boundary §15–16): producer menyebut kelas,
+  // controller menentukan ALLOW/PREEMPT/QUEUE/SUPPRESS. Executor-nya
+  // didaftarkan app.js (speak/runSpeech) — tanpa executor tidak ada audio.
+  window.__speech = createSpeechPolicy();
   // Role mapping & skala referensi (murni) — sumber kebenaran tunggal;
   // app.js legacy memanggil lewat window.__roleMapping (wrapper tipis).
   window.__roleMapping = RoleMapping;

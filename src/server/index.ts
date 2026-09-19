@@ -14,8 +14,8 @@ import { execSync } from "child_process";
 // @ts-ignore — modul TS client, dipakai bareng oleh server & bundle browser
 import * as MotionTaxonomy from "../client/engine/motion-taxonomy";
 import { buildRescueBlueprint, RESCUE_FILENAME } from "./rescue";
-import { vtuberStart, vtuberStop, vtuberStatus, vtuberEvents, vtuberAgentSay, overlayPing, overlayActive } from "./vtuber";
-import { assistantStart, assistantStop, assistantCancel, assistantStatus, assistantHistory, assistantAsk, assistantResolveApproval, assistantReset, assistantEvents, assistantMemoryList, assistantMemoryDelete, assistantUndoList, assistantRevert, assistantSessionsList, assistantSessionCreate, assistantSessionSwitch, assistantSessionDelete, initAssistant } from "./assistant";
+import { vtuberStart, vtuberStop, vtuberStatus, vtuberEvents, vtuberAgentSay, overlayPing, overlayActive, vtuberSetConfig, vtuberOperatorSay } from "./vtuber";
+import { assistantStart, assistantStop, assistantCancel, assistantStatus, assistantHistory, assistantAsk, assistantResolveApproval, assistantModify, assistantReset, assistantEvents, assistantMemoryList, assistantMemoryDelete, assistantUndoList, assistantRevert, assistantSessionsList, assistantSessionCreate, assistantSessionSwitch, assistantSessionDelete, initAssistant } from "./assistant";
 import { petLaunch, petClose, petStatus, petSetClickThrough } from "./pet";
 import { translateForSpeech, ttsLangIsFixed } from "./persona/speech-lang";
 import { appRoot } from "../shared/paths";
@@ -367,16 +367,21 @@ async function handleAPI(req: Request): Promise<Response|null> {
   if(method==="POST" && path==="/api/vtuber/overlay") return json(overlayPing());
   if(method==="GET" && path==="/api/vtuber/events") return handleVtuberEvents(req);
   if(method==="POST" && path==="/api/vtuber/mock-event") return handleVtuberMockEvent(req);
+  // Behavior engine (§7): config live tanpa restart + intake antrean operator.
+  if(method==="POST" && path==="/api/vtuber/config") return handleVtuberConfig(req);
+  if(method==="POST" && path==="/api/vtuber/operator") return handleVtuberOperator(req);
 
   // Assistant runtime
   if(method==="POST" && path==="/api/assistant/start") return handleAssistantStart(req);
   if(method==="POST" && path==="/api/assistant/stop") { assistantStop(); return json({ok:true}); }
-  if(method==="POST" && path==="/api/assistant/cancel") return json(assistantCancel());
+  if(method==="POST" && path==="/api/assistant/cancel") return handleAssistantCancel(req);
   if(method==="GET" && path==="/api/assistant/history") return json(assistantHistory());
   if(method==="POST" && path==="/api/assistant/ask") return handleAssistantAsk(req);
   if(method==="POST" && path==="/api/assistant/ask-stream") return handleAssistantAskStream(req);
   if(method==="POST" && path==="/api/assistant/approve") return handleAssistantApprove(req);
   if(method==="POST" && path==="/api/assistant/approve-stream") return handleAssistantApproveStream(req);
+  // Task identity Worker (§11–12): cancel per-task + modify-replacement.
+  if(method==="POST" && path==="/api/assistant/modify") return handleAssistantModify(req);
   if(method==="POST" && path==="/api/assistant/quip") return handleAssistantQuip(req);
   if(method==="GET" && path==="/api/assistant/memory") return json({ entries: assistantMemoryList() });
   if(method==="POST" && path==="/api/assistant/memory/forget") {
@@ -512,6 +517,21 @@ async function handleVtuberMockEvent(req: Request): Promise<Response> {
   if (!ev) return json({ error: "runtime tidak aktif" }, 400);
   return json(ev);
 }
+async function handleVtuberConfig(req: Request): Promise<Response> {
+  const body = await readBody(req);
+  const r = vtuberSetConfig({
+    persona: typeof body?.persona === "string" ? body.persona : undefined,
+    cooldownMs: Number.isFinite(Number(body?.cooldownMs)) ? Number(body.cooldownMs) : undefined,
+    respondChat: typeof body?.respondChat === "boolean" ? body.respondChat : undefined,
+    respondDonation: typeof body?.respondDonation === "boolean" ? body.respondDonation : undefined,
+  });
+  return json(r);
+}
+async function handleVtuberOperator(req: Request): Promise<Response> {
+  const body = await readBody(req);
+  const r = vtuberOperatorSay({ text: String(body?.text || "") });
+  return json(r, r.ok ? 200 : 400);
+}
 async function handleAssistantStart(req: Request): Promise<Response> {
   const body = await readBody(req);
   // Tanpa pindah mode: runtime assistant adalah layanan mandiri — CLI /
@@ -554,6 +574,18 @@ async function handleAssistantQuip(req: Request): Promise<Response> {
 async function handleAssistantAsk(req: Request): Promise<Response> {
   const body = await readBody(req);
   const r = await assistantAsk(String(body?.text || ""), config);
+  return json(r, r.ok ? 200 : 400);
+}
+// §11: cancel per-task — {taskId} opsional; tanpa id = task aktif (panel/CLI lama).
+async function handleAssistantCancel(req: Request): Promise<Response> {
+  const body = await readBody(req);
+  const r = assistantCancel(typeof body?.taskId === "string" && body.taskId ? body.taskId : undefined);
+  return json(r, r.ok ? 200 : 400);
+}
+// §12: modify = replacement yang mewarisi posisi task yang diganti.
+async function handleAssistantModify(req: Request): Promise<Response> {
+  const body = await readBody(req);
+  const r = assistantModify(String(body?.taskId || ""), String(body?.text || ""), config);
   return json(r, r.ok ? 200 : 400);
 }
 // Versi streaming (SSE): event `delta`/`tool_call`/`tool_result`/`approval`

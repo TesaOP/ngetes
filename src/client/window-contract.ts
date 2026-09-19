@@ -5,14 +5,27 @@ import type { MotionRegistry } from "./animation/motion-registry";
 import type { MotionRuntime } from "./animation/motion-runtime";
 import type * as MotionTaxonomy from "./engine/motion-taxonomy";
 import type * as LipSync from "./speech/lip-sync";
+import type {
+  SpeechClass,
+  SpeechController,
+  SpeechJob,
+} from "./speech/speech-policy";
 import type { collectNativeExpressions } from "./engine/native-expressions";
 import type * as I18n from "./i18n/index";
 
 export type Destroy = () => void;
 
+export type SpeakOpts = {
+  /** Kelas produser untuk policy speech — default app.js: "direct". */
+  cls?: string;
+  /** Cleanup producer saat ucapan ini digulingkan (onDone TIDAK dipanggil). */
+  onPreempted?: () => void;
+};
+
 export type Live2DLegacyBridge = {
   getCapabilityProfile?: () => Promise<{ userNote?: string }>;
-  speak?: (text: string) => void;
+  speak?: (text: string, onDone?: () => void, opts?: SpeakOpts) => void;
+  stopSpeaking?: () => void;
 };
 
 declare global {
@@ -31,7 +44,11 @@ declare global {
     __i18n?: typeof I18n;
     __live2dAgent?: Live2DLegacyBridge;
     __addChat?: (role: string, text: string) => void;
+    /** Policy speech (bundle) — app.js executor mendaftar lewat setExecutor. */
+    __speech?: SpeechController;
   }
 }
+
+export type { SpeechClass, SpeechJob };
 
 export {};

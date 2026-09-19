@@ -1,5 +1,5 @@
 /**
- * server/vtuber.ts — Runtime konektor mode AI VTuber (streaming).
+ * server/vtuber.ts — Runtime konektor + otak behavior mode AI VTuber.
  * Single active runtime: start() menghancurkan runtime lama dulu.
  *
  * Provider:
@@ -8,8 +8,22 @@
  *              tanpa token = anonymous read-only (justinfan); token opsional.
  *  - youtube : poll liveChatMessages.list (API key + videoId live);
  *              superChat → event donasi.
+ *
+ * Behavior (dedup/cooldown audience, antrean donation FIFO-20, antrean
+ * operator + precedence, LLM balasan) hidup DI SINI via vtuber-scheduler —
+ * satu scheduler untuk semua klien (app utama + overlay OBS hanya render
+ * feed dan memutar balasan; race dobel-balasan mati dari akarnya).
  */
 import { WebSocket } from "ws";
+import { createVtuberScheduler, type VtuberScheduler } from "./vtuber-scheduler";
+import { llmForRole } from "../shared/llm-client";
+import { ConfigManager } from "../shared/config";
+import { appRoot } from "../shared/paths";
+import { join } from "path";
+
+// Instans config sendiri (file yang sama dengan index.ts; tulisan lewat
+// queueJsonWrite modul-level jadi tetap terserialisasi).
+const config = new ConfigManager(join(appRoot(), "data"));
 
 export type VtEvent = {
   id: number;
@@ -23,7 +37,7 @@ export type VtEvent = {
 type Runtime = {
   cfg: any;
   events: VtEvent[];
-  nextId: number;
+  scheduler: VtuberScheduler | null;
   destroy: () => void;
 };
 
@@ -35,16 +49,30 @@ function pushEvent(e: Omit<VtEvent, "id" | "ts">): VtEvent {
   const ev: VtEvent = { id: nextId++, ts: Date.now(), ...e };
   runtime.events.push(ev);
   if (runtime.events.length > 500) runtime.events.splice(0, runtime.events.length - 500);
+  // Intake behavior (§7): hanya event penonton/donasi — "agent"/"system"
+  // adalah balasan/feedback, bukan input scheduler.
+  if (runtime.scheduler && (e.type === "chat" || e.type === "donation")) {
+    const r = runtime.scheduler.ingest({
+      type: e.type === "chat" ? "audience" : "donation",
+      user: ev.user,
+      text: ev.text,
+      amount: ev.amount,
+    });
+    if (!r.accepted && r.reason && r.reason !== "cooldown" && r.reason !== "duplikat" && r.reason !== "respond chat mati" && r.reason !== "respond donasi mati")
+      console.log("[vtuber] event", e.type, "tidak masuk scheduler:", r.reason);
+  }
   return ev;
 }
 
 export function vtuberStatus() {
+  const q = runtime?.scheduler?.stats();
   return {
     running: !!runtime,
     provider: runtime?.cfg?.provider || null,
     channel: runtime?.cfg?.channel || runtime?.cfg?.videoId || null,
-    respond: runtime?.cfg?.respond ?? false,
+    respond: runtime?.cfg?.respondChat ?? false,
     eventCount: runtime?.events.length || 0,
+    queues: q || { active: null, donationQueue: 0, operatorQueue: 0 },
   };
 }
 
@@ -72,18 +100,70 @@ export function vtuberAgentSay(text: string): VtEvent | null {
 
 export function vtuberStop() {
   if (runtime) {
+    try { runtime.scheduler?.stop(); } catch {}
     try { runtime.destroy(); } catch {}
     runtime = null;
   }
   return { ok: true };
 }
 
+/** Ubah config behavior JALAN (tanpa restart stream): persona, cooldown,
+ *  flag respond — dipanggil form klien saat runtime hidup. */
+export function vtuberSetConfig(partial: {
+  persona?: string;
+  cooldownMs?: number;
+  respondChat?: boolean;
+  respondDonation?: boolean;
+}): { ok: boolean } {
+  runtime?.scheduler?.setConfig(partial ?? {});
+  return { ok: !!runtime };
+}
+
+/** Instruksi operator stream (§7 kelas sendiri): echo ke feed + masuk
+ *  antrean operator. Operator = aksi eksplisit — tidak tergantung flag respond. */
+export function vtuberOperatorSay(body: { text?: string }): { ok: boolean; error?: string } {
+  if (!runtime) return { ok: false, error: "vtuber runtime tidak aktif" };
+  const text = String(body?.text || "").slice(0, 400).trim();
+  if (!text) return { ok: false, error: "teks instruksi kosong" };
+  pushEvent({ type: "system", user: "operator", text: "Operator: " + text });
+  runtime.scheduler?.ingest({ type: "operator", user: "operator", text });
+  return { ok: true };
+}
+
 export function vtuberStart(cfg: any): { ok: boolean; error?: string } {
   vtuberStop();
   const provider = String(cfg?.provider || "mock");
-  const rt: Runtime = { cfg, events: [], nextId: nextId, destroy: () => {} };
+  const rt: Runtime = { cfg, events: [], scheduler: null, destroy: () => {} };
   const timers: any[] = [];
   let ws: WebSocket | null = null;
+
+  // Otak behavior (§7): LLM role "chat" — pola yang sama dengan quip/narator.
+  // Flag respond default MATI: tanpa persetujuan eksplisit form, tidak ada
+  // panggilan LLM (test lama tetap bebas jaringan).
+  rt.scheduler = createVtuberScheduler({
+    llm: (messages, system) =>
+      llmForRole(
+        "chat",
+        () => config.connections,
+        () => config.activeConnection,
+        (conns) => config.saveConnections(conns, config.load().activeId),
+        messages as import("../shared/types").ChatMessage[],
+        system,
+      ).then((r: any) => r.reply),
+    emitAgent: (text) => {
+      if (runtime === rt) pushEvent({ type: "agent", user: "AI", text });
+    },
+    emitSystem: (text) => {
+      if (runtime === rt) pushEvent({ type: "system", user: "system", text });
+    },
+    log: (m) => console.log("[vtuber]", m),
+  });
+  rt.scheduler.setConfig({
+    persona: cfg?.persona,
+    cooldownMs: cfg?.cooldownMs,
+    respondChat: !!cfg?.respondChat,
+    respondDonation: !!cfg?.respondDonation,
+  });
 
   const push = (e: Omit<VtEvent, "id" | "ts">) => {
     if (runtime === rt) pushEvent(e);
