@@ -8,6 +8,9 @@ export type AssistantStatus = {
   plan?: any[];
   notes?: { filesTouched?: string[] };
   tools?: Array<{ name: string; level: "safe" | "mutating" }>;
+  /** Task identity Worker (§9): slot aktif + antrean menunggu (drain FIFO). */
+  activeTask?: { taskId: string; status: string; prompt: string } | null;
+  parkedTasks?: Array<{ taskId: string; prompt: string }>;
 };
 
 export function createAssistantApi(origin: string) {

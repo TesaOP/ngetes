@@ -273,6 +273,12 @@
     if (speaking || !text) return;
     speaking = true;
     try {
+      // Ekspresi/gerak balasan: window.__agent ada (bundle dimuat) tapi driver
+      // app.js tidak — brain.expressReply otomatis memakai fallback view
+      // (aset native model) di stack ini. No-op aman bila tak ada yang cocok.
+      try {
+        if (window.__agent && window.__agent.expressReply) window.__agent.expressReply(text);
+      } catch (e) {}
       for (const seg of splitSegments(text)) {
         bubble(seg);
         if (TTS_PROVIDER === "browser") await speakBrowser(seg);

@@ -88,9 +88,11 @@
 | 6 | Worker task identity — taskId/activeTask/parked, cancel(taskId), approval ownership, modify-replacement | ✅ selesai 2026-09-19 (514 unit + 416 guard; runtime verify menyusul) |
 
 **REWORK LENGKAP (Fase 2–6) — semua gap behavior §6–12, §15–18, §32–34
-tertutup 2026-09-19.** Sisa pekerjaan behavioral arsitektur target: hanya
-opsional/lapisan lanjutan (ekspresi/motion balasan VTuber §7, UI daftar antrean
-task, cancel per-task dari UI).
+tertutup 2026-09-19.** Sisa opsional (UI daftar antrean task, cancel per-task
+dari UI, ekspresi/motion balasan VTuber §7) **✅ diselesaikan 2026-09-19**
+(STATUS entri 48, klien-aditif). SISA follow-up: ekspresi VTuber di overlay
+OBS (`vtuber.html`) masih no-op (perlu wiring `window.__live2dView`) +
+verifikasi runtime visual (model+TTS+OBS) belum dijalankan.
 
 Aturan per fase (dari ARSITEKTUR-TARGET §46): satu boundary per waktu,
 guard/test diperbarui di commit yang sama, verifikasi runtime setelah

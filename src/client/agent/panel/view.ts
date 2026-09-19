@@ -27,6 +27,8 @@ export type PanelViewDeps = {
   onTabChange?: (tab: TechnicalTab) => void;
   /** Level tool ("safe"|"mutating") untuk badge; null = tak diketahui. */
   toolLevel?: (name: string) => "safe" | "mutating" | null;
+  /** Batalkan task tertentu dari antrean (§11 cancel per-task). */
+  onCancelTask?: (taskId: string) => void;
 };
 
 /** Badge level tool di header kartu: "auto" (mint) / "izin" (amber). */
@@ -175,10 +177,12 @@ export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null,
   }
 
   const taskBox = el("div", "as-task hidden");
+  const queueBox = el("div", "as-queue hidden");
   const memBox = el("div", "as-plan as-membox hidden");
 
   root.appendChild(statusbar);
   root.appendChild(taskBox);
+  root.appendChild(queueBox);
   root.appendChild(memBox);
   root.appendChild(tl);
   if (techRoot) {
@@ -680,6 +684,40 @@ export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null,
     }
   }
 
+  // ── Antrean task Worker (§9) ─────────────────────────────────────
+  /**
+   * Daftar task yang menunggu slot (parked, drain FIFO). Tiap baris punya
+   * tombol batal per-task (§11) → deps.onCancelTask(taskId). Kotak hilang
+   * bila antrean kosong — hanya muncul saat benar-benar ada yang mengantre.
+   */
+  function renderQueue(parked: Array<{ taskId: string; prompt: string }>): void {
+    queueBox.textContent = "";
+    if (!parked || !parked.length) {
+      queueBox.classList.add("hidden");
+      return;
+    }
+    queueBox.classList.remove("hidden");
+    const head = el("div", "as-task-head");
+    head.appendChild(el("span", "as-task-label", t("as.queue")));
+    head.appendChild(el("span", "as-task-prog", t("as.queue.count", { n: parked.length })));
+    queueBox.appendChild(head);
+    const list = el("div", "as-queue-list");
+    parked.forEach((task, i) => {
+      const row = el("div", "as-queue-item");
+      row.appendChild(el("span", "as-queue-pos", String(i + 1)));
+      row.appendChild(el("span", "as-queue-text", task.prompt || task.taskId));
+      const btn = el("button", "as-queue-cancel") as HTMLButtonElement;
+      btn.type = "button";
+      btn.textContent = "✕";
+      btn.title = t("as.queue.cancel");
+      btn.setAttribute("aria-label", t("as.queue.cancel"));
+      btn.addEventListener("click", () => deps.onCancelTask?.(task.taskId));
+      row.appendChild(btn);
+      list.appendChild(row);
+    });
+    queueBox.appendChild(list);
+  }
+
   // ── Widget memory ───────────────────────────────────────────────
   function renderMemory(entries: Array<{ key: string; value: string }>, onForget: (key: string) => void): void {
     memBox.textContent = "";
@@ -754,7 +792,7 @@ export function createPanelView(root: HTMLElement, techRoot: HTMLElement | null,
     pillTimer = null;
   }
 
-  return { render, renderTask, renderMemory, hideMemory, setPill, clearTranscript, setTab, activeTab, renderReview, renderTerm, destroy };
+  return { render, renderTask, renderQueue, renderMemory, hideMemory, setPill, clearTranscript, setTab, activeTab, renderReview, renderTerm, destroy };
 }
 
 export type PanelView = ReturnType<typeof createPanelView>;

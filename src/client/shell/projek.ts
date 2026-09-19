@@ -242,7 +242,9 @@ export function startProjekRail(): () => void {
       : state === "busy" ? t("as.status.busy")
       : state === "idle" ? t("as.status.idle")
       : t("as.status.off");
-    asBtn.setAttribute("title", stateLabel);
+    // Jangan timpa tooltip nama mode — gabungkan: nama tetap terbaca
+    // (screen reader/rail tooltip) plus status agent sebagai informasi.
+    asBtn.setAttribute("title", t("top.tabTip.assistant") + " · " + stateLabel);
 
     // Stage chip hanya saat ada kerja/izin — idle sengaja sunyi.
     const chip = document.getElementById("stage-agent-chip");

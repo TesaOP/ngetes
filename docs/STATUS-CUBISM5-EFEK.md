@@ -52,17 +52,78 @@ sudah selaras dengan arsitektur ini.
    diuji langsung" — temukan lewat pemakaian nyata, jangan ditebak.
 2. ~~**Sisa opsional rework**: UI daftar antrean task, cancel per-task dari
    panel, ekspresi/motion balasan VTuber~~ **✅ entri (48) 2026-09-19** —
-   ketiganya diimplementasi + gate hijau. SISA: ekspresi/motion di overlay
-   OBS (`vtuber.html`) masih no-op (brain `l2d()` tak ada di stack overlay);
-   verifikasi runtime visual (model+TTS+OBS on-air) belum dijalankan.
-3. **Server dev user (8310) belum di-restart** — semua perilaku baru sisi
-   server (scheduler VTuber, task identity, proactive gate, merge) baru
-   aktif setelah restart. Branch `migration/pixi8-cubism` sudah di-commit
-   (44ac2a9 + 731d916) tapi BELUM di-push. Provider LLM aktif (apinex)
-   sesekali 402/429 — bukan regresi.
+   ketiganya diimplementasi + gate hijau; fitur-fiturnya lolos audit visual
+   entri (49). SISA: jalur preset-param di overlay OBS (entri 49 — jalur
+   native sudah terpasang, no-op anggun untuk model tanpa aset semantik).
+3. **Server dev user harus distart ulang** — instance lama 8310/8312 sudah
+   dimatikan (permintaan user, entri 49); jalankan ulang `bun run dev`/
+   `bun run src/server/index.ts` untuk memakai semua fix. Branch
+   `migration/pixi8-cubism` di-commit tapi BELUM di-push. Provider LLM
+   aktif (apinex) sesekali 402/429 — bukan regresi.
 4. Keputusan terbuka lama: branch usang `tes`/`feat/cubism-official-renderer`
    (user bilang hapus manual saat sudah stabil) + blocker Core di SHA lama
    GitHub (risiko sudah diterima user — jangan dibuka lagi).
+
+## UPDATE 2026-09-20 (49) — AUDIT UI PAKAI BROWSER USE: 5 BUG DITEMUKAN & DIPERBAIKI (VERIFIKASI VISUAL)
+
+Sesi ini menjalankan audit UI menyeluruh lewat browser automation (klik satu per
+satu + verifikasi screenshot) di instance terpisah port 8317, merespons laporan
+user "fitur dipencet tidak menunjukkan perubahan". Server dev user 8310/8312
+(kode lama) dimatikan atas permintaan user.
+
+**Hasil audit — fitur yang TERBUKTI JALAN (bukti visual):** pindah 4 mode +
+teardown VTuber; VTuber start/stop/feed mock/balasan+bubble+lipsync; operator
+say saat runtime jalan; overlay OBS render+bicara; pet open/close + pet.html;
+chat LLM live, quick-reply, Clear, Brain Mode, Mic (listening); rail projek
+(new/delete/switch sesi, dialog confirm); panel kontrol 4 tab; Inspeksi Model
+→ sheet tersimpan; preset Try (senang vs sedih beda visual nyata); tes ekspresi
+exp3 (collar biru→hijau); daftar motion + Try (probe playMotion result:true);
+drag/zoom/dobel-klik reset panggung; profil perilaku; toggle kamera; Advanced
+mode; ganti bahasa id↔en (sweep i18n penuh); loop agent assistant live (tool
+call + jawaban).
+
+**Bug diperbaiki (semua diverifikasi ulang visual):**
+1. **Desync mode chat→stage (mode-runtime.js)** — klien POST `/api/mode`
+   `{mode:"chat"}` yang tidak dikenal server (hanya "stage") → 400 ditelan →
+   `active` server nyangkut di mode lama (pelanggaran invarian MODES.md).
+   Fix: petakan chat→stage saat POST. Terverifikasi: kembali dari VTuber kini
+   `active: stage` + runtime berhenti.
+2. **Title tombol rail Assistant tertimpa status (projek.ts)** — tooltip nama
+   mode ("AI Assistant — Local Agent") ditimpa kata status ("off"/"ready")
+   sehingga accessible name kehilangan nama mode. Fix: gabungan
+   `top.tabTip.assistant + " · " + status`.
+3. **String hardcoded Indonesia di UI English (app.js)** — (a) status profil
+   perilaku `'Profil "Hidup" dipakai — tekan Simpan.'` → kunci baru
+   `beh.profil.applied` (id+en); (b) `fmtMs` "detik" → `__t("live.sec")`.
+   Terverifikasi visual: `Profile "Lively" loaded — press Save.` + `15 s`.
+4. **Send Operator no-op senyap (mode-runtime.js)** — runtime mati → error
+   ditelan, tanpa umpan balik apa pun. Fix: elemen `#vt-op-status` di popup
+   Stream Settings + kunci `vt.operatorSent` / `vt.operatorNotRunning`
+   (id+en), auto-clear 4 dtk. Terverifikasi visual kedua jalurnya.
+5. **Ekspresi balasan overlay OBS (brain.ts + vtuber.html)** — entri (48)
+   meninggalkan `expressReply` no-op di overlay. Kini `expressReply` punya
+   fallback stack-overlay: aset NATIVE model dibaca dari facade saat runtime
+   (`.exp3` cocok fuzzy kata emosi, grup motion cocok kata gesture) — tanpa
+   id bernomor, tidak menulis param di luar pintu resmi. **BATAS JUJUR**:
+   ketiga model user TIDAK punya aset native bernama semantik (lumine:
+   grup motions kosong, exp3 hanya collar_*) → jalur ini no-op anggun untuk
+   mereka; jalur preset-param user di overlay masih follow-up (butuh
+   kebijakan updater/pemulihan nilai default di stack view). Overlay
+   terverifikasi tetap utuh (bubble+lipsync, panggilan tidak melempar).
+
+**Temuan lain yang dikonfirmasi BUKAN bug:** siluet hitam sesaat di pet.html =
+frame pertama sebelum tekstur (normal, hilang setelah load); preset Try terasa
+mati = klik pertama salah baris (container match terlalu luas) — dengan
+locator presisi per-baris terbukti bekerja; riwayat VTuber tampil di log
+Stage+Chat = persist riwayat, runtime benar berhenti.
+
+**Sisa follow-up:** jalur preset-param overlay (di atas); uji pet klik-tembus
+Tauri nyata (butuh build:pet); koneksi Twitch/YouTube asli; server dev user
+WAJIB direstart untuk mendapat semua fix sisi klien+server.
+
+Gate: tsc bersih, build OK, **524 unit test + 416 guard — 0 gagal** (2 fail
+"pra-eksis" entri 48 ternyata butuh `data/model` yang ada di mesin ini — hijau
+juga). i18n parity hijau (kunci baru ada di dua kamus).
 
 ## UPDATE 2026-09-19 (48) — SISA OPSIONAL REWORK: UI ANTREAN TASK + CANCEL PER-TASK + EKSPRESI VTUBER
 

@@ -8,6 +8,7 @@ import {
   hasDirectives,
   guessEmotion,
   segmentTextFallback,
+  deriveReplyActions,
 } from "../src/client/agent/directive-parser";
 
 describe("stripDirectives", () => {

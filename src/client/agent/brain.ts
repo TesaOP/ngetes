@@ -25,6 +25,7 @@ import {
   hasDirectives,
   guessEmotion,
   segmentTextFallback,
+  deriveReplyActions,
   EMOTION_GESTURE_FALLBACK,
 } from "./directive-parser";
 import { scaleRoleFraction } from "./param-range";
@@ -651,6 +652,59 @@ Contoh pendek:
     nextSegment();
   }
 
+  /**
+   * Ekspresi + gerak untuk balasan yang AUDIONYA diputar di luar brain
+   * (VTuber §7: app utama membicarakan balasan lewat pipeline speech policy
+   * kelas "vtuber" + feed streaming terpisah). Visual-SAJA: tidak memanggil
+   * speak(), tidak menulis chat, tidak menyentuh aiLock/policy — jadi tidak
+   * bentrok dengan jalur audio yang sudah ada. Reuse applyActions() supaya
+   * resolusi ekspresi model-agnostik (vocab "param/native/clip") identik
+   * dengan jalur companion; directive eksplisit LLM dihormati.
+   */
+  expressReply(text: string): void {
+    const actions = deriveReplyActions(text);
+    if (!Object.keys(actions).length) return;
+    const agent = l2d();
+    // Stack app utama: driver app.js pemilik gerak — reuse applyActions().
+    if (agent && agent.isReady?.()) {
+      this.applyActions(actions, 0, String(text || ""));
+      return;
+    }
+    // Stack overlay (vtuber.html / OBS): app.js tidak dimuat — pakai jalur
+    // view murni yang tersedia di sana (ekspresi/motion NATIVE milik model).
+    this.expressReplyOverlay(actions);
+  }
+
+  /**
+   * Fallback overlay: hanya aset NATIVE yang benar-benar dimuat model
+   * (dibaca dari facade saat runtime — tanpa id bernomor, tanpa asumsi
+   * nama). Emosi/gesture semantik dicocokkan fuzzy ke nama .exp3 / grup
+   * motion; tidak ada yang cocok → no-op diam (degradasi aman). Jalur
+   * preset param user (lembar sheet) butuh kebijakan updater overlay dan
+   * sengaja TIDAK dilakukan di sini.
+   */
+  private expressReplyOverlay(actions: ParsedActions): void {
+    const view = (window as any).__live2dView;
+    const facade = view && view.view && view.view.facade;
+    if (!facade) return;
+    const emo = String(actions.emotion || "").toLowerCase();
+    if (emo && emo !== "normal") {
+      const names: string[] = (facade.expressions || []).map((e: any) =>
+        String(e.Name || e.name || ""),
+      );
+      const hit = names.find((n) => n.toLowerCase().includes(emo));
+      if (hit) void facade.expression(hit);
+    }
+    const gest = String(actions.gesture || "").toLowerCase();
+    if (gest && gest !== "normal") {
+      const defs = facade.internalModel?.motionManager?.definitions || {};
+      const group = Object.keys(defs).find((g) =>
+        String(g).toLowerCase().includes(gest),
+      );
+      if (group) facade.motion(group, 0, 3);
+    }
+  }
+
   // ── Apply actions to the model (AI-driven, EASED) ──
   // Pose dikirim sebagai TARGET nested {head,eyes,mouth,body} ke setAIPose();
   // engine yang ease menuju target dan menumpuk ambient fidget di atasnya.
@@ -1072,6 +1126,8 @@ if (typeof window !== "undefined") {
     setUserMood: (m: string, src?: string) => brain.setUserMood(m, src),
     setCameraMood: (m: string) => brain.setCameraMood(m),
     setPresence: (p: boolean | null) => brain.setPresence(p),
+    // Ekspresi/gerak balasan VTuber (§7) — audio diputar terpisah (__debugSpeak).
+    expressReply: (t: string) => brain.expressReply(t),
     // Array HIDUP — app.js mengonsumsi referensi yang sama, bukan snapshot kosong.
     history: brain.history,
     guessEmotion,

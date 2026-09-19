@@ -4391,9 +4391,9 @@
       };
       const fmtMs = (ms) => {
         ms = Math.max(0, Math.round(ms));
-        if (ms < 1000) return "0 detik";
+        if (ms < 1000) return "0 " + __t("live.sec");
         const s = Math.round(ms / 1000);
-        if (s < 60) return s + " detik";
+        if (s < 60) return s + " " + __t("live.sec");
         const m = Math.floor(s / 60),
           r = s % 60;
         if (m < 60) return r ? m + " " + __t("live.min") + " " + r + " " + __t("live.sec") : m + " " + __t("live.min");
@@ -4502,10 +4502,9 @@
           ].forEach(([, x]) => x && x.classList.remove("active"));
           b.classList.add("active");
           if (els.profilStatus)
-            els.profilStatus.textContent =
-              'Profil "' +
-              (k === "hidup" ? "Hidup" : k === "sedang" ? "Sedang" : "Tenang") +
-              '" dipakai — tekan Simpan.';
+            els.profilStatus.textContent = __t("beh.profil.applied", {
+              name: __t("beh.profil." + k),
+            });
         });
       });
 

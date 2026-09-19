@@ -141,6 +141,37 @@ export function guessEmotion(text: string): string {
 /**
  * Smart text segmentation fallback (when LLM returns plain text without directives).
  */
+/**
+ * Turunkan SATU set aksi visual (emosi + gesture) dari sebuah balasan pendek —
+ * dipakai jalur yang audionya diputar di luar (VTuber: pipeline speech policy
+ * app utama + feed terpisah), sehingga karakter tetap berekspresi & bergerak
+ * tanpa memutar ulang teks lewat playSegments. Balasan VTuber umumnya 1–2
+ * kalimat, jadi cukup satu set aksi (tanpa sequencing per-segmen).
+ *
+ * - Directive eksplisit dari LLM ([EMOTION]/[MOTION]/…) dihormati: gabung
+ *   semua segmen jadi satu set (scalar terakhir menang).
+ * - Teks polos → emosi + gesture generik model-agnostik (guessEmotion +
+ *   EMOTION_GESTURE_FALLBACK) — jalur "worst case" yang sama dengan companion.
+ */
+export function deriveReplyActions(text: string): ParsedActions {
+  const raw = String(text || "").trim();
+  if (!raw) return {};
+  if (hasDirectives(raw)) {
+    const merged: ParsedActions = {};
+    for (const seg of parseSegments(raw)) Object.assign(merged, seg.actions);
+    return merged;
+  }
+  const emo = guessEmotion(raw);
+  return {
+    emotion: emo,
+    gesture: EMOTION_GESTURE_FALLBACK[emo] || "nod",
+    intensity: emo === "normal" ? 0.5 : 0.85,
+  };
+}
+
+/**
+ * Smart text segmentation fallback (when LLM returns plain text without directives).
+ */
 export function segmentTextFallback(text: string): ParsedSegment[] {
   const clauses = text.split(/(?<=[.!?~…\n]+)\s+|(?<=,\s+)(?=[A-Z0-9\u4e00-\u9fff])/g).filter((c) => c.trim().length > 0);
   if (!clauses.length) clauses.push(text);

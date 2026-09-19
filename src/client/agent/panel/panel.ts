@@ -69,6 +69,7 @@ export function startAssistantPanel(): () => void {
     onApprove: approve,
     onTabChange: drawPages,
     toolLevel: (name) => toolLevels.get(name) ?? null,
+    onCancelTask: (taskId) => cancelTaskById(taskId),
   });
   const actor = makeActor({
     L: window.__live2dAgent,
@@ -323,6 +324,21 @@ export function startAssistantPanel(): () => void {
     refreshStatus();
   }
 
+  /** Batalkan task tertentu dari antrean/aktif (§11 cancel per-task). Task
+   *  parked dikeluarkan spesifik tanpa mengganggu slot aktif; server yang
+   *  menargetkan (active|paused|parked). */
+  async function cancelTaskById(taskId: string): Promise<void> {
+    if (!taskId) return;
+    let accepted = false;
+    try {
+      const d = await postJson(API + "/api/assistant/cancel", { taskId });
+      accepted = !!d.accepted;
+    } catch {}
+    transcript.status(accepted ? t("as.queue.cancelSent") : t("as.cancelNone"), "warn");
+    render();
+    refreshStatus();
+  }
+
   async function resetAgent(): Promise<void> {
     try { await postJson(API + "/api/assistant/reset", {}); } catch {}
     transcript = new Transcript();
@@ -361,6 +377,8 @@ export function startAssistantPanel(): () => void {
     // Kartu TASK (pusat perhatian): tugas berjalan + checklist plan live.
     currentPlan = st.plan || [];
     view.renderTask(transcript.currentTask(), currentPlan);
+    // Antrean task (§9): daftar parked + tombol batal per-task (§11).
+    view.renderQueue(st.parkedTasks || []);
     // Metadata level tool (badge auto/izin) — refresh map bila dikirim.
     if (Array.isArray(st.tools) && st.tools.length) {
       toolLevels.clear();

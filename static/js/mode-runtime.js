@@ -65,8 +65,12 @@
     destroyFn = null;
     try { window.__live2dAgent && window.__live2dAgent.stopSpeaking && window.__live2dAgent.stopSpeaking(); } catch (e) {}
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-    // 2) mode aktif untuk PANEL; server hanya membongkar runtime vtuber
-    try { await post("/api/mode", { mode }); } catch (e) { console.warn("[mode] server switch:", e.message); }
+    // 2) mode aktif untuk PANEL; server hanya membongkar runtime vtuber.
+    //    Kosakata server tidak mengenal "chat" — panel chat = "stage" di API.
+    //    Tanpa pemetaan ini POST-nya 400 dan `active` di server nyangkut di
+    //    mode lama (invarian MODES.md: /api/mode satu-satunya pintu).
+    const serverMode = mode === "chat" ? "stage" : mode;
+    try { await post("/api/mode", { mode: serverMode }); } catch (e) { console.warn("[mode] server switch:", e.message); }
     active = mode;
     setPanel(mode);
     // 3) nyalakan runtime client baru
@@ -112,8 +116,13 @@
     }
 
     // Balasan server dibicarakan lewat pipeline speech app utama
-    // (__debugSpeak → policy speech kelas "vtuber", Fase 2).
+    // (__debugSpeak → policy speech kelas "vtuber", Fase 2). Ekspresi + gerak
+    // ditambahkan lewat brain (expressReply, visual-saja) sehingga karakter
+    // berreaksi saat membalas donasi/chat — audio tetap satu pipeline.
     function speak(text) {
+      try {
+        if (window.__agent && window.__agent.expressReply) window.__agent.expressReply(text);
+      } catch (e) {}
       try {
         if (window.__debugSpeak) window.__debugSpeak(text);
         else if (window.__addChat) window.__addChat("agent", text);
@@ -198,15 +207,26 @@
       }).catch(() => {});
     };
     // Operator (§7): instruksi eksplisit streamer → antrean operator server.
+    // Gagal TIDAK boleh senyap — tanpa umpan balik tombol terasa mati
+    // (runtime belum Start adalah kasus paling umum).
     const onOperatorSend = async () => {
       const input = $("#vt-operator");
       if (!input) return;
       const text = (input.value || "").trim();
       if (!text) return;
+      const status = $("#vt-op-status");
+      const say = (key) => { if (status) status.textContent = __t(key); };
       try {
         await post("/api/vtuber/operator", { text });
         input.value = "";
-      } catch (e) { /* runtime belum jalan — biarkan teks di input */ }
+        say("vt.operatorSent");
+      } catch (e) {
+        say("vt.operatorNotRunning");
+      }
+      if (status) {
+        clearTimeout(onOperatorSend._t);
+        onOperatorSend._t = setTimeout(() => { status.textContent = ""; }, 4000);
+      }
     };
     const onOperatorKey = (e) => { if (e.key === "Enter") onOperatorSend(); };
     const onProviderChange = () => {
