@@ -563,11 +563,23 @@
       });
       // Lipsync: sumber nilai tetap di driver (analisis audio TTS lokal /
       // pola sintetis); framework menulis param mulut (role-resolved,
-      // skala range aktual).
+      // skala range aktual). Amplitudo audio NYATA menang selama elemen
+      // audio benar-benar diputar — timer estimasi talking boleh telat
+      // (audio lebih lambat dari teks×75ms) dan tidak boleh membekukan
+      // mulut di tengah suara.
       window.__live2dView.setLipsyncProvider(function () {
-        if (!state.talking || state.frozen) return null;
+        if (state.frozen) return null;
         const lip = state.audioLipSync;
-        if (lip && lip.active) return lip.sample();
+        const audio = state.ttsAudio;
+        if (
+          lip &&
+          lip.active &&
+          audio &&
+          !audio.paused &&
+          !audio.ended
+        )
+          return lip.sample();
+        if (!state.talking) return null;
         const tNow = performance.now() / 1000;
         const base = 0.35 + 0.4 * Math.abs(Math.sin(tNow * 9));
         const jitter = Math.random() < 0.25 ? 0.25 : 0;
@@ -842,8 +854,21 @@
         const e = 0.12;
         const eyeLO = roleId("eyeLOpen"),
           eyeRO = roleId("eyeROpen");
+        // Selama bicara, sumbu BUKA mulut milik lipsync (framework menulis
+        // dari provider). Template emosi yang membawa mouthOpenY kalau ikut
+        // ditulis di sini menimpanya tiap frame (SET setelah framework) →
+        // mulut terpaku diam di tengah suara. Bentuk (mouthForm) tetap milik
+        // emosi — senyum/sedih tetap terlihat sambil berbicara.
+        const mOpenY = roleId("mouthOpenY");
+        const mOpenX = roleId("mouthOpenX");
+        const lipsyncOwned =
+          state.talking ||
+          (!!state.ttsAudio &&
+            !state.ttsAudio.paused &&
+            !state.ttsAudio.ended);
         for (const id in state.emoTarget) {
           if (id === eyeLO || id === eyeRO) continue;
+          if (lipsyncOwned && (id === mOpenY || id === mOpenX)) continue;
           const tgt = state.emoTarget[id];
           const cur =
             state.emoCur[id] === undefined ? readParam(id) : state.emoCur[id];
@@ -2208,6 +2233,18 @@
       u.volume = 1;
       u.onend = markDone;
       u.onerror = markDone;
+      // SpeechSynthesis tidak bisa dianalisis Web Audio → satu-satunya sumber
+      // umur mulut adalah state.talking. Re-arm saat suara BENAR-BENAR mulai
+      // dan tiap batas kata (progress nyata) — estimasi panjang teks saja
+      // kerap lebih pendek dari suara yang lambat.
+      u.onstart = () => {
+        if (state.extendMouth)
+          state.extendMouth(Math.max(1400, text.length * 75) + 2500);
+      };
+      u.onboundary = () => {
+        if (state.extendMouth)
+          state.extendMouth(Math.max(1400, text.length * 75) + 2500);
+      };
       const pickVoice = () => {
         const vs = speechSynthesis.getVoices() || [];
 
@@ -2395,6 +2432,9 @@
         const blob = await fetchTTSAudio(text, ttsLang, sig);
         if (!sess.isActive()) return; // digulingkan saat menunggu sintesis
         reveal && reveal();
+        // Audio bisa lebih lambat dari estimasi — jendela mulut ikut durasi
+        // segmen + margin; audio nyata tetap yang menang di provider.
+        state.extendMouth(text.length * 75 + 4000);
         sess.fallbackTimer = setTimeout(markDone, 45000);
         playTTSAudio(
           blob,
@@ -2480,6 +2520,9 @@
       prefetch(i + 2);
       const segText = segments[i];
       reveal && reveal();
+      // Jendela mulut di-re-arm per segmen (estimasi + margin latensi antar
+      // segmen) — tanpa ini budget timer pertama habis di tengah segmen akhir.
+      state.extendMouth(segText.length * 75 + 6000);
       // Bubble menampilkan kalimat yang sedang dibacakan.
       showBubble(segText, 1e9);
       await new Promise((resolve) => {
@@ -2605,28 +2648,38 @@
       if (onDone) onDone();
     };
 
+    // Mulut: state.talking yang menggerakkan provider lipsync dijaga timer
+    // yang di-RE-ARM selama audio nyata masih jalan (per segmen remote /
+    // onstart-onboundary TTS browser). Tanpa re-arm, estimasi teks×75ms
+    // memotong talking lebih awal saat audio lebih lambat → mulut beku
+    // di tengah suara (laporan user: "harusnya masih berbicara").
+    const closeMouth = () => {
+      state.talking = false;
+      const mId = roleId("mouthOpenY");
+      if (mId) {
+        delete state.overrides[mId];
+        pokeParam(
+          mId,
+          state.mouthRest != null
+            ? state.mouthRest
+            : roleDefault("mouthOpenY"),
+          1,
+        );
+      }
+    };
+    state.extendMouth = (ms) => {
+      if (state.mouthTimer) clearTimeout(state.mouthTimer);
+      state.mouthTimer = setTimeout(() => {
+        if (!isActive()) return; // timer claim lama: mulut/talking milik claim baru
+        closeMouth();
+      }, Math.max(800, ms));
+    };
     const reveal = () => {
       if (revealed) return;
       revealed = true;
       showBubble(text, 1e9);
       state.talking = true;
-      if (state.mouthTimer) clearTimeout(state.mouthTimer);
-      const dur = Math.max(1400, text.length * 75);
-      state.mouthTimer = setTimeout(() => {
-        if (!isActive()) return; // timer claim lama: mulut/talking milik claim baru
-        state.talking = false;
-        const mId = roleId("mouthOpenY");
-        if (mId) {
-          delete state.overrides[mId];
-          pokeParam(
-            mId,
-            state.mouthRest != null
-              ? state.mouthRest
-              : roleDefault("mouthOpenY"),
-            1,
-          );
-        }
-      }, dur);
+      state.extendMouth(Math.max(1400, text.length * 75));
     };
 
     // Sesi audio claim ini — satu objek supaya preempt bisa memutus

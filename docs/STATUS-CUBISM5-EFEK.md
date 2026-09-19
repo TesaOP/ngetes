@@ -64,6 +64,42 @@ sudah selaras dengan arsitektur ini.
    (user bilang hapus manual saat sudah stabil) + blocker Core di SHA lama
    GitHub (risiko sudah diterima user — jangan dibuka lagi).
 
+## UPDATE 2026-09-20 (50) — LIPSYNC KADANG BEKU DI TENGAH BICARA: 2 AKAR MASALAH DIPERBAIKI
+
+Laporan user: "kadang harusnya masih berbicara tapi mulutnya ga gerak, mungkin
+ketahan ekspresi". Dugaan user BENAR sebagian — ada dua mekanisme, dua-duanya
+diperbaiki di `app.js`:
+
+1. **Timer estimasi memotong `state.talking` lebih awal.** Gerbang semua
+   lipsync adalah `state.talking`, yang dimatikan timer estimasi
+   `panjangTeks × 75ms` tanpa mekanisme perpanjangan. Audio yang lebih lambat
+   dari estimasi (suara lambat, `ttsRate` < 1, jeda antar-segmen remote,
+   `hematRequest` bundel besar) → mulut beku di tengah suara. Fix:
+   - provider lipsync kini memprioritaskan **amplitudo audio nyata**
+     (AudioLipSync) selama elemen `<audio>` benar-benar diputar — tidak
+     lagi digantungkan pada `state.talking`;
+   - timer mulut kini punya `state.extendMouth(ms)` (re-arm) dan di-re-arm
+     per segmen remote (`durasi segmen + margin`) serta dari TTS browser
+     `u.onstart`/`u.onboundary` (progress nyata); `onend`→markDone tetap
+     penutup sebenarnya.
+   Verifikasi runtime (browser, TTS browser): teks 317 karakter (estimasi
+   lama 23,8 dtk) — jejak `ParamMouthOpenY` (150 ms/sample) bergerak terus
+   TANPA celah beku sampai 27,8 dtk (~4 dtk melewati batas lama), lalu menutup
+   bersih; screenshot mid-speech menunjukkan mulut terbuka.
+2. **Template emosi sintetis menahan `mouthOpenY`.** `EMOTION_ROLE_TEMPLATES`
+   ("senang" 0.35, "kaget" 0.8) masuk `state.emoTarget` yang ditulis-SET tiap
+   frame DI SETELAH framework lipsync (AppWriteUpdater urutan 900) → mulut
+   terpaku mendekati nilai emosi selama emosi aktif. Fix: lapisan emosi
+   melewatkan sumbu buka-mulut (`mouthOpenY`/`mouthOpenX`) selama bicara /
+   audio diputar — bentuk (mouthForm) tetap milik emosi, buka-tutup milik
+   lipsync. (Kasus ini jarang di model user karena preset sheet menang atas
+   sintetis, tapi tetap jebakan untuk model tanpa preset.)
+
+Catatan: server TTS user (127.0.0.1:7788) mati saat pengujian — jalur yang
+diverifikasi adalah TTS browser; jalur amplitudo-nyata (remote) dapat
+perbaikan yang sama di provider dan butuh verifikasi saat server 7788 hidup.
+Gate: tsc bersih, 524 unit + 416 guard 0 gagal.
+
 ## UPDATE 2026-09-20 (49) — AUDIT UI PAKAI BROWSER USE: 5 BUG DITEMUKAN & DIPERBAIKI (VERIFIKASI VISUAL)
 
 Sesi ini menjalankan audit UI menyeluruh lewat browser automation (klik satu per
