@@ -11,9 +11,14 @@ membongkar inti lama.
    **sebelum** mengaktifkan mode baru: vtuber → `vtuberStop()` (WS/interval server),
    assistant → `assistantStop()` (riwayat & approval dibuang), pet → `petClose()`
    (jendela overlay ditutup). Client melakukan hal yang sama di
-   `static/js/mode-runtime.js` (`destroyFn()` + `clearInterval(pollTimer)`).
+   `static/js/mode-runtime.js` (`destroyFn()` + `clearInterval(pollTimer)` +
+   `__live2dAgent.stopSpeaking()` — bicara aktif & antrean speech ikut mati,
+   lihat policy speech di `src/client/speech/speech-policy.ts`).
 3. **Mode non-aktif tidak diproses sama sekali** — tidak ada polling, tidak ada
-   interval, tidak ada feed yang berjalan di latar.
+   interval, tidak ada feed yang berjalan di latar. Termasuk otak proaktif:
+   event idle/away/return/mood dari companion ditekan saat mode aktif bukan
+   `stage` atau saat task Worker berjalan — gate `proactiveAllowed()` di
+   `reactEvent()` (brain.ts) membaca `/api/mode` SEBELUM memanggil LLM.
 4. Status gabungan selalu bisa dibaca: `GET /api/mode` →
    `{active, vtuber, assistant, pet}`.
 
@@ -109,16 +114,39 @@ menyembunyikannya saat idle. Akting ekspresi/pose tetap dari `actor.ts`.
 | `youtube` | API key + video ID yang sedang live | `videos.list(liveStreamingDetails)` → `activeLiveChatId` → poll `liveChatMessages.list` (part `snippet,authorDetails`), hormati `pollingIntervalMillis` (min 5 dtk); `superChatEvent`/`superStickerEvent` → **donasi** |
 
 Endpoint: `POST /api/vtuber/start|stop`, `GET /api/vtuber/events?since=<id>`
-(ring buffer 500 event), `POST /api/vtuber/mock-event` (simulasi dari UI).
+(ring buffer 500 event), `POST /api/vtuber/mock-event` (simulasi dari UI),
+`POST /api/vtuber/config` (persona/cooldown/flag respond live tanpa restart),
+`POST /api/vtuber/operator` (instruksi streamer → antrean operator §7).
 
-Client (`mode-runtime.js`): poll 2,5 dtk → render feed (maks 120 baris) →
-donasi memunculkan banner 6 dtk + prioritas ucapan terima kasih; chat dibalas
-AI via `/api/chat` dengan gaya dari input `#vt-persona` dan cooldown
-`#vt-cooldown`; balasan dilaankan lewat `window.__debugSpeak` (TTS pipeline).
+Behavior engine (`src/server/vtuber-scheduler.ts`, §7 ARSITEKTUR-TARGET):
+SATU scheduler di server — audience chat = suppression (dedup 30 dtk +
+cooldown `#vt-cooldown`), donasi = antrean FIFO-20 (penuh → item baru
+DITOLAK dengan feedback feed, tidak silent-evict), operator = antrean
+sendiri (masuk walau respond mati); satu active slot — donation selalu
+didahulukan dari operator, item aktif tidak dipreempt; LLM role "chat"
+server-side, slot ditahan selama estimasi bicara (`speech-timing`).
+Balasan masuk feed sebagai event `agent`. Dua klien hanya render+speech:
+app utama memutar balasan via `window.__debugSpeak` (kelas speech
+"vtuber") selama overlay OBS tidak on-air (heartbeat `/api/vtuber/overlay`
+→ `overlay:true`); `vtuber.html` (overlay, stack render baru Pixi 8 +
+Cubism 5) memutar sendiri versinya saat on-air.
 
 ## AI Assistant (`src/server/assistant.ts`)
 
-- Runtime: `{workDir, history (maks 60), approvals Map, busy}`.
+- Runtime: `{workDir, history (maks 60), approvals Map, activeTask, parkedTasks,
+  pendingReplacement, busy}`.
+- **Task identity (§9–12 ARSITEKTUR-TARGET)**: worker bukan sekadar `busy`
+  — tiap request = `taskId (t_n)`. Satu slot aktif (`activeTask`); task baru
+  saat slot dipegang **di-park** (antrean FIFO cap 20; penuh → item baru
+  ditolak eksplisit; prompt tidak masuk history sebelum task jalan). Pause
+  approval **tetap memegang slot** (status `awaiting_approval`, busy hidup) —
+  task baru di-park, resume melanjutkan task yang sama tanpa lewat gerbang.
+  `POST /api/assistant/cancel {taskId?}`: running → kooperatif, paused →
+  terminal langsung, parked → dikeluarkan spesifik. `POST
+  /api/assistant/modify {taskId, text}`: replacement mewarisi posisi
+  (aktif → cancel kooperatif + pendingReplacement; paused → langsung;
+  antrean → in-place). Slot kosong → drain otomatis (replacement dulu,
+  lalu antrean FIFO). Status mengekspos `activeTask`/`parkedTasks`.
 - Tools (registry di `src/server/agent/tools/index.ts`, **21 tool**; level = data,
   bukan if-else di loop): 12 tool coding (`list_dir`, `read_file`, `search_code`,
   `git_diff`, `write_file`, `edit_file`, `delete_file`, `run_command`,

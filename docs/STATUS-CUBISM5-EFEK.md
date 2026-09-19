@@ -42,7 +42,260 @@ LLM → Motion/Behavior Director → app.js komposisi jiwa (ADITIF)
    perilaku sticky-override kini diuji lewat verifikasi browser).
 
 Dokumentasi publik (README/AGENTS/MODES/TROUBLESHOOTING/MODEL-AGNOSTIC)
-sudah diselaraskan dengan arsitektur ini.
+sudah selaras dengan arsitektur ini.
+
+## UPDATE 2026-09-19 (47) — FASE 6 + REWORK ARSITEKTUR LENGKAP: WORKER TASK IDENTITY (COMMIT)
+
+§9–12 terimplementasi — **seluruh rework arsitektur behavior (Fase 2–6)
+selesai.**
+
+- **`state.ts`**: `WorkerTask {taskId, prompt, status, createdAt}` +
+  `activeTask`/`parkedTasks` (FIFO cap 20)/`pendingReplacement`/`nextTaskSeq`.
+- **`loop.ts`**: `AskResult.paused` — pause approval TIDAK melepas busy
+  (finally bersyarat); slot tetap milik task (§10).
+- **`assistant.ts`** (facade pemilik lifecycle): `assistantAsk` saat slot
+  sibuk → **PARK** (bukan ditolak) — prompt tidak menyentuh history sebelum
+  jalan (pencampuran dua task dalam satu history mati); penuh (20) → tolak
+  eksplisit. `runTask`/`finalizeTask`/`drainNext` — slot kosong → replacement
+  (§12) dulu, lalu antrean FIFO, otomatis. `assistantCancel(taskId?)` (§11):
+  running kooperatif, paused terminal langsung, parked dikeluarkan spesifik;
+  tanpa id = task aktif (kompat). `assistantModify` (§12, route baru):
+  replacement mewarisi posisi. `assistantResolveApproval` melanjutkan task
+  yang SAMA (tanpa gerbang park); approval yatim ditolak eksplisit. Reset
+  history saat busy kini ditolak; pindah sesi saat pause ikut ditolak (§14).
+- **Klien**: `done` SSE membawa `parked/paused/taskId/position` — panel
+  menampilkan status "diantrekan" (i18n `as.task.parked` id+en), CLI satu
+  baris info antrean; tombol cancel panel tetek task aktif (kini juga saat
+  menunggu izin). Route: cancel menerima `{taskId}`, baru `POST
+  /api/assistant/modify`.
+- Test: `test/worker-tasks.test.ts` (13 kasus: park+isolasi history, cap-20
+  tolak eksplisit, pause ownership, cancel per-task 3 kelas, modify 3 kelas
+  + replacement running, drain E2E mock berurutan, status). Test lama
+  (agent-cancel/sessions/panel/parity) hijau tanpa perubahan kontrak yang
+  tidak memang berubah.
+- Gate: tsc bersih, build OK, **515 unit (+14) + 416 guard, 0 fail**.
+- Runtime verify DIJALANKAN (instance terpisah 8312, panel Assistant + API,
+  LLM asli user yang ternyata jalan di sela 429): (a) task minta write_file
+  → loop pause + **slot tetap dipegang** (awaiting_approval, busy) §10;
+  (b) task kedua dikirim dari PANEL saat pause → **ter-park**, panel
+  menampilkan "Queued — another task is running (position 1)" §9;
+  (c) approve → t_1 lanjut → file tertulis + self-verify → **t_2 nyala
+  otomatis** dan terjawab benar (drain FIFO) — VERIFIKASI INI MENANGKAP BUG:
+  resume lupa reset status ke "running" sehingga slot nyangkut + antrean
+  tak di-drain; diperbaiki + test regresi (14 kasus); (d) cancel task
+  paused → `{target:"paused"}` → slot lepas seketika + "Dibatalkan oleh
+  user." §11.
+
+**INSIDEN DATA (jujur dicatat):** test worker-tasks/agent-cancel (dan lama:
+agent-undo via `agentRunApproved`→`pushMsg`) menulis history test ke
+`data/assistant-sessions.json` milik USER — sesi aktif user (33 pesan)
+tertimpa dan HILANG PERMANEN (percobaan pemulihan via memori server 8310
+gagal karena server itu menjalankan kode lama tanpa saveSession-dulu).
+Perbaikan: store sesi kini LAZY + test mengisolasi lewat
+`LIVE2D_TEST_SESSION_ROOT` (state.ts + assistant.ts + 3 file test) —
+hash file sesi user identik sebelum/sesudah `bun run test` (terverifikasi).
+Residu test di file sesi user sudah dibersihkan; user mendapat sesi fresh
+(workDir kini appRoot, bukan temp polusi lama). Pelajaran: jalur persist
+apa pun yang tersentuh test WAJIB diisolasi — bukan hanya config.json.
+
+**Penutup rework**: Fase 2 (speech policy) + 3 (companion concurrency) +
+4 (proactive gate) + 5 (VTuber behavior engine + overlay OBS) + 6 (worker
+task identity) — semua baris gap behavior `ARSITEKTUR-GAP.md` ✅. Sisa
+opsional: ekspresi/motion balasan VTuber, UI daftar antrean task, cancel
+per-task dari UI panel. REGRESI runtime 8310 milik user: server harus
+direstart untuk mendapat semua fase (kode klien sudah ter-build).
+
+## UPDATE 2026-09-19 (46) — FASE 5 REWORK ARSITEKTUR: VTUBER BEHAVIOR ENGINE + OVERLAY OBS (COMMIT)
+
+§7 terimplementasi + regresi overlay OBS diperbaiki. Keputusan arsitektur:
+behavior VTuber pindah dari dua klien ke **SATU scheduler di server** —
+race app-vs-overlay mati dari akarnya, antrean tahan reconnect.
+
+- **`src/server/vtuber-scheduler.ts`** (baru, deps di-inject): audience =
+  suppression (dedup user+teks 30 dtk + cooldown, tidak antre); donation =
+  FIFO cap 20, penuh → item BARU ditolak + feedback system feed (tidak
+  silent-evict); operator = kelas sendiri FIFO-20 (masuk walau respond
+  mati); satu active slot donation+operator, item aktif tidak dipreempt,
+  slot bebas → donation dulu (precedence §7); LLM role "chat" server-side;
+  slot ditahan estimasi bicara (`src/shared/speech-timing.ts` baru —
+  `estimateSpeechMs` pindah shared, brain re-export).
+- **`vtuber.ts`**: intake semua provider + mock-event → scheduler; cfg
+  {persona, cooldownMs, respondChat, respondDonation} default MATI (test
+  lama bebas jaringan); `vtuberSetConfig` live, `vtuberOperatorSay`
+  (echo + antrean), status + antrian via /api/mode. Route baru:
+  POST /api/vtuber/config, /api/vtuber/operator.
+- **Klien jadi render+speech**: mode-runtime vtuber dibersihkan
+  (maybeRespond/askLLM/persona-local/speakQueue/vtuberAgentSay dihapus);
+  start mengirim config behavior; perubahan form → POST config live;
+  input Operator baru di drawer (i18n vt.operatorPh/Send, id+en; key
+  vt.donatePrompt/chatPrompt/aiFail dihapus dari kedua kamus — prompt kini
+  protokol server berbahasa Indonesia).
+- **`vtuber.html` MIGRASI STACK BARU** (fitur OBS yang rusak sejak
+  pixi-live2d dihapus): pola pet.html (importmap pixi8.mjs +
+  live2d-view.mjs + __live2dView.loadModel); HUD sisa tombol Salin URL;
+  bibir browser-TTS via setLipsyncProvider (role-resolved) menggantikan
+  mouthPulse hardcode ParamMouthOpenY; overlay bicara event agent on-air.
+- Test: `test/vtuber-scheduler.test.ts` (12 kasus: suppression/dedup/
+  cooldown, FIFO cap + tolak eksplisit, precedence, no-preempt, respond
+  flags, LLM gagal, balasan kosong, stop, persona). Gate: tsc bersih,
+  build OK, **501 unit (+13) + 416 guard, 0 fail**; vtuber-inject lama
+  hijau tanpa perubahan.
+- Runtime verify (instance kedua port 8312, server 8310 user tak
+  disentuh): balasan agen ASLI masuk feed ("Wah, Ayu! Makasih banyak
+  donasinya 50 ribu…" — LLM user sukses di sela 429); precedence live —
+  3 balasan donasi diproses sebelum operator; error LLM (402/429) jadi
+  feedback system + slot tidak pernah nyangkut; overlay /vtuber.html
+  muat model di stack baru, HUD hidup, heartbeat → overlay:true (app
+  yield). Catatan: provider LLM aktif user sedang kena 402 (daily
+  check-in) / 429 rate-limit — itu state akun mereka, bukan regresi.
+
+## UPDATE 2026-09-19 (45) — FASE 4 REWORK ARSITEKTUR: PROACTIVE POLICY GATE (COMMIT)
+
+§17–18 terimplementasi — semua di `brain.ts`, tanpa sentuhan app.js/server:
+
+- **Gate `proactiveAllowed()` di `reactEvent()`** (satu muara SEMUA event
+  proaktif: idle/user_left/user_returned/mood:* — jalur away/return di
+  `setPresence` ikut tertangkap), SEBELUM LLM/director/speech/side-effect:
+  1. Toggle Mode Otak dibaca dari DOM (`#toggle-brain` — elemen yang sama
+     dengan jalur chat, tidak bisa desinkron; absen → tidak menggate).
+  2. Mode aktif ≠ stage (dari `/api/mode`) → ditekan: VTuber punya event
+     model sendiri, Pet punya idle-chatter sendiri — bicara proaktif app
+     utama akan bikin karakter dobel.
+  3. `assistant.busy` → ditekan (task Worker hidup di server walau panel
+     ditutup).
+  4. Fetch gagal → **fail-open** + warning.
+- Slot (`gen`/`busy`) diklaim SEBELUM await gate → think yang datang saat
+  gate menunggu tetap menang via gen-guard Fase 3 (tanpa race baru);
+  `setThinking` dipindah setelah gate lolos (indikator tidak berkedip
+  untuk event yang ditolak).
+- **Kelas speech `companion_proactive`** (tier 1): `playSegments(segments,
+  cls)` — event proaktif kini tidak bisa memotong bicara user/narasi
+  worker/VTuber (matriks policy Fase 2). `think` tetap `companion`.
+- `expressEventEmotion` (reaksi visual) + `setUserMood` (tracking mood)
+- sengaja TIDAK digate — hanya reaksi proaktif (LLM+speech) yang berhenti.
+- MODES.md aturan 3 diperluas: otak proaktif ikut "tidak diproses" saat
+  mode non-aktif (baca `/api/mode`), bukan hanya runtime panel.
+- Test: +6 kasus di `companion-concurrency.test.ts` (vtuber ditekan,
+  worker busy ditekan, brain off ditekan, lolos+kelas proactive, fail-open,
+  think menggulingkan gate). Gate: tsc bersih, build OK,
+  **488 unit (+6) + 416 guard, 0 fail**.
+- Runtime verify DIJALANKAN (browser, shim fetch/DOM — tanpa ubah state
+  server, tanpa biaya LLM; `quietMs` dipendekkan supaya event sampai ke
+  gate): (a) mode vtuber → "proactive idle ditekan: mode aktif vtuber",
+  0 fetch LLM; (b) stage + worker busy → ditekan; (c) semua lolos →
+  bicara jalan dengan holder speech `companion_proactive`; (d) toggle
+  brain off → "ditekan: mode otak mati", tanpa fetch baru.
+
+## UPDATE 2026-09-19 (44) — FASE 3 REWORK ARSITEKTUR: COMPANION CONCURRENCY (COMMIT)
+
+§6 MERGE/PREEMPT + §32–34 stale/epoch terimplementasi — semua di
+`src/client/agent/brain.ts`, **app.js tidak disentuh**:
+
+- **MERGE (§6)**: pesan baru saat masih MIKIR tidak diabaikan lagi (bug
+  lama: `if (this.busy) return` membuang pesan tanpa jejak) — request lama
+  di-abort (`AbortController`), kedua teks sudah ada di history, satu
+  fetch baru menjawab keduanya (server `/api/chat` stateless). Input user
+  otomatis menggulingkan `reactEvent` yang sedang mikir (§18 precedence).
+- **Generasi (§33)**: setiap think/reactEvent = `++gen`; reply telat
+  dibuang SEBELUM memutar segmen (cek gen setelah profile-load, setelah
+  fetch+json, dan setelah director pass); `finally` hanya generasi
+  TERBARU yang boleh me-reset busy/thinking — abort karena merge senyap,
+  bukan pesan error.
+- **busy sinkron** sebelum await pertama → race double-entry (dulu diset
+  setelah `await loadProfile()`) mati.
+- **Timeout (§32)**: `REQUEST_TIMEOUT_MS` 90 dtk (statis, bisa dipendekkan
+  test) lewat abort yang sama — request menggantung kini jatuh ke fallback
+  "Maaf…" dan busy lepas, bukan membekukan brain.
+- **Epoch model (§34)**: `invalidateCapabilityProfile()` menaikkan
+  `modelEpoch`; `loadProfile` membuang profil model lama yang selesai
+  setelah ganti model (profil model A tidak lagi menetap untuk model B).
+- `_reactiveState()` kini membawa `busy` + `gen` (hook QA/verifikasi).
+- **PREEMPT saat speaking**: tanpa kode baru — speech policy Fase 2 sudah
+  memotong chain (`onPreempted` → unlockAI sekali-saja).
+- Test: `test/companion-concurrency.test.ts` (6 kasus: merge+stale,
+  double-entry, precedence proactive, timeout, epoch, selesai alami)
+  dengan harness mock window/document/fetch (dipulihkan afterAll).
+- Gate: tsc bersih, build OK, **482 unit (+6) + 416 guard, 0 fail**.
+- Runtime verify DIJALANKAN (browser, halaman dengan bundle baru; /api/chat
+  di-shim 1,5 dtk supaya jendela merge deterministik — tanpa biaya LLM):
+  (a) think(A) saat mikir → think(B) → log "merge: pesan baru saat masih
+  mikir", TEPAT 2 fetch (fetch kedua memuat A+B berurutan), SATU balasan
+  diputar, unlock sekali, tanpa fallback error, gen=2, busy lepas — reply
+  telat fetch#1 dibuang senyap (§33 live); (b) think(C) saat C BICARA →
+  think(D) → log "chain preempted by speech policy, AI lock released",
+  tidak ada merge baru (bicara = preempt, bukan merge), gen=4 sesuai
+  hitungan, bubble menampilkan chain baru.
+
+## UPDATE 2026-09-19 (43) — FASE 2 REWORK ARSITEKTUR: SPEECH BOUNDARY (COMMIT)
+
+Rework arsitektur behavior dimulai (urutan fase di
+`docs/ARSITEKTUR-GAP.md`, target di `docs/ARSITEKTUR-TARGET.md`; keputusan
+user: rework dulu, regresi migrasi ditangani di fase pemiliknya).
+
+**Speech boundary §15–16 terimplementasi** — speech jadi resource dengan
+kepemilikan, bukan last-wins:
+
+- **`src/client/speech/speech-policy.ts`** (baru, murni tanpa DOM): 6 kelas
+  produser bertier (companion/direct t2 user-driven; vtuber/worker_narration/
+  companion_proactive t1; worker_actor t0 dekoratif), matriks
+  ALLOW/PREEMPT/QUEUE/SUPPRESS, antrean FIFO cap 4 (overflow buang item
+  baru), `stopAll` (CANCEL), claim dengan `onPreempted` hook. Serialisasi
+  worker dua arah menang atas tier (§16-3). Request sinkron dari dalam
+  cleanup preempt masuk antrean (flag transisi). Terpasang sebagai
+  `window.__speech` via bundle-entry; 19 unit test `test/speech-policy.test.ts`.
+- **app.js**: `speak(text,onDone,opts)` → policy → `runSpeech(job,claim)`
+  executor. Claim-aware `markDone` (claim mati = no-op state global — bug
+  "markDone lama menginjak speak baru" mati), cleanup preempt per-sesi
+  (stop audio, revoke blob URL — bocor lama mati, resolve loop segmen,
+  abort fetch TTS in-flight, settle visual). API baru
+  `__live2dAgent.stopSpeaking()` dipanggil teardown pindah mode
+  (`mode-runtime.js`) + ganti model (`loadModel`). `__debugSpeak` default
+  kelas "vtuber"; echo brain-off = "direct". Degrade legacy penuh tanpa
+  bundle.
+- **Produser**: brain `playSegments` preempt-flag + unlock sekali-saja via
+  `onPreempted` (bug aiLock nyangkut mati; dipotong ≠ completed — §6);
+  narasi worker = `worker_narration`, quip/filler actor = `worker_actor`
+  (panel `speakAsCharacter(text,cls)`).
+- **Docs ikut**: MODES.md (stopSpeaking di teardown), MOTION-SYSTEM-SPEC
+  (unlock-once lockAI), ARSITEKTUR-GAP (baris policy ✅ + keputusan default).
+- Gate: tsc bersih, build OK, **476 unit (+19 baru) + 416 guard, 0 fail**.
+- Runtime verify DIJALANKAN (browser, dev server user jalan, TTS jalur
+  browser): (a) ALLOW + selesai alami → onDone terpanggil + slot lepas;
+  (b) preempt companion-vs-companion saat bicara → `onPreempted` jalan,
+  onDone TIDAK, holder pindah claim baru, bubble ikut, tanpa segmen zombi;
+  (c) worker narration/actor saat companion bicara → SUPPRESS (holder
+  utuh, log keputusan); worker vs worker → QUEUE lalu drain FIFO setelah
+  narasi selesai (quip berakhir `done`, bukan preempted);
+  (d) `stopSpeaking()` saat bicara → holder null, claim dibatalkan,
+  bubble tersembunyi. Console bersih — hanya log keputusan policy.
+  Catatan: jalur brain→LLM→chain tidak diuji ulang di sini (mekanisme
+  preempt di boundary sama-sama terverifikasi; E2E chat sudah entri 41).
+
+## UPDATE 2026-09-19 (42) — AUDIT PURGE CORE: LUBANG BARU DI BRANCH `tes` + KEPUTUSAN USER (TANPA KODE)
+
+Audit pasca-purge (read-only) menemukan celah yang tidak tercatat entri
+sebelumnya:
+
+- **Branch `tes` TIDAK ikut ditulis ulang filter-branch** (refs/original
+  hanya menyimpan 3 branch: master, migration, feat/cubism-official-
+  renderer) — masih memuat core di path lama dan bisa diunduh publik:
+  `raw.githubusercontent.com/…/live2d-agent/tes/js/live2dcubismcore.min.js`
+  → HTTP 200 (diuji 2026-09-19). Bukan SHA obscure: branch tampil di
+  daftar branch repo publik.
+- SHA pra-rewrite master `090ba3f3…` juga masih menyajikan core di path
+  `static/js/…` → HTTP 200 — objek unreachable yang belum di-GC GitHub.
+- Yang sudah bersih: tree master/migration/feat-cubism-official-renderer
+  = 0 file core; tidak ada tag lokal/remote; repo publik (`private: false`).
+
+**Keputusan user (final — jangan dibuka lagi tanpa perintah user):**
+
+1. **Risiko diterima** — tidak ada aksi purge lanjutan (hapus repo, tiket
+   support, dsb.) untuk akses SHA-lama maupun branch `tes`.
+2. Branch usang `tes` & `feat/cubism-official-renderer` **akan dihapus
+   manual oleh user setelah projek stabil** — agent tidak menyentuh.
+
+Tanpa perubahan kode; gate tidak dijalankan ulang. refs/original tetap
+dipertahankan lokal sebagai arsip riwayat pra-rewrite.
 
 ## UPDATE 2026-09-19 (41) — MATRIKS VERIFIKASI SEMUA MODE DI STACK BARU (COMMIT)
 

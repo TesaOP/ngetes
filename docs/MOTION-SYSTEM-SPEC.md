@@ -219,7 +219,9 @@ runtime = executor deterministik.**
 
 Micro-gesture/idle tetap ada, sebagai layer motion prioritas TERENDAH. Idle
 otomatis mundur saat motion prioritas lebih tinggi memegang parameter
-relevan (`lockAI()` membekukan fidget & interaksi selama playback segmen).
+relevan (`lockAI()` membekukan fidget & interaksi selama playback segmen;
+unlock kini terjadi SEKALI di akhir chain — selesai alami atau chain
+digulingkan policy speech preempt, `brain.playSegments` onPreempted).
 
 # 23. Model Capability Awareness
 
