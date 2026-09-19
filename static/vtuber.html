@@ -179,7 +179,8 @@
   const VOICE = { lang: "id-ID", rate: 1, pitch: 1.15, voiceName: "" };
   async function loadVoiceCfg(modelPath) {
     try {
-      const key = String(modelPath).replace(/[^A-Za-z0-9_\u4e00-\u9fff]/g, "_");
+      // Identik dengan sanitizeKey server: huruf/angka semua aksara dipertahankan.
+      const key = String(modelPath).replace(/[^\p{L}\p{N}_]/gu, "_");
       const r = await fetch(API + "/api/sheet?name=" + encodeURIComponent(key));
       if (r.ok) {
         const sheet = await r.json();

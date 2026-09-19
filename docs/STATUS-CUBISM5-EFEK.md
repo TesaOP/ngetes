@@ -50,9 +50,11 @@ sudah selaras dengan arsitektur ini.
    Studio UI visual penuh (pipeline dasar teruji); uji rasa jangka panjang
    VTuber/chat/TTS. User: "memang ada yang salah di beberapa hal, belum
    diuji langsung" — temukan lewat pemakaian nyata, jangan ditebak.
-2. **Sisa opsional rework** (`ARSITEKTUR-GAP.md` bawah): ekspresi/motion
-   balasan VTuber (§7 speech-only), UI daftar antrean task, cancel per-task
-   dari panel.
+2. ~~**Sisa opsional rework**: UI daftar antrean task, cancel per-task dari
+   panel, ekspresi/motion balasan VTuber~~ **✅ entri (48) 2026-09-19** —
+   ketiganya diimplementasi + gate hijau. SISA: ekspresi/motion di overlay
+   OBS (`vtuber.html`) masih no-op (brain `l2d()` tak ada di stack overlay);
+   verifikasi runtime visual (model+TTS+OBS on-air) belum dijalankan.
 3. **Server dev user (8310) belum di-restart** — semua perilaku baru sisi
    server (scheduler VTuber, task identity, proactive gate, merge) baru
    aktif setelah restart. Branch `migration/pixi8-cubism` sudah di-commit
@@ -61,6 +63,49 @@ sudah selaras dengan arsitektur ini.
 4. Keputusan terbuka lama: branch usang `tes`/`feat/cubism-official-renderer`
    (user bilang hapus manual saat sudah stabil) + blocker Core di SHA lama
    GitHub (risiko sudah diterima user — jangan dibuka lagi).
+
+## UPDATE 2026-09-19 (48) — SISA OPSIONAL REWORK: UI ANTREAN TASK + CANCEL PER-TASK + EKSPRESI VTUBER
+
+Tiga item opsional terakhir `ARSITEKTUR-GAP.md` (§7 ekspresi/motion balasan,
+UI daftar antrean task, cancel per-task) diselesaikan. Semua sisi server sudah
+ada sejak Fase 5/6 — kerja sesi ini menyambungkan klien.
+
+- **UI daftar antrean task (§9)** — `assistantStatus` sudah mengekspos
+  `activeTask`/`parkedTasks` (Fase 6); klien belum membacanya. Ditambah:
+  `AssistantStatus` (`panel/api.ts`) kini punya field itu; `view.renderQueue`
+  (`panel/view.ts`) — kotak `.as-queue` baru (di bawah TASK) menampilkan
+  parked FIFO + posisi; `refreshStatus` (`panel/panel.ts`) memanggilnya tiap
+  poll. Kotak hilang saat antrean kosong.
+- **Cancel per-task (§11)** — server `assistantCancel(taskId)` + route
+  `/api/assistant/cancel` (body `{taskId}`) sudah siap (Fase 6). Ditambah:
+  tombol ✕ per-baris antrean → `view` deps `onCancelTask` →
+  `panel.cancelTaskById(taskId)` POST `{taskId}` → target `parked` dikeluarkan
+  spesifik tanpa mengganggu slot aktif. i18n baru (id+en): `as.queue`,
+  `as.queue.count`, `as.queue.cancel`, `as.queue.cancelSent`.
+- **Ekspresi/motion balasan VTuber (§7)** — balasan VTuber tadinya teks-murni
+  (`__debugSpeak` = audio saja). Ditambah PURE `deriveReplyActions(text)`
+  (`directive-parser.ts`): teks polos → emosi+gesture generik model-agnostik
+  (`guessEmotion` + `EMOTION_GESTURE_FALLBACK`); directive eksplisit LLM
+  dihormati (gabung jadi satu set). Brain dapat method publik `expressReply`
+  (visual-SAJA: reuse `applyActions` untuk resolusi ekspresi model-agnostik
+  "param/native/clip"; TIDAK bicara/tulis chat/sentuh aiLock → tak bentrok
+  jalur audio). `mode-runtime.js` vtuber `speak()` memanggil
+  `window.__agent.expressReply(text)` sebelum `__debugSpeak`. Scheduler server
+  TIDAK diubah (prompt tetap; `deriveReplyActions` yang menebak) — perubahan
+  murni klien-aditif, satu layer.
+- **CATATAN JUJUR — belum diverifikasi runtime**: efek visual VTuber
+  (model + TTS + gerak nyata) belum diuji live sesi ini. Overlay OBS
+  (`vtuber.html`) memuat bundle → `window.__agent` ada, TAPI `expressReply`
+  jadi **no-op** di sana karena `l2d()` = `window.__live2dAgent` (driver
+  app.js) tidak dimuat di stack overlay minimal — jadi saat OBS on-air (app
+  utama tidak bicara), ekspresi belum tampil. Wiring overlay ke API
+  `window.__live2dView` (ekspresi/motion stack baru) + verifikasi OBS =
+  follow-up. UI antrean juga baru diuji lewat tsc/build/unit, belum visual.
+- Gate: **tsc bersih, build OK, +5 unit test (`test/reply-actions.test.ts`)**.
+  `bun run test` = 518 pass / 2 fail; **2 fail PRA-EKSIS** (server-integration:
+  motion-taxonomy standalone + static CJK fallback — butuh model di `data/`
+  yang di-gitignore; diverifikasi gagal juga di baseline tanpa perubahan
+  sesi ini). i18n parity + panel + worker-tasks + directive-parser hijau.
 
 ## UPDATE 2026-09-19 (47) — FASE 6 + REWORK ARSITEKTUR LENGKAP: WORKER TASK IDENTITY (COMMIT)
 

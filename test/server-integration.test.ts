@@ -246,3 +246,37 @@ describe("static serving security", () => {
     expect(serveStatic("/js/tidak-ada-xyz.js")).toBeNull();
   });
 });
+
+// ── Regresi nama model non-ASCII (kanji/kana) ─────────────────────
+// Bug nyata: import-zip dulu ASCII-only — nama 神宫白子模型 menjadi "_"
+// dan model user ter-import ke data/model/_/. Kunci sheet juga membuang
+// kana. Keduanya kini mempertahankan huruf/angka semua aksara (\p{L}\p{N}).
+describe("sanitasi nama model multi-aksara", () => {
+  it("import-zip: nama kanji/kana dipertahankan utuh", async () => {
+    const { sanitizeModelFolderName } = await import("../src/server/index");
+    expect(sanitizeModelFolderName("神宫白子模型")).toBe("神宫白子模型");
+    expect(sanitizeModelFolderName("レン・ハル")).toBe("レン_ハル"); // ・ = tanda baca → _
+    expect(sanitizeModelFolderName("  神宮寺レン  ")).toBe("神宮寺レン");
+  });
+
+  it("import-zip: simbol/path aman & nama kosong dapat fallback", async () => {
+    const { sanitizeModelFolderName } = await import("../src/server/index");
+    expect(sanitizeModelFolderName("my model/../evil")).toBe("my_model_evil");
+    expect(sanitizeModelFolderName("   ")).toMatch(/^model_/);
+    expect(sanitizeModelFolderName("")).toMatch(/^model_/);
+  });
+
+  it("kunci sheet: ASCII/kanji identik dengan perilaku lama (sheet di disk tetap sah)", async () => {
+    const { sanitizeKey } = await import("../src/server/index");
+    expect(sanitizeKey("data/model/ren_official_cubism/ren.model3.json"))
+      .toBe("data_model_ren_official_cubism_ren_model3_json");
+    expect(sanitizeKey("data/model/_/神宫白子模型/x.model3.json"))
+      .toBe("data_model___神宫白子模型_x_model3_json"); // kanji selamat (dulu juga)
+  });
+
+  it("kunci sheet: KANA kini selamat (dulu dibuang jadi _)", async () => {
+    const { sanitizeKey } = await import("../src/server/index");
+    expect(sanitizeKey("data/model/レン/ren.model3.json"))
+      .toBe("data_model_レン_ren_model3_json"); // dulu: data_model___ren_model3_json
+  });
+});

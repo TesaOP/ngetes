@@ -201,7 +201,19 @@ function discoverExpressions(name:string){
   found.sort((a,b)=>a.Name.localeCompare(b.Name));
   return { model3: relative(DATA,model3).split(sep).join("/"), declaredCount:declaredSet.size, expressions:found, orphanCount:found.filter(f=>!f.declared).length };
 }
-function sanitizeKey(name:string){ return (name||"default").replace(/[^A-Za-z0-9_\u4e00-\u9fff]/g,"_"); }
+// Kunci sheet & nama folder model: pertahankan huruf/angka SEMUA aksara
+// (\p{L}\p{N} — kanji, kana, romawi, dst.). Dulu hanya ASCII+kanji: kana
+// (レン, ー) dan nama import Jepang dibuang jadi "_" — model user pernah
+// ter-import ke data/model/_/ (nama 神宫白子模型 tinggal "_").
+function sanitizeKey(name:string){ return (name||"default").replace(/[^\p{L}\p{N}_]/gu,"_"); }
+export { sanitizeKey };
+
+/** Nama folder/berkas yang aman: huruf/angka semua aksara + `_` `-`;
+ *  run karakter asing runtuh jadi satu `_`; kosong → fallback bermakna.
+ *  Diuji test/server-integration.test.ts (regresi nama Jepang). */
+export function sanitizeModelFolderName(name:string):string{
+  return (name||"").trim().replace(/[^\p{L}\p{N}_\-]+/gu,"_")||("model_"+Date.now().toString(36));
+}
 function sheetPathFor(name:string){ return join(SHEETS_DIR, sanitizeKey(name)+".json"); }
 
 // ── MOTION helpers ──────────────────────────────────────────────
@@ -1526,7 +1538,7 @@ function handleModelExpressions(req:Request):Response{
 function handleAdoptionGet(req:Request):Response{
   try{
     const name=new URL(req.url).searchParams.get("name")||""; const info=discoverExpressions(name);
-    const adoptFile=join(SHEETS_DIR,"exp3-adoption_"+String(name||"").replace(/[^A-Za-z0-9_\-]+/g,"_")+".json");
+    const adoptFile=join(SHEETS_DIR,"exp3-adoption_"+sanitizeModelFolderName(String(name||""))+".json");
     let disabled:string[]=[]; try{ const j=JSON.parse(readFileSync(adoptFile,"utf8")); if(Array.isArray(j.disabled)) disabled=j.disabled;}catch{}
     const disabledSet=new Set(disabled); const expressions=(info.expressions||[]).map((e:any)=>Object.assign({},e,{enabled:!disabledSet.has(e.Name)}));
     return json({model3:info.model3, expressions, disabled:Array.from(disabledSet)});
@@ -1535,7 +1547,7 @@ function handleAdoptionGet(req:Request):Response{
 async function handleAdoptionPost(req:Request):Promise<Response>{
   const body=await readBody(req); if(!body) return json({error:"body JSON rusak"},400);
   try{
-    const name=String(body.name||"").replace(/[^A-Za-z0-9_\-]+/g,"_"); if(!name) throw new Error("name kosong");
+    const name=sanitizeModelFolderName(String(body.name||"")); if(!name) throw new Error("name kosong");
     const disabled=Array.isArray(body.disabled)? body.disabled.filter((x:any)=>typeof x==="string"):[]; const adoptFile=join(SHEETS_DIR,"exp3-adoption_"+name+".json");
     await queueJsonWrite(adoptFile,{disabled}); return json({ok:true, disabled});
   }catch(e:any){ return json({error:e.message},500); }
@@ -1599,7 +1611,7 @@ async function handleImportZip(req:Request):Promise<Response>{
   const body=await readBody(req); if(!body) return json({error:"zip kosong"},400);
   try{
     const name=body.name; const base64=body.base64; if(!base64) throw new Error("zip kosong");
-    const clean=(name||"").trim().replace(/[^A-Za-z0-9_\-]+/g,"_")||("model_"+Date.now().toString(36));
+    const clean=sanitizeModelFolderName(name);
     const dest=join(MODEL_DIR,clean); mkdirSync(dest,{recursive:true});
     const zipPath=join(dest,"_upload.zip"); writeFileSync(zipPath, Buffer.from(base64,"base64"));
     try{ execSync(`unzip -o -q "${zipPath}" -d "${dest}"`,{stdio:"ignore"});}catch(e:any){ try{ execSync(`powershell -NoProfile -Command "Expand-Archive -Force '${zipPath.replace(/'/g,"''")}' '${dest.replace(/'/g,"''")}'"`,{stdio:"ignore"});}catch(e2:any){ throw new Error("gagal extract zip: "+(e2.message||e.message)); } }

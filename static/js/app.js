@@ -7286,7 +7286,9 @@
 
   function currentModelKey() {
     const p = state.modelPath || "default";
-    return p.replace(/[^A-Za-z0-9_\u4e00-\u9fff]/g, "_");
+    // \p{L}\p{N}: huruf/angka SEMUA aksara (kanji/kana/romawi) — harus IDENTIK
+    // dengan sanitizeKey server; dulu kana dibuang jadi "_".
+    return p.replace(/[^\p{L}\p{N}_]/gu, "_");
   }
 
   function characterSheetKey() {
@@ -8502,7 +8504,9 @@
 
   function sheetKeyPrefixForModelName(name) {
     const sanitized = String(name || "").replace(
-      /[^A-Za-z0-9_\u4e00-\u9fff]/g,
+      // Identik dengan sanitizeKey server + currentModelKey: huruf/angka
+      // semua aksara dipertahankan (kanji/kana/romawi).
+      /[^\p{L}\p{N}_]/gu,
       "_",
     );
     return "live2d_sheet_model_" + sanitized + "_";
