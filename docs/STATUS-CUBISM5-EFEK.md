@@ -44,6 +44,24 @@ LLM → Motion/Behavior Director → app.js komposisi jiwa (ADITIF)
 Dokumentasi publik (README/AGENTS/MODES/TROUBLESHOOTING/MODEL-AGNOSTIC)
 sudah selaras dengan arsitektur ini.
 
+**Antrean stabilisasi (sesi berikutnya mulai dari sini):**
+1. **Fitur pasca-migrasi yang belum teruji** (entri 41–42): pet klik-tembus
+   di shell Tauri nyata (butuh `bun run build:pet` / toolchain Rust); Motion
+   Studio UI visual penuh (pipeline dasar teruji); uji rasa jangka panjang
+   VTuber/chat/TTS. User: "memang ada yang salah di beberapa hal, belum
+   diuji langsung" — temukan lewat pemakaian nyata, jangan ditebak.
+2. **Sisa opsional rework** (`ARSITEKTUR-GAP.md` bawah): ekspresi/motion
+   balasan VTuber (§7 speech-only), UI daftar antrean task, cancel per-task
+   dari panel.
+3. **Server dev user (8310) belum di-restart** — semua perilaku baru sisi
+   server (scheduler VTuber, task identity, proactive gate, merge) baru
+   aktif setelah restart. Branch `migration/pixi8-cubism` sudah di-commit
+   (44ac2a9 + 731d916) tapi BELUM di-push. Provider LLM aktif (apinex)
+   sesekali 402/429 — bukan regresi.
+4. Keputusan terbuka lama: branch usang `tes`/`feat/cubism-official-renderer`
+   (user bilang hapus manual saat sudah stabil) + blocker Core di SHA lama
+   GitHub (risiko sudah diterima user — jangan dibuka lagi).
+
 ## UPDATE 2026-09-19 (47) — FASE 6 + REWORK ARSITEKTUR LENGKAP: WORKER TASK IDENTITY (COMMIT)
 
 §9–12 terimplementasi — **seluruh rework arsitektur behavior (Fase 2–6)
