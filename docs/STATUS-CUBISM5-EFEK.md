@@ -64,6 +64,31 @@ sudah selaras dengan arsitektur ini.
    (user bilang hapus manual saat sudah stabil) + blocker Core di SHA lama
    GitHub (risiko sudah diterima user — jangan dibuka lagi).
 
+## UPDATE 2026-09-20 (52) — OVERLAY OBS: TRANSPARANSI DIKONFIRMASI + TAMPILAN MURNI KARAKTER
+
+User tanya: overlay OBS bisa transparan? dan minta overlay TIDAK menampilkan
+donasi/livechat (ditangani sumber/layar lain).
+
+- **Transparansi — sudah benar, dikonfirmasi.** Stack view (`Live2DView`)
+  init Pixi `backgroundAlpha: 0` + `renderer.setClear(null)`; canvas WebGL
+  `getContextAttributes().alpha === true`. Uji browser: latar body diberi
+  warna solid (#ff0033 / #0a5) → tembus di area kosong, karakter di atasnya.
+  Hitam yang terlihat user = kanvas OBS kosong (belum ada source di bawah
+  Browser Source), BUKAN bug overlay.
+- **Tampilan murni karakter (default).** `vtuber.html`: bubble ucapan &
+  alert donasi kini **opt-in** — default disembunyikan (early-return di
+  `bubble()`/`donationAlert()`), aktifkan per elemen dengan `?bubble=1` /
+  `?alerts=1`. Teks status debug (`#status`) hanya tampil di `?hud=1`
+  (`body.hud`). Suara TTS + lipsync TIDAK terpengaruh — karakter tetap
+  bicara & mulut bergerak walau teks disembunyikan. URL OBS = `/vtuber.html`
+  polos → hanya karakter transparan.
+- Verifikasi visual: URL bersih + donasi diinject → bubble/alert/status
+  semua `display:none`, hanya karakter (latar uji tembus); `?bubble=1&
+  alerts=1` → `donationAlert` jalan (teks alert terisi tiap donasi mock).
+- vtuber.html statis (tak lewat bundle) — tak perlu build. Gate: tsc bersih,
+  524 unit + 416 guard 0 gagal. Config user di-backup+restore (uji start
+  mock menulis section vtuber → dipulihkan bersih).
+
 ## UPDATE 2026-09-20 (51) — KONEKSI STREAM VTUBER TERSIMPAN (API KEY YT DSB. TAK DIKETIK ULANG)
 
 Laporan user: API key YouTube + video ID tidak kesimpen tiap sesi (video ID

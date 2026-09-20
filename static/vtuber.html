@@ -10,10 +10,13 @@
   html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; height: 100%; }
   #stage { position: fixed; inset: 0; background: transparent; }
   #live2d-canvas { position: absolute; top: 0; left: 0; }
-  #status {
+  /* Teks status debug: hanya tampil di mode HUD (?hud=1). Di OBS Browser
+     Source (URL tanpa ?hud=1) disembunyikan → overlay benar-benar bersih. */
+  #status { display: none;
     position: fixed; top: 6px; left: 8px;
     font: 10px ui-monospace, Consolas, monospace; color: #66707F;
   }
+  body.hud #status { display: block; }
   #bubble {
     position: fixed; bottom: 42px; left: 50%; transform: translateX(-50%);
     max-width: 380px; background: #12151C; color: #EDF0F4;
@@ -74,8 +77,17 @@
   const $ = (id) => document.getElementById(id);
   const state = { model: null, bubbleTimer: null, alertTimer: null, mouthActive: false, audioLip: null };
 
+  // Overlay OBS = tampilan MURNI karakter secara default: bubble ucapan &
+  // alert donasi/chat dipanggil di sumber/layar lain (permintaan streamer).
+  // Aktifkan kembali per elemen bila mau: ?bubble=1 (teks ucapan) / ?alerts=1
+  // (popup donasi). Suara (TTS) + lipsync TIDAK terpengaruh — karakter tetap
+  // bicara & mulut bergerak walau bubble disembunyikan.
+  const showBubble = qs.get("bubble") === "1";
+  const showAlerts = qs.get("alerts") === "1";
+
   function setStatus(msg) { $("status").textContent = "overlay — " + msg; }
   function bubble(text, ms) {
+    if (!showBubble) return; // tampilan murni — teks ada di layar lain
     const b = $("bubble");
     $("bubble-text").textContent = text;
     b.style.display = "block";
@@ -83,6 +95,7 @@
     state.bubbleTimer = setTimeout(() => (b.style.display = "none"), ms || 4500);
   }
   function donationAlert(user, amount) {
+    if (!showAlerts) return; // popup donasi ditangani sumber lain
     const a = $("alert");
     a.textContent = t("vtOv.alert", { user, amount: amount || "" });
     a.style.display = "block";
@@ -92,6 +105,7 @@
 
   // ── HUD (?hud=1 saja) — tinggal alat salin URL OBS ─────────────────────
   if (qs.has("hud")) {
+    document.body.classList.add("hud"); // munculkan teks status debug
     $("hud").classList.add("visible");
     $("ov-copy").addEventListener("click", () => {
       const clean = location.origin + "/vtuber.html";
