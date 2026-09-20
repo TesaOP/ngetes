@@ -247,6 +247,28 @@
     const operatorInput = $("#vt-operator");
     if (operatorInput) operatorInput.addEventListener("keydown", onOperatorKey);
     onProviderChange();
+    // Prefill dari koneksi stream tersimpan (server: config.vtuber) supaya
+    // API key YouTube / channel Twitch / persona tidak diketik ulang tiap
+    // sesi. apiKey datang TERMASK — biarkan di field (placeholder bukti key
+    // ada); saat Start, key masked tidak menimpa yang tersimpan (server
+    // saveVtuberConn menolaknya). Video ID sengaja diprefill juga; kalau
+    // ganti tiap stream user tinggal menimpanya.
+    (async () => {
+      try {
+        const saved = await fetch(API + "/api/vtuber/conn").then((r) => r.json());
+        if (!saved || stopped) return;
+        const setVal = (id, v) => { const e = $(id); if (e && v != null && v !== "") e.value = v; };
+        if (saved.provider) { const p = $("#vt-provider"); if (p) p.value = saved.provider; }
+        setVal("#vt-channel", saved.channel);
+        setVal("#vt-video-id", saved.videoId);
+        if (saved.apiKey) { const k = $("#vt-yt-key"); if (k) { k.value = ""; k.placeholder = saved.apiKey; } }
+        setVal("#vt-persona", saved.persona);
+        if (Number.isFinite(saved.cooldownMs)) setVal("#vt-cooldown", Math.round(saved.cooldownMs / 1000));
+        if (typeof saved.respondChat === "boolean") { const c = $("#vt-respond"); if (c) c.checked = saved.respondChat; }
+        if (typeof saved.respondDonation === "boolean") { const c = $("#vt-donate-respond"); if (c) c.checked = saved.respondDonation; }
+        onProviderChange();
+      } catch (e) { /* server lewat — form default */ }
+    })();
     // Overlay OBS: halaman transparan untuk Browser Source. Dibuka dengan
     // ?hud=1 (panel preferensi tampil); URL untuk OBS = tanpa ?hud=1.
     const onOverlayOpen = () => window.open(API + "/vtuber.html?hud=1", "_blank");

@@ -64,6 +64,40 @@ sudah selaras dengan arsitektur ini.
    (user bilang hapus manual saat sudah stabil) + blocker Core di SHA lama
    GitHub (risiko sudah diterima user — jangan dibuka lagi).
 
+## UPDATE 2026-09-20 (51) — KONEKSI STREAM VTUBER TERSIMPAN (API KEY YT DSB. TAK DIKETIK ULANG)
+
+Laporan user: API key YouTube + video ID tidak kesimpen tiap sesi (video ID
+memang ganti tiap stream, tapi key/persona harus diketik ulang). Betul —
+`vtuberStart` dulu hanya menyimpan cfg di memori runtime; form mulai kosong
+tiap reload/restart. Ditambah persistensi bergaya `connections`/`tts`:
+
+- **`config.ts` `saveVtuberConn(conn)`** (+ tipe `Config.vtuber` opsional):
+  merge per-field ke `config.json` section `vtuber`. Start provider lain
+  (mock) TIDAK menghapus channel/key YouTube tersimpan. apiKey masked/kosong/
+  placeholder ditolak (pertahankan yang asli) — sama seperti connections.
+- **Server**: `handleVtuberStart` mengisi apiKey asli tersimpan saat body
+  masked/kosong (start YT setelah reload tak gagal "key wajib"), lalu
+  `saveVtuberConn(body)`; `handleVtuberConfig` juga persist perubahan live.
+  Route baru **`GET /api/vtuber/conn`** mengembalikan koneksi tersimpan
+  dengan **apiKey DIMASK** (`config.maskKey`) — key asli tak pernah balik ke
+  HTTP (pola sama dengan `/api/config`).
+- **Klien** (`mode-runtime.js`): saat panel VTuber nyala, prefill form dari
+  `GET /api/vtuber/conn` — provider/channel/videoId/persona/cooldown/respond;
+  apiKey ditaruh sebagai **placeholder masked** (field value kosong, bukti key
+  ada). Start dengan field kosong → server pakai key tersimpan.
+- Verifikasi (server uji 8317, config user di-backup lalu di-restore):
+  API-level — start YT key dummy → `config.json` simpan key ASLI, `GET
+  /conn` mengembalikan `AIzaSy••••••••fXYZ`; start ulang field kosong →
+  `{ok:true}` + key disk tetap utuh. Visual — reload → Stream Settings
+  terisi: provider youtube, Video ID `testVID123`, API Key placeholder
+  masked, persona/cooldown/respond kembali. Config user diverifikasi bersih
+  (tak ada section vtuber) setelah restore.
+- Gate: tsc bersih, build OK, 524 unit + 416 guard 0 gagal.
+
+CATATAN: config.json menyimpan apiKey plaintext (sama seperti connections &
+tts yang sudah ada) — bind loopback default + config.json tak pernah
+disajikan via HTTP tetap berlaku.
+
 ## UPDATE 2026-09-20 (50) — LIPSYNC KADANG BEKU DI TENGAH BICARA: 2 AKAR MASALAH DIPERBAIKI
 
 Laporan user: "kadang harusnya masih berbicara tapi mulutnya ga gerak, mungkin

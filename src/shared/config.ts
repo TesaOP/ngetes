@@ -197,6 +197,28 @@ export class ConfigManager {
     try { writeJsonAtomic(this.path, data); } catch (e: any) { console.warn("[config] gagal menyimpan i18n:", e.message); }
   }
 
+  // Koneksi stream VTuber (provider/channel/videoId/apiKey/persona/…).
+  // Merge per-field: start dengan provider lain (mis. mock) tidak boleh
+  // menghapus channel/key YouTube yang tersimpan. apiKey yang datang sudah
+  // TERMASK dari UI (pola sama dengan connections) — nilai asli hanya ada
+  // di config.json, tidak pernah balik ke HTTP.
+  saveVtuberConn(conn: any): void {
+    let prev: any = {};
+    try { prev = JSON.parse(readFileSync(this.path, "utf8")); } catch {}
+    const next = Object.assign({}, prev.vtuber || {});
+    for (const k of ["provider", "channel", "videoId", "apiKey", "persona", "cooldownMs", "respondChat", "respondDonation"]) {
+      if (conn[k] === undefined) continue;
+      if (k === "apiKey") {
+        const v = String(conn[k] || "").trim();
+        // Masked / placeholder / kosong = pertahankan yang tersimpan.
+        if (!v || v.includes("••••") || v.startsWith("MASUKKAN")) continue;
+      }
+      next[k] = conn[k];
+    }
+    const data = Object.assign({}, prev, { vtuber: next });
+    try { writeJsonAtomic(this.path, data); } catch (e: any) { console.warn("[config] gagal menyimpan koneksi vtuber:", e.message); }
+  }
+
   atomicWriteRaw(file: string, obj: unknown): Promise<void> { return queueJsonWrite(file, obj); }
 
   maskKey(k: string): string {

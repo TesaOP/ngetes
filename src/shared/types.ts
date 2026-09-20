@@ -59,6 +59,10 @@ export interface Config {
   i18n: I18nConfig;
   // Overlay efek emosi app-level (js/emotion-overlay.js).
   overlay: { enabled: boolean; alpha: number; size: number };
+  // Koneksi stream VTuber tersimpan (prefill form Stream Settings). apiKey
+  // plaintext di config.json (sama seperti connections/tts), DIMASK ke UI.
+  // Opsional: config lama tanpa field ini valid.
+  vtuber?: { provider?: string; channel?: string; videoId?: string; apiKey?: string; persona?: string; cooldownMs?: number; respondChat?: boolean; respondDonation?: boolean };
 }
 
 export interface I18nConfig {

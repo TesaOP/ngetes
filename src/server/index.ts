@@ -379,6 +379,13 @@ async function handleAPI(req: Request): Promise<Response|null> {
   if(method==="POST" && path==="/api/vtuber/overlay") return json(overlayPing());
   if(method==="GET" && path==="/api/vtuber/events") return handleVtuberEvents(req);
   if(method==="POST" && path==="/api/vtuber/mock-event") return handleVtuberMockEvent(req);
+  // Koneksi stream tersimpan (prefill form Stream Settings). apiKey di-MASK —
+  // nilai asli tidak pernah balik ke HTTP (pola sama dengan /api/config).
+  if(method==="GET" && path==="/api/vtuber/conn") {
+    const saved = { ...(config.load() as any).vtuber } as any;
+    if (saved.apiKey) saved.apiKey = config.maskKey(String(saved.apiKey));
+    return json(saved);
+  }
   // Behavior engine (§7): config live tanpa restart + intake antrean operator.
   if(method==="POST" && path==="/api/vtuber/config") return handleVtuberConfig(req);
   if(method==="POST" && path==="/api/vtuber/operator") return handleVtuberOperator(req);
@@ -507,9 +514,19 @@ async function handleModePost(req: Request): Promise<Response> {
   return json(modeStatus());
 }
 async function handleVtuberStart(req: Request): Promise<Response> {
-  const body = await readBody(req);
+  const body = (await readBody(req)) || {};
   if (activeMode !== "vtuber") { teardownMode(activeMode); activeMode = "vtuber"; }
-  const r = vtuberStart(body || {});
+  // API key datang TERMASK/kosong dari UI (form prefill placeholder saja) —
+  // pakai key asli tersimpan supaya start YouTube tidak gagal "key wajib".
+  const saved = (config.load() as any).vtuber || {};
+  const incomingKey = String(body.apiKey || "").trim();
+  if ((!incomingKey || incomingKey.includes("••••")) && saved.apiKey) {
+    body.apiKey = saved.apiKey;
+  }
+  const r = vtuberStart(body);
+  // Persist koneksi stream (channel/videoId/persona/…) — apiKey masked/kosong
+  // ditolak saveVtuberConn, key asli tersimpan tetap utuh.
+  if (r.ok) config.saveVtuberConn(body);
   return json(r, r.ok ? 200 : 400);
 }
 async function handleVtuberEvents(req: Request): Promise<Response> {
@@ -531,12 +548,15 @@ async function handleVtuberMockEvent(req: Request): Promise<Response> {
 }
 async function handleVtuberConfig(req: Request): Promise<Response> {
   const body = await readBody(req);
-  const r = vtuberSetConfig({
+  const patch = {
     persona: typeof body?.persona === "string" ? body.persona : undefined,
     cooldownMs: Number.isFinite(Number(body?.cooldownMs)) ? Number(body.cooldownMs) : undefined,
     respondChat: typeof body?.respondChat === "boolean" ? body.respondChat : undefined,
     respondDonation: typeof body?.respondDonation === "boolean" ? body.respondDonation : undefined,
-  });
+  };
+  const r = vtuberSetConfig(patch);
+  // Perubahan live juga di-persist — nilai form tetap saat sesi berikutnya.
+  config.saveVtuberConn(patch);
   return json(r);
 }
 async function handleVtuberOperator(req: Request): Promise<Response> {
