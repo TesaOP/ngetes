@@ -34,17 +34,30 @@ WebGL → compositing), **bukan** dengan memindah logika backend ke Rust.
 
 ---
 
-## 2. Empat keputusan yang dikunci (user)
+## 2. Keputusan yang dikunci (user)
 
-1. **Transport: Tauri IPC-first.** Tiap modul yang pindah ke Rust langsung
-   diganti `invoke()` / event Tauri. BUKAN strategi "HTTP-parity" (server HTTP
-   yang identik). Konsekuensi: frontend berubah per langkah, guard legacy ikut
-   di-update, klien HTTP mandiri (CLI/OBS/pet) diurus lewat lapisan kompat.
-2. **Desktop-first; HTTP = kompatibilitas opsional.** Server HTTP TIDAK menjadi
-   arsitektur inti. Sebuah *compat adapter* (opsional, dari service yang sama)
-   tetap menyajikan `/api/*` untuk: CLI agent terminal, overlay OBS
-   (`vtuber.html` = OBS browser source, wajib HTTP), akses dari browser/HP.
-   Ini antarmuka kompat — bukan pusat arsitektur.
+> **REVISI 2026-09-22 (setelah temuan §6b + tujuan single-exe user).** Tujuan
+> akhir user yang mengikat: **satu berkas executable** — bukan Bun & Tauri jalan
+> sebagai dua proses terpisah seperti sekarang. Ini menetapkan arah:
+
+0. **PRODUK AKHIR = SATU EXE (`Companion.exe`).** Tidak ada proses Bun terpisah
+   di produksi. Ini menutup opsi "pertahankan server Bun" — Bun hanya alat dev.
+
+1. **Backend disajikan oleh Rust IN-PROCESS di dalam Tauri.** Cara mencapai
+   single-exe: Tauri (a) **meng-embed aset frontend** (frontendDist) dan (b)
+   menjalankan **server HTTP Rust in-process** (axum, loopback) yang melayani
+   `/api/*` + `/model/*` — menggantikan server Bun rute demi rute. Karena wire
+   tetap HTTP loopback, frontend nyaris tak berubah, guard origin tetap, dan
+   **temuan blokir-origin IPC (§6b) tak relevan** (bukan IPC lintas-origin).
+   Tauri IPC (`invoke`/event) menjadi **optimisasi opsional** untuk hal yang
+   memang lebih baik native (window, pet, notifikasi) — bukan jalur utama.
+   (Ini menggeser keputusan lama "IPC-first" → "Rust-in-process-HTTP-first",
+   karena itulah yang benar-benar memberi single-exe tanpa rework frontend.)
+
+2. **HTTP loopback = arsitektur inti (bukan sekadar kompat).** Karena server
+   Rust in-process memang berbicara HTTP loopback, klien mandiri (CLI agent,
+   overlay OBS `vtuber.html`, akses HP via `HOST=0.0.0.0`) tetap didukung
+   gratis — mereka konsumen dari server Rust yang sama, di dalam satu exe.
 3. **engine/ diabsorb in-process.** Sidecar Whisper + SuperTonic (crate
    `engine/`) jadi **library** yang dipanggil langsung dari Rust core. Hilang:
    port 8330, spawn/health/`ensureSidecarHasStt` restart-dance, satu proses.
@@ -167,6 +180,17 @@ Aturan: **tiap stage meninggalkan aplikasi tetap fungsional + gate hijau**
 (`bun run build` + `bunx tsc --noEmit` + `bun run test` + `cargo test` untuk
 crate yang tersentuh). Tiap stage punya definisi "selesai" sendiri dan boleh
 berhenti aman di situ.
+
+> **REVISI transport (2026-09-22, demi single-exe).** Mekanisme pengganti server
+> Bun bukan Tauri IPC melainkan **server HTTP Rust in-process (axum) di dalam
+> Tauri**. Jadi Stage 2–4 "pindah ke Rust" = **port rute Bun → handler axum**
+> (bukan command IPC), wire tetap HTTP loopback → frontend tak perlu ditulis
+> ulang. Stage 5 (frontendDist embed + buang exe Bun) = titik di mana produk
+> jadi **satu `Companion.exe`**. Tiap rute yang sudah diport dilayani server
+> Rust; selama transisi, rute yang belum diport masih oleh Bun (dua proses
+> SEMENTARA di dev) — single-exe tercapai saat SEMUA rute pindah + frontendDist.
+> `src/client/transport/` yang sudah ada tetap seam-nya; ia cukup diarahkan ke
+> server in-process (default sekarang: HTTP loopback, tak berubah).
 
 ### Stage 0 — Kontrak & fondasi
 - Commit dokumen ini + entri STATUS + rujukan AGENTS.md. **(sesi ini)**

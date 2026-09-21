@@ -1,12 +1,13 @@
 # live2d-core — Rust application core (Tauri) untuk Live2D Agent.
 #
-# Kerangka Stage 0: baru skeleton. Backend TypeScript/Bun akan dipindah ke sini
-# bertahap (config/persistence → AI → media → browser) sesuai
-# docs/ARCHITECTURE-TAURI-RUST.md. Renderer Live2D/Pixi TETAP di frontend TS.
+# Menyajikan backend HTTP IN-PROCESS (axum, loopback) di dalam Tauri — inilah
+# jalur menuju SATU executable (Companion.exe): tidak ada proses Bun terpisah.
+# Rute Bun (src/server/index.ts) diport ke handler axum di sini bertahap.
+# Lihat docs/ARCHITECTURE-TAURI-RUST.md §2 (revisi single-exe) + roadmap.
 [package]
 name = "live2d-core"
 version = "0.1.0"
-description = "Application core (Rust) untuk Live2D Agent — dipanggil dari Tauri"
+description = "Application core (Rust) untuk Live2D Agent — server HTTP in-process di Tauri"
 edition = "2021"
 rust-version = "1.77"
 
@@ -17,3 +18,8 @@ path = "src/lib.rs"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
