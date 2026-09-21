@@ -64,6 +64,28 @@ sudah selaras dengan arsitektur ini.
    (user bilang hapus manual saat sudah stabil) + blocker Core di SHA lama
    GitHub (risiko sudah diterima user — jangan dibuka lagi).
 
+## UPDATE 2026-09-22 (66) — Stage 2 mulai: penyajian statis Rust (fondasi single-exe)
+
+Arah dikunci (dari syarat user "satu exe"): backend disajikan **Rust
+in-process (axum) di dalam Tauri**, bukan Tauri IPC. Detail §2 ARCHITECTURE.
+
+Increment pertama Stage 2 (commit menyusul): `core` kini bisa **menyajikan
+frontend & aset statis** dari Rust — fondasi Tauri-serve-frontend (single-exe):
+- `core/src/paths.rs` — AppPaths (root/static/data/model/sheets/motions) +
+  detect() padanan appRoot() TS.
+- `core/src/static_serve.rs` — port `serveStatic`/`safeJoinStatic`: guard
+  traversal ".." (mentah + ter-encode), block `config.json`(+.bak), route
+  `model/*`→`data/`, MIME suffix-terpanjang (.model3.json dst).
+- `core/src/lib.rs` — router: `/health`, `/api/version`, fallback statis + SPA
+  (path tanpa ekstensi → index.html; `/api/*` tak dikenal → 404 JSON, sama TS).
+  `serve(port, paths)` in-process loopback.
+- 9 test cargo hijau (traversal 403, config forbidden, model→data, MIME, api
+  404 JSON, health, version).
+
+BELUM diport: config read/write byte-compatible, /api/models (+rescue),
+LLM/agent/vtuber/media/browser. Shell belum menjalankan server core (masih Bun).
+Ini increment aman & terverifikasi; grup rute berikutnya menyusul.
+
 ## UPDATE 2026-09-22 (65) — EKSEKUSI Stage 0-1 migrasi Tauri + TEMUAN IPC penting
 
 Lanjutan (64). User: "gas implementasikan hingga akhir" + "kamu tes sendiri".
