@@ -12,6 +12,7 @@
 
 pub mod config;
 pub mod expressions;
+pub mod llm;
 pub mod model;
 pub mod motions;
 pub mod paths;
@@ -47,6 +48,7 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/health", get(health))
         .route("/api/version", get(version))
         .route("/api/config", get(get_config).post(post_config))
+        .route("/api/chat", axum::routing::post(post_chat))
         .route("/api/models", get(get_models))
         .route("/api/model/path", get(get_model_path))
         .route("/api/sheet", get(get_sheet_h).post(post_sheet_h))
@@ -89,6 +91,28 @@ async fn post_config(State(paths): State<AppPaths>, body: axum::body::Bytes) -> 
             json_raw(status, out)
         }
         None => json_status(StatusCode::BAD_REQUEST, json!({ "error": "body JSON rusak" })),
+    }
+}
+
+/// POST /api/chat {messages, system} — LLM role "chat" (padanan handleChat).
+async fn post_chat(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = match serde_json::from_slice(&body).ok() {
+        Some(v) => v,
+        None => return json_status(StatusCode::BAD_REQUEST, json!({ "error": "body JSON rusak" })),
+    };
+    let messages: Vec<llm::ChatMessage> = v
+        .get("messages")
+        .and_then(|m| m.as_array())
+        .map(|arr| arr.iter().filter_map(llm::ChatMessage::from_value).collect())
+        .unwrap_or_default();
+    let system = v.get("system").and_then(|s| s.as_str()).unwrap_or("");
+    let cfg_path = paths.data_dir.join("config.json");
+    match llm::llm_for_role(&cfg_path, "chat", &messages, system).await {
+        Ok(ok) => json_status(StatusCode::OK, json!({ "reply": ok.reply, "used": ok.used })),
+        Err((status, msg)) => json_status(
+            StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
+            json!({ "error": msg }),
+        ),
     }
 }
 

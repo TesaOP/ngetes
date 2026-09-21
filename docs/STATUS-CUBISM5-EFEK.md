@@ -156,6 +156,15 @@ Import-zip juga diport (crate `zip`, bukan shell unzip):
 models, model/path, sheet r/w, expressions+adoption, motions r/d, files, avatar,
 auto-rescue, delete, upload, import-zip) — semua paritas/uji vs Bun, 24 test.
 
+## Stage 3 MULAI (batch 3a) — LLM client + /api/chat
+- `core/src/llm.rs` — port llm-client (jalur non-stream): call_llm multi-provider
+  (openai-compatible/groq/openai via reqwest, gemini, anthropic, mock),
+  classify_error (ERROR_RULES), conn_has_role/order_for_role (eksplisit dulu),
+  llm_for_role = routing + fallback/cooldown + persist status ke config
+  (rateLimitedUntil ISO8601 via chrono, byte-compat). Route POST /api/chat.
+  Deps: reqwest(rustls), chrono. 28 test cargo hijau; smoke /api/chat mock →
+  {reply,used} end-to-end. BELUM: streaming SSE (assistant), agent loop+tools.
+
 BELUM diport (coupling ke kode lain): mode manager (runtime modes), POST/PUT
 motions + motion-taxonomy (client motion-dsl/classifier), LLM/agent/vtuber/media/
 browser (Stage 3-4). Shell belum menjalankan server core (masih Bun).
