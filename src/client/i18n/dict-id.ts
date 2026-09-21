@@ -157,6 +157,7 @@ export const DICT_ID: Record<string, string> = {
   "cfg.ttsLang.zh": "Mandarin (zh-CN)",
   "cfg.ttsTitle": "Mesin Suara (TTS)",
   "cfg.provider": "Provider",
+  "cfg.prov.supertonic": "SuperTonic (native, lokal)",
   "cfg.prov.browser": "Browser (Web Speech)",
   "cfg.prov.gradio": "Gradio Space",
   "cfg.prov.openai": "OpenAI-compatible (/v1/audio/speech)",

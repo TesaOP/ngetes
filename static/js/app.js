@@ -4082,6 +4082,7 @@
 
     // ── Mesin Suara (TTS) — global, disimpan di config.json ──────
     const TTS_PROVIDERS = [
+      "supertonic",
       "browser",
       "gradio",
       "openai",

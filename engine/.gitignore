@@ -1,0 +1,8 @@
+# Artefak build Rust (regenerasi via cargo — 1+ GB, jangan di-commit).
+/target
+
+# Model diunduh saat runtime (on-demand), bukan bagian source.
+/models
+*.bin
+*.onnx
+*.wav

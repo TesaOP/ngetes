@@ -64,6 +64,66 @@ sudah selaras dengan arsitektur ini.
    (user bilang hapus manual saat sudah stabil) + blocker Core di SHA lama
    GitHub (risiko sudah diterima user — jangan dibuka lagi).
 
+## UPDATE 2026-09-21 (63) — STT & TTS NATIVE: sidecar Rust (Whisper + SuperTonic) jadi default
+
+User: "supertonic sama whisper bakal jadi default projek ini" + "cloud tetap
+diperbolehkan". Dikerjakan penuh, gate hijau.
+
+**Apa yang berubah.** STT & TTS punya engine NATIVE lokal sebagai default,
+menggantikan (a) Whisper transformers.js in-browser dan (b) server Python
+SuperTonic terpisah (`F:\backup\supertonic-tts`, kini dipensiunkan — tak
+dihapus). Provider cloud/browser lama TETAP bisa dipilih; hanya *default*
+install baru yang native.
+
+**Crate baru `engine/`** — sidecar HTTP loopback (127.0.0.1) satu proses:
+- `POST /tts` SuperTonic (via `ort` 2.0-rc.10 + ONNX Runtime prebuilt) — port
+  1:1 dari `supertonic/core.py` (UnicodeProcessor NFKD+regex+`<lang>` +
+  lookup unicode_indexer; 4 ONNX: duration→text_encoder→vector_estimator loop
+  ×8→vocoder; voice style JSON bersarang di-flatten). Output WAV 44.1kHz.
+- `POST /stt` Whisper (via `whisper-rs` 0.16 → whisper.cpp) — PCM 16k → teks.
+  Di belakang feature `stt` (butuh cmake+libclang saat build; TTS tidak).
+- `GET /health` `/voices`. Modul: `text/wav/tts/stt/main`. 6 unit test crate.
+- Verifikasi: TTS "Halo…Lumine…" → 4.46 dtk audio, **RTF 0.32** (3× realtime);
+  STT round-trip transkrip terkenali (uji pakai model tiny).
+
+**Integrasi server** (`src/server/engine.ts` baru + `index.ts`):
+- Server auto-spawn sidecar saat boot (log `[engine] sidecar native siap`),
+  kill-on-exit (SIGINT/SIGTERM/exit). Degrade anggun bila exe belum di-build.
+- TTS: cabang provider `"supertonic"` di `ttsAudioFor` (proxy → sidecar).
+  `handleTTSOptions` +katalog voice F1..F5/M1..M5. `format`/`lang` masuk
+  `TTSConfig` + `ttsCacheKey`.
+- STT: endpoint baru `POST /api/stt` — dispatch per-provider (`local`→sidecar,
+  `openai`→`/v1/audio/transcriptions` multipart).
+- **Model on-demand**: TTS reuse `~/.cache/supertonic3` bila ada, else unduh
+  dari HF (SHA dipin, ~385MB); STT unduh `ggml-<model>.bin`. TIDAK dibundel ke
+  installer — diunduh saat provider native pertama dipakai. `dist.ts` menyalin
+  `engines/live2d-engine.exe` (installer wildcard ikut otomatis).
+
+**Klien** (`voice-input.js` + `app.js` + `index.html` + i18n):
+- `voice-input.js` provider-aware: `browser`→Whisper in-tab; selain itu →
+  encode WAV16k + `POST /api/stt`. getUserMedia+VAD+anti-echo dipertahankan.
+- Default config: `tts.provider="supertonic"`, `stt.provider="local"`
+  (`engineModel:"base"`). Dropdown TTS +opsi SuperTonic (i18n id+en parity).
+
+**Privasi (aturan direvisi).** Audio mic: default `local` = loopback 127.0.0.1
+(proses lokal, BUKAN cloud); cloud hanya bila user memilih sadar. Frame webcam
+tetap tak pernah keluar (tak berubah). Lihat AGENTS.md §5 + header voice-input.js.
+
+**Toolchain (mesin build saja).** Rust+MSVC ada; dipasang cmake 4.4.3 + LLVM
+23.1.1 (winget) untuk kompilasi whisper.cpp. User akhir TIDAK pasang apa pun —
+dapat exe jadi. `whisper-rs` 0.14 gagal (bindgen size assert) → 0.16. `ort`
+butuh feature `std` untuk `commit_from_file`. Nama tensor ONNX asli:
+`duration`/`text_emb`/`denoised_latent`/`wav_tts`. Voice style dims `[1,50,256]`
+& `[1,8,16]` (data JSON bersarang, bukan `[1,1,256]`).
+
+**Utang teknis (kecil).** Loop request sidecar single-thread (cukup 1 user
+lokal). STT kualitas produksi pakai `base` (uji pakai `tiny`). UI dropdown
+provider STT belum ada (config via config.json; TTS sudah ada dropdown).
+
+**Gate:** `bun run build` + `tsc` bersih + 536 unit + 416 guard + i18n 11 —
+HIJAU. Sidecar crate: `cd engine && cargo build --release --features stt`
+(butuh PATH cmake+LLVM, `LIBCLANG_PATH`).
+
 ## UPDATE 2026-09-21 (62) — MOTION BUATAN MANUAL UNTUK LUMINE: malu_menoleh + penasaran_miring
 
 User: "suruh kamu aja yang bikinin motion untuk lumine" — bikin langsung,

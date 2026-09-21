@@ -70,7 +70,11 @@ Tidak ada test yang memanggil jaringan (endpoint LLM di-stub ke provider
    sekali. → [`docs/MODES.md`](docs/MODES.md)
 5. **Keamanan & privasi.** `data/config.json` tidak pernah disajikan via HTTP;
    bind loopback default; body cap per endpoint; guard path traversal;
-   frame webcam / audio mic **tidak pernah** di-upload (inferensi 100% lokal).
+   **frame webcam TIDAK PERNAH di-upload** (inferensi kamera 100% lokal —
+   aturan tak berubah). **Audio mic** (revisi 2026-09-21): default STT provider
+   `local` = dikirim ke sidecar native di **loopback 127.0.0.1** (proses lokal,
+   bukan jaringan); provider `browser` = 100% dalam tab; provider cloud HANYA
+   bila user memilihnya sadar. Cloud tak pernah default.
 
 ## Aturan kerja
 
@@ -160,6 +164,8 @@ data/                        data user — TIDAK di-commit
   dulu menyusup).
 - ❌ Menggabungkan `paramGroups` dan `presets` jadi satu.
 - ❌ Melewatkan teardown saat pindah mode.
-- ❌ Mengirim frame webcam / audio mic ke server atau provider mana pun.
+- ❌ Mengirim frame webcam ke server/provider mana pun (tetap mutlak).
+- ❌ Mengirim audio mic ke **cloud** sebagai default — loopback lokal (sidecar
+  native) boleh; cloud HANYA bila user memilih provider cloud sadar.
 - ❌ Memperbaiki balik aturan yang terkunci di `docs/` — kalaupun kelihatan
   seperti bisa disederhanakan, itu sudah dibalik orang dan punya alasan.

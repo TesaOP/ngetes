@@ -1,7 +1,11 @@
-// voice-input.js — STT dua arah (push-to-talk), 100% LOKAL di browser.
-// Audio TIDAK PERNAH di-upload ke server mana pun — sama dengan keputusan
-// terkunci kamera (lihat docs/SHEET-SYSTEM.md §agen reaktif). Whisper
-// (transformers.js) diunduh sekali dari CDN lalu di-cache browser.
+// voice-input.js — STT dua arah (push-to-talk).
+//
+// Privasi (aturan direvisi 2026-09-21): audio mic TIDAK PERNAH ke jaringan/cloud
+// KECUALI user memilih provider cloud secara sadar. Default provider "local" =
+// dikirim ke sidecar native di loopback 127.0.0.1 (proses lokal, bukan cloud).
+// Provider "browser" = Whisper transformers.js 100% dalam tab (audio tak keluar
+// sama sekali). Provider "openai"/cloud = eksplisit dipilih user.
+// Frame webcam tetap tak pernah keluar (aturan itu tidak berubah).
 //
 // Pola mengikuti camera-presence.js:
 //   - modul ES mandiri, self-wire ke elemen UI yang sudah ada (#btn-mic)
@@ -236,11 +240,20 @@ async function transcribeAndSend() {
       const decoded = await ctxAny.decodeAudioData(buf);
       f32 = resampleTo16k(decoded.getChannelData(0), decoded.sampleRate);
     }
-    const model = await loadASR();
-    const genOpts = { chunk_length_s: 30, stride_length_s: 5 };
-    if (cfg.language && cfg.language !== 'auto') { genOpts.language = cfg.language; genOpts.task = 'transcribe'; }
-    const out = await model(f32, genOpts);
-    const text = String((out && out.text) || '').trim();
+    // Provider transkripsi: "browser" = Whisper transformers.js in-browser
+    // (audio tak keluar tab); selain itu ("local"/cloud) → kirim WAV ke server
+    // /api/stt (sidecar native atau penyedia cloud sesuai config.stt.provider).
+    const provider = String(cfg.provider || 'local').toLowerCase();
+    let text;
+    if (provider === 'browser') {
+      const model = await loadASR();
+      const genOpts = { chunk_length_s: 30, stride_length_s: 5 };
+      if (cfg.language && cfg.language !== 'auto') { genOpts.language = cfg.language; genOpts.task = 'transcribe'; }
+      const out = await model(f32, genOpts);
+      text = String((out && out.text) || '').trim();
+    } else {
+      text = await transcribeViaServer(f32);
+    }
     console.log('[voice] transkrip:', JSON.stringify(text));
 
     const inp = input();
@@ -264,6 +277,38 @@ async function transcribeAndSend() {
     else setTimeout(() => setStatus(''), 1500);
     syncButtonState();
   }
+}
+
+// Encode Float32 mono [-1,1] @16kHz → WAV PCM16 (untuk dikirim ke /api/stt).
+function f32ToWav16(f32) {
+  const sr = 16000, n = f32.length;
+  const buf = new ArrayBuffer(44 + n * 2);
+  const dv = new DataView(buf);
+  const wr = (o, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
+  wr(0, 'RIFF'); dv.setUint32(4, 36 + n * 2, true); wr(8, 'WAVE');
+  wr(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true);
+  dv.setUint16(22, 1, true); dv.setUint32(24, sr, true); dv.setUint32(28, sr * 2, true);
+  dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+  wr(36, 'data'); dv.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) {
+    const s = Math.max(-1, Math.min(1, f32[i]));
+    dv.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return buf;
+}
+
+// Kirim audio ke server /api/stt (sidecar native / cloud). Server memilih
+// provider dari config.stt — klien cukup mengirim WAV mentah.
+async function transcribeViaServer(f32) {
+  const wav = f32ToWav16(f32);
+  const resp = await fetch('/api/stt', { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: wav });
+  if (!resp.ok) {
+    let msg = 'HTTP ' + resp.status;
+    try { const j = await resp.json(); if (j && j.error) msg = j.error; } catch {}
+    throw new Error(msg);
+  }
+  const j = await resp.json();
+  return String((j && j.text) || '').trim();
 }
 
 // ── public API + self-wiring ─────────────────────────────────────

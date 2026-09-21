@@ -97,12 +97,20 @@ export interface MotionConfig {
 
 // STT dua arah — Whisper lokal di browser (push-to-talk, audio tidak di-upload).
 export interface SttConfig {
-  model: string;       // repo HF, mis. Xenova/whisper-base | Xenova/whisper-small
+  // Provider transkripsi:
+  //   "local"   → sidecar native (Whisper via whisper-rs) — DEFAULT proyek
+  //   "browser" → Whisper transformers.js in-browser (audio tak keluar tab)
+  //   "openai"  → server OpenAI-compatible /v1/audio/transcriptions (cloud)
+  provider?: string;
+  model: string;       // (browser) repo HF, mis. Xenova/whisper-base
+  engineModel?: string; // (local) nama model GGML whisper, mis. "base"|"tiny"|"small"
+  endpoint?: string;   // (openai) base URL server transcription
+  apiKey?: string;     // (openai) kunci — plaintext di config.json, DIMASK ke UI
   language: string;    // "indonesian" | "auto" | kode bahasa Whisper lain
   autoSend: boolean;   // true = kirim otomatis; false = isi input untuk direview
   silenceMs: number;   // auto-stop setelah sekian ms senyap (sempat bicara)
   maxMs: number;       // batas keras durasi rekaman
-  device: string;      // "" = auto (webgpu → wasm) | "wasm" = paksa CPU
+  device: string;      // (browser) "" = auto (webgpu → wasm) | "wasm" = paksa CPU
 }
 
 // ── Model / Sheet ──────────────────────────────────────────────

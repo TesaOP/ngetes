@@ -33,6 +33,7 @@ const REPO = join(import.meta.dir, ".."); // src/ → repo root
 const OUT_DIR_NAME = "Live2D-Agent";
 const OUT = join(REPO, "dist", OUT_DIR_NAME);
 const SHELL_EXE = join(REPO, "agent-shell", "target", "release", "live2d-shell.exe");
+const ENGINE_EXE = join(REPO, "engine", "target", "release", "live2d-engine.exe");
 
 const BUN = process.execPath; // bun.exe saat dev — dipakai lagi sebagai driver build
 
@@ -94,6 +95,21 @@ if (existsSync(SHELL_EXE)) {
 } else {
   console.log("        [i] live2d-shell.exe belum dibangun (bun run build:pet) —");
   console.log("            folder release tanpa jendela app; server tetap bisa dites manual.");
+}
+
+// 4b) Sidecar inferensi native (TTS SuperTonic + STT Whisper). Model TIDAK
+// dibundel — diunduh on-demand saat provider native pertama dipakai.
+if (existsSync(ENGINE_EXE)) {
+  const dstDir = join(OUT, "engines");
+  mkdirSync(dstDir, { recursive: true });
+  const dst = join(dstDir, "live2d-engine.exe");
+  cpSync(ENGINE_EXE, dst);
+  const mb = (statSync(dst).size / 1024 / 1024).toFixed(1);
+  console.log(`        [OK] engines/live2d-engine.exe (${mb} MB) — model diunduh on-demand`);
+} else {
+  console.log("        [i] live2d-engine.exe belum dibangun —");
+  console.log("            cd engine && cargo build --release --features stt");
+  console.log("            (tanpa ini, TTS/STT native nonaktif; provider cloud tetap jalan)");
 }
 
 writeFileSync(

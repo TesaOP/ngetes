@@ -1,0 +1,43 @@
+# live2d-engine — sidecar inferensi native (STT + TTS) untuk Live2D Agent.
+#
+# Dua mesin dalam satu proses HTTP loopback:
+#   - TTS: port penuh SuperTonic (4 ONNX via `ort`) — TIDAK butuh cmake/libclang.
+#   - STT: Whisper via `whisper-rs` (binding whisper.cpp) — di belakang feature
+#     `stt` karena butuh cmake + libclang. Tanpa toolchain itu, crate tetap
+#     kompilasi (TTS saja) dan endpoint /stt membalas 503.
+#
+# Model diambil relatif ke direktori yang di-pass server (appRoot()/engines/...).
+[package]
+name = "live2d-engine"
+version = "0.1.0"
+description = "Sidecar inferensi native (SuperTonic TTS + Whisper STT) untuk Live2D Agent"
+edition = "2021"
+rust-version = "1.77"
+
+[[bin]]
+name = "live2d-engine"
+path = "src/main.rs"
+
+[dependencies]
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "ndarray", "download-binaries"] }
+ndarray = "0.16"
+tiny_http = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rand = "0.8"
+rand_distr = "0.4"
+unicode-normalization = "0.1"
+# whisper-rs hanya ditarik saat feature `stt` aktif (butuh cmake + libclang).
+whisper-rs = { version = "0.16", optional = true }
+
+[features]
+default = []
+# Aktifkan setelah cmake + LLVM/libclang terpasang:  cargo build --release --features stt
+stt = ["dep:whisper-rs"]
+
+[profile.release]
+# Longgar untuk FFI besar (ort/whisper.cpp). Bukan opt-level="s" seperti shell:
+# di sini kecepatan inferensi > ukuran biner.
+opt-level = 3
+lto = "thin"
+codegen-units = 1

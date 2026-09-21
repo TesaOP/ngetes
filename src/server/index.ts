@@ -18,6 +18,7 @@ import { vtuberStart, vtuberStop, vtuberStatus, vtuberEvents, vtuberAgentSay, ov
 import { assistantStart, assistantStop, assistantCancel, assistantStatus, assistantHistory, assistantAsk, assistantResolveApproval, assistantModify, assistantReset, assistantEvents, assistantMemoryList, assistantMemoryDelete, assistantUndoList, assistantRevert, assistantSessionsList, assistantSessionCreate, assistantSessionSwitch, assistantSessionDelete, initAssistant } from "./assistant";
 import { petLaunch, petClose, petStatus, petSetClickThrough } from "./pet";
 import { translateForSpeech, ttsLangIsFixed } from "./persona/speech-lang";
+import { ttsViaEngine, sttViaEngine, engineTtsVoices, startEngine, stopEngine, engineAvailable } from "./engine";
 import { appRoot } from "../shared/paths";
 import { browserManager } from "./browser/manager";
 import { inspectBrowserUrl } from "./browser/policy";
@@ -367,6 +368,7 @@ async function handleAPI(req: Request): Promise<Response|null> {
   if(method==="POST" && path==="/api/tts/translate") return handleTTSTranslate(req);
   if(method==="POST" && path==="/api/tts/test") return handleTTSTest(req);
   if(method==="GET" && path==="/api/tts/options") return handleTTSOptions(req);
+  if(method==="POST" && path==="/api/stt") return handleSTT(req);
   if(method==="GET" && path==="/api/model/avatar") return handleModelAvatar(req);
 
   // ── Mode manager (vtuber / assistant / pet) — satu mode aktif ──
@@ -769,7 +771,7 @@ async function handleTestConnection(req:Request):Promise<Response>{
 //   provider "elevenlabs": API ElevenLabs v1/text-to-speech/{voice}
 //   provider "gemini"   : Google Gemini TTS (gemini-2.5-flash-preview-tts)
 //   provider "custom"   : POST JSON {text} → respons audio biner ATAU JSON {audio:base64|url}
-type TTSConfig = { provider?:string; endpoint?:string; apiKey?:string; voice?:string; model?:string; style?:string };
+type TTSConfig = { provider?:string; endpoint?:string; apiKey?:string; voice?:string; model?:string; style?:string; format?:string; lang?:string };
 function b64ToBuf(b64:string):Buffer{ return Buffer.from(b64.replace(/^data:[^,]+,/,""), "base64"); }
 // Bungkus PCM mentah (L16 mono, mis. 24kHz dari Gemini TTS) jadi WAV —
 // elemen <audio> browser tidak bisa memutar PCM tanpa header RIFF.
@@ -881,6 +883,11 @@ async function ttsAudioFor(cfg:TTSConfig, text:string):Promise<{buf:Buffer; type
   const provider=String(cfg.provider||"gradio").toLowerCase();
   const endpoint=String(cfg.endpoint||"").trim();
   const apiKey=String(cfg.apiKey||"").trim();
+  // Native SuperTonic (sidecar Rust lokal) — default proyek. Tak butuh
+  // endpoint/apiKey; model diunduh on-demand oleh engine.ts.
+  if(provider==="supertonic"||provider==="native"){
+    return ttsViaEngine({ text, voice:cfg.voice||"F1", lang:cfg.lang||"id" });
+  }
   if(provider==="gradio"){
     if(!endpoint) throw new Error("tts endpoint belum diisi");
     const base=endpoint.replace(/\/$/,"");
@@ -974,7 +981,7 @@ async function ttsAudioFor(cfg:TTSConfig, text:string):Promise<{buf:Buffer; type
 const TTS_CACHE_TTL_MS=30*60*1000, TTS_CACHE_MAX=200;
 const ttsCache=new Map<string,{buf:Buffer; type:string; at:number}>();
 function ttsCacheKey(cfg:TTSConfig, text:string):string{
-  const s=JSON.stringify([cfg.provider,cfg.endpoint,cfg.apiKey,cfg.voice,cfg.model,cfg.style,text]);
+  const s=JSON.stringify([cfg.provider,cfg.endpoint,cfg.apiKey,cfg.voice,cfg.model,cfg.style,cfg.format,cfg.lang,text]);
   let h=0x811c9dc5; for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,0x01000193); }
   return (h>>>0).toString(36)+"_"+text.length.toString(36);
 }
@@ -1019,6 +1026,42 @@ async function handleTTS(req:Request):Promise<Response>{
     const {buf,type}=await ttsAudioCached(cfgTTS, text);
     return new Response(new Uint8Array(buf),{headers:{"Content-Type":type}});
   }catch(e:any){ return json({error:"TTS error: "+e.message},502); }
+}
+// ── STT (speech-to-text) ───────────────────────────────────────
+// Body = audio WAV mentah (browser rekam + resample). Provider dari config.stt:
+//   "local"  → sidecar native (Whisper via whisper-rs) — DEFAULT
+//   "openai" → server OpenAI-compatible /v1/audio/transcriptions (multipart)
+// Provider "browser" tidak pernah sampai sini (transkripsi 100% di klien).
+async function handleSTT(req:Request):Promise<Response>{
+  let audio:Buffer;
+  try{ audio=Buffer.from(await req.arrayBuffer()); }catch{ return json({error:"gagal baca audio"},400); }
+  if(!audio.length) return json({error:"audio kosong"},400);
+  const stt:any = config.load().stt || {};
+  const provider=String(stt.provider||"local").toLowerCase();
+  // Bahasa: "indonesian"→"id", "auto"→auto, atau kode langsung.
+  const rawLang=String(stt.language||"auto");
+  const lang = rawLang==="indonesian" ? "id" : rawLang;
+  try{
+    if(provider==="openai"){
+      const base=openaiBase(String(stt.endpoint||"").trim());
+      if(!base) return json({error:"endpoint STT belum diisi"},400);
+      const fd=new FormData();
+      fd.append("file", new Blob([new Uint8Array(audio)],{type:"audio/wav"}), "audio.wav");
+      fd.append("model", String(stt.model||"whisper-1"));
+      if(lang && lang!=="auto") fd.append("language", lang);
+      const headers:Record<string,string>={};
+      const apiKey=String(stt.apiKey||"").trim();
+      if(apiKey) headers.Authorization="Bearer "+apiKey;
+      const r=await fetch(base+"/v1/audio/transcriptions",{method:"POST",headers,body:fd});
+      if(!r.ok){ let d=""; try{d=(await r.text()).slice(0,300);}catch{} throw new Error("HTTP "+r.status+(d?": "+d:"")); }
+      const j:any=await r.json();
+      return json({text:String(j?.text||"")});
+    }
+    // local (native sidecar) — default. engineModel: "base" (setara browser).
+    const model=String(stt.engineModel||"base");
+    const text=await sttViaEngine(audio, lang, model);
+    return json({text});
+  }catch(e:any){ return json({error:"STT error: "+e.message},502); }
 }
 // (Dihapus: terjemahan bicara kini terjadi DI DALAM /api/tts — satu titik
 // keputusan, deterministik. Route /api/tts/translate tidak lagi dipakai
@@ -1119,6 +1162,11 @@ async function handleTTSOptions(req:Request):Promise<Response>{
   let realKey=apiKey;
   if(apiKey && apiKey.indexOf("•")!==-1){ const stored=config.load().tts||{}; if(stored.apiKey) realKey=stored.apiKey; }
   try{
+    if(provider==="supertonic"||provider==="native"){
+      // Voice style dari sidecar native (F1..F5, M1..M5). Model tunggal.
+      const voices=await engineTtsVoices();
+      return json({voices:voices.length?voices:["F1","F2","F3","F4","F5","M1","M2","M3","M4","M5"], models:[{id:"supertonic-3",name:"SuperTonic 3 (native)"}], styles:[]});
+    }
     if(provider==="gemini"){
       let models:any[]=GEMINI_TTS_MODELS;
       // Key tersedia → tarik daftar model live, hanya yang -tts- yang aktif
@@ -1830,4 +1878,17 @@ console.log(`
 ║       http://127.0.0.1:${PORT}               ║
 ╚══════════════════════════════════════════════╝
 `);
+
+// Sidecar inferensi native (TTS SuperTonic + STT Whisper). Dinyalakan bila
+// exe-nya ada; model diunduh on-demand saat provider native pertama dipakai.
+// Degrade anggun bila belum di-build (provider lain tetap jalan).
+if (engineAvailable()) {
+  startEngine().then((ok) => {
+    if (!ok) console.warn("[engine] sidecar native belum siap — TTS/STT native akan mencoba lagi saat dipakai");
+  });
+}
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  try { process.on(sig, () => { stopEngine(); process.exit(0); }); } catch {}
+}
+process.on("exit", () => stopEngine());
 } // end if import.meta.main
