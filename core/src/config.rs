@@ -189,6 +189,11 @@ fn clean_str(s: &str) -> String {
         .to_string()
 }
 
+/// base36 publik (dipakai modul lain, mis. expressions untuk fallback nama).
+pub fn base36_pub(n: u128) -> String {
+    base36(n)
+}
+
 fn base36(mut n: u128) -> String {
     if n == 0 {
         return "0".into();

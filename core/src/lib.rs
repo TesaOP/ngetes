@@ -11,6 +11,7 @@
 //! Stage 2: static serving + /api/version. Rute Bun lain diport bertahap.
 
 pub mod config;
+pub mod expressions;
 pub mod model;
 pub mod paths;
 pub mod sheet;
@@ -47,6 +48,11 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/models", get(get_models))
         .route("/api/model/path", get(get_model_path))
         .route("/api/sheet", get(get_sheet_h).post(post_sheet_h))
+        .route("/api/model/expressions", get(get_expressions))
+        .route(
+            "/api/model/expressions-adoption",
+            get(get_adoption).post(post_adoption),
+        )
         .fallback(static_handler)
         .with_state(paths)
 }
@@ -113,6 +119,39 @@ async fn post_sheet_h(State(paths): State<AppPaths>, body: axum::body::Bytes) ->
             json_raw(status, out)
         }
         None => json_status(StatusCode::BAD_REQUEST, json!({ "error": "sheet kosong" })),
+    }
+}
+
+/// GET /api/model/expressions?name=X — discovery ekspresi (+params per exp).
+async fn get_expressions(
+    State(paths): State<AppPaths>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let name = q.get("name").map(String::as_str).unwrap_or("");
+    match expressions::discover(&paths.model_dir, &paths.data_dir, name) {
+        Ok(v) => json_status(StatusCode::OK, v),
+        Err(e) => json_status(StatusCode::NOT_FOUND, json!({ "error": e })),
+    }
+}
+
+/// GET /api/model/expressions-adoption?name=X — ekspresi + flag enabled.
+async fn get_adoption(
+    State(paths): State<AppPaths>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let name = q.get("name").map(String::as_str).unwrap_or("");
+    let (status, body) = expressions::adoption_get(&paths.model_dir, &paths.data_dir, &paths.sheets_dir, name);
+    json_raw(status, body)
+}
+
+/// POST /api/model/expressions-adoption {name, disabled:[]}.
+async fn post_adoption(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    match serde_json::from_slice::<serde_json::Value>(&body).ok() {
+        Some(v) => {
+            let (status, out) = expressions::adoption_post(&paths.sheets_dir, &v);
+            json_raw(status, out)
+        }
+        None => json_status(StatusCode::BAD_REQUEST, json!({ "error": "body JSON rusak" })),
     }
 }
 

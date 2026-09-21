@@ -115,9 +115,17 @@ Config TULIS juga diport (user OK: config.json gitignored + key di-reroll):
   (add→aktif+roles, update key-preserve, setActive 404, delete→activeId null,
   saveTTS mask+merge).
 
-BELUM diport: Auto-Rescue, expressions, motions, mode, LLM/agent/vtuber/media/
-browser. Shell belum menjalankan server core (masih Bun). Increment aman &
-terverifikasi; lanjut menyusul.
+Ekspresi juga diport:
+- `core/src/expressions.rs` — discover (walk .exp3.json depth≤6, params=Id
+  rigger utk gate overlay, declared dari model3, sort), adoption GET/POST
+  (sanitize_model_folder_name). Route GET /api/model/expressions +
+  GET/POST expressions-adoption. **Paritas urutan LIVE vs Bun: 19 ekspresi
+  lumine IDENTIK** (fix bug: localeCompare TS → banding lowercase, bukan byte
+  cmp). 20 test cargo hijau. Gap: rescue-only folder belum ditangani.
+
+BELUM diport: Auto-Rescue, motions, mode, model files/avatar/motion-taxonomy,
+upload/import-zip/delete, LLM/agent/vtuber/media/browser. Shell belum
+menjalankan server core (masih Bun). Increment aman & terverifikasi; menyusul.
 
 ## UPDATE 2026-09-22 (65) — EKSEKUSI Stage 0-1 migrasi Tauri + TEMUAN IPC penting
 
