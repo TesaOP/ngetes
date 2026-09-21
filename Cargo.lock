@@ -1934,6 +1934,7 @@ dependencies = [
 name = "live2d-shell"
 version = "0.1.0"
 dependencies = [
+ "live2d-core",
  "serde",
  "serde_json",
  "tauri",

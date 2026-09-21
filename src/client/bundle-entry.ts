@@ -26,6 +26,7 @@ import { collectNativeExpressions } from "./engine/native-expressions";
 import * as LipSync from "./speech/lip-sync";
 import { createSpeechPolicy } from "./speech/speech-policy";
 import * as i18n from "./i18n/index";
+import { transport } from "./transport/index";
 import "./agent/directive-parser";
 import "./agent/brain"; // installs window.__agent at module load
 import { startAssistantPanel } from "./agent/panel/panel";
@@ -54,6 +55,10 @@ if (typeof window !== "undefined") {
   // app.js dieksekusi (script di akhir body → DOM sudah ter-parse), lalu
   // app.js/motion-editor/mode-runtime memakai window.__i18n.t() saat runtime.
   window.__i18n = i18n;
+  // Seam transport (Stage 1a migrasi Tauri) — titik tunggal komunikasi ke
+  // backend. Call-site baru pakai window.__transport; migrasi call-site lama
+  // bertahap. Lihat docs/ARCHITECTURE-TAURI-RUST.md.
+  window.__transport = transport;
   // Panel agent (mode Assistant) — dipanggil mode-runtime.js saat tab
   // assistant aktif. Remake tampilan ala ZCode tinggal di sini (TS).
   window.__agentPanel = { start: startAssistantPanel };

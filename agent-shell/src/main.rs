@@ -36,6 +36,24 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
+/// Info aplikasi untuk frontend (command Tauri `app_info`). Titik masuk pertama
+/// jalur IPC — membuktikan seam Tauri hidup & core ter-link (Stage 1b).
+#[derive(serde::Serialize)]
+struct AppInfo {
+    shell_version: String,
+    core_version: String,
+    core_ready: bool,
+}
+
+#[tauri::command]
+fn app_info() -> AppInfo {
+    AppInfo {
+        shell_version: env!("CARGO_PKG_VERSION").to_string(),
+        core_version: live2d_core::VERSION.to_string(),
+        core_ready: live2d_core::core_ready(),
+    }
+}
+
 const FALLBACK_MAIN_URL: &str = "http://127.0.0.1:8310/";
 const FALLBACK_PET_URL: &str = "http://127.0.0.1:8310/pet.html";
 /** Batas pemulihan: kalau server belum juga naik dalam 2 menit, menyerah —
@@ -218,6 +236,7 @@ fn main() {
     let main_mode = matches!(launch.mode, Mode::Main);
     let label = if main_mode { "main" } else { "pet" };
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![app_info])
         .setup(move |app| {
             let parsed = launch
                 .url

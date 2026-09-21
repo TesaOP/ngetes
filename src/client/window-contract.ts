@@ -5,6 +5,7 @@ import type { MotionRegistry } from "./animation/motion-registry";
 import type { MotionRuntime } from "./animation/motion-runtime";
 import type * as MotionTaxonomy from "./engine/motion-taxonomy";
 import type * as LipSync from "./speech/lip-sync";
+import type { Transport } from "./transport/index";
 import type {
   SpeechClass,
   SpeechController,
@@ -42,6 +43,8 @@ declare global {
     __framing?: typeof Framing;
     __nativeExpressions?: { collect: typeof collectNativeExpressions };
     __i18n?: typeof I18n;
+    /** Seam transport (Stage 1a) — titik tunggal komunikasi ke backend. */
+    __transport?: Transport;
     __live2dAgent?: Live2DLegacyBridge;
     __addChat?: (role: string, text: string) => void;
     /** Policy speech (bundle) — app.js executor mendaftar lewat setExecutor. */
