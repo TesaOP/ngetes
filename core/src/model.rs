@@ -165,6 +165,77 @@ pub fn find_avatar(model_dir: &Path, name: &str) -> Option<PathBuf> {
     walk(&dir, "")
 }
 
+/// Hapus folder model (rekursif) — padanan handleModelDelete. (status, body).
+pub fn delete_model(model_dir: &Path, name: &str) -> (u16, String) {
+    if name.split(['\\', '/']).any(|s| s == "..") {
+        return (400, serde_json::json!({ "error": "not found" }).to_string());
+    }
+    let dir = model_dir.join(name);
+    if !dir.starts_with(model_dir) || !dir.exists() {
+        return (400, serde_json::json!({ "error": "not found" }).to_string());
+    }
+    match std::fs::remove_dir_all(&dir) {
+        Ok(()) => (200, serde_json::json!({ "ok": true }).to_string()),
+        Err(e) => (400, serde_json::json!({ "error": e.to_string() }).to_string()),
+    }
+}
+
+/// Nama model valid: char pertama bukan /,\,.,whitespace; sisanya bukan /,\.
+fn valid_model_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c0) if !matches!(c0, '/' | '\\' | '.') && !c0.is_whitespace() => {}
+        _ => return false,
+    }
+    !name.chars().skip(1).any(|c| c == '/' || c == '\\')
+}
+
+/// Upload file model (base64) — padanan handleModelUpload. `files` = array
+/// {path, base64}. Wajib mengandung *.model3.json. (status, body).
+pub fn upload_model(model_dir: &Path, name: &str, files: &serde_json::Value) -> (u16, String) {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use serde_json::json;
+    if !valid_model_name(name) {
+        return (400, json!({ "error": "nama model invalid" }).to_string());
+    }
+    let arr = match files.as_array() {
+        Some(a) if !a.is_empty() => a,
+        _ => return (400, json!({ "error": "tidak ada file" }).to_string()),
+    };
+    let dest = model_dir.join(name);
+    if std::fs::create_dir_all(&dest).is_err() {
+        return (400, json!({ "error": "gagal buat folder" }).to_string());
+    }
+    let mut wrote_model3 = false;
+    for f in arr {
+        let raw = f.get("path").and_then(|v| v.as_str()).unwrap_or("");
+        // buang prefix ../ dan absolut; tolak traversal.
+        let rel = raw.replace('\\', "/");
+        let rel = rel.trim_start_matches("../").trim_start_matches("./");
+        if rel.is_empty() || rel.contains("..") || rel.starts_with('/') {
+            continue;
+        }
+        if rel.to_lowercase().ends_with("model3.json") {
+            wrote_model3 = true;
+        }
+        let target = dest.join(rel);
+        if !target.starts_with(&dest) {
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let b64 = f.get("base64").and_then(|v| v.as_str()).unwrap_or("");
+        if let Ok(bytes) = STANDARD.decode(b64) {
+            let _ = std::fs::write(&target, bytes);
+        }
+    }
+    if !wrote_model3 {
+        return (400, json!({ "error": "folder tidak mengandung *.model3.json" }).to_string());
+    }
+    (200, json!({ "ok": true, "name": name }).to_string())
+}
+
 /// Content-Type gambar avatar dari ekstensi.
 pub fn avatar_mime(path: &Path) -> &'static str {
     let e = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();

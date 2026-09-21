@@ -1965,6 +1965,7 @@ name = "live2d-core"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "serde",
  "serde_json",
  "tokio",

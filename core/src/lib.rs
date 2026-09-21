@@ -57,6 +57,8 @@ pub fn router(paths: AppPaths) -> Router {
         )
         .route("/api/model/files", get(get_model_files))
         .route("/api/model/avatar", get(get_model_avatar))
+        .route("/api/model/upload", axum::routing::post(post_model_upload))
+        .route("/api/model/{name}", axum::routing::delete(delete_model_h))
         .route("/api/motions", get(get_motions_list))
         .route("/api/motions/{id}", get(get_motion_h).delete(del_motion_h))
         .fallback(static_handler)
@@ -194,6 +196,28 @@ async fn get_model_avatar(
             }
         }
         None => json_status(StatusCode::NOT_FOUND, json!({ "error": "no avatar" })),
+    }
+}
+
+/// DELETE /api/model/:name — hapus folder model (rekursif).
+async fn delete_model_h(
+    State(paths): State<AppPaths>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+) -> Response {
+    let (status, body) = model::delete_model(&paths.model_dir, &name);
+    json_raw(status, body)
+}
+
+/// POST /api/model/upload {name, files:[{path,base64}]}.
+async fn post_model_upload(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    match serde_json::from_slice::<serde_json::Value>(&body).ok() {
+        Some(v) => {
+            let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("");
+            let files = v.get("files").cloned().unwrap_or(json!([]));
+            let (status, out) = model::upload_model(&paths.model_dir, name, &files);
+            json_raw(status, out)
+        }
+        None => json_status(StatusCode::BAD_REQUEST, json!({ "error": "body JSON rusak" })),
     }
 }
 

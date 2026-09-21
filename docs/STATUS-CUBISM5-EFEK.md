@@ -139,9 +139,16 @@ Auto-Rescue juga diport:
   route virtual `model/<folder>/__rescue__.model3.json`. 23 test cargo hijau;
   paritas /api/models tetap identik.
 
-BELUM diport: mode manager, motion-taxonomy (import client), upload/import-zip/
-delete, POST/PUT motions, LLM/agent/vtuber/media/browser. Shell belum
-menjalankan server core (masih Bun). Increment aman & terverifikasi; menyusul.
+Model delete + upload (base64) juga diport:
+- `core/src/model.rs` +delete_model (rmdir rekursif, guard traversal) +
+  upload_model (valid_model_name, tulis base64 per file, wajib *.model3.json,
+  guard traversal). Routes DELETE /api/model/{name}, POST /api/model/upload.
+  Smoke end-to-end (temp root): upload testmdl → /api/models=[testmdl] → delete
+  → []; tanpa route-conflict (GET /api/model/path tetap jalan). 23 test hijau.
+
+BELUM diport: import-zip (butuh crate zip), mode manager (coupling runtime),
+motion-taxonomy + POST/PUT motions (import client), LLM/agent/vtuber/media/
+browser. Shell belum menjalankan server core (masih Bun). Menyusul.
 
 ## UPDATE 2026-09-22 (65) — EKSEKUSI Stage 0-1 migrasi Tauri + TEMUAN IPC penting
 
