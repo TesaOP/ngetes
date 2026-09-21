@@ -132,8 +132,15 @@ Motions (read/delete) + model files/avatar juga diport:
   avatar 200 image/png 104 KB, motions []. 21 test cargo hijau.
   Gap: POST/PUT motions (butuh sanitizeMotionAsset client) belum diport.
 
-BELUM diport: Auto-Rescue, mode manager, motion-taxonomy (import client),
-upload/import-zip/delete, LLM/agent/vtuber/media/browser. Shell belum
+Auto-Rescue juga diport:
+- `core/src/rescue.rs` — port buildRescueBlueprint (natural_compare, walk_files,
+  scan .moc3/tekstur/motion/exp, idle dari vtube.json/pola nama, dedup ekspresi,
+  manifest virtual di memori). Terintegrasi: list_models & model_path_rel &
+  route virtual `model/<folder>/__rescue__.model3.json`. 23 test cargo hijau;
+  paritas /api/models tetap identik.
+
+BELUM diport: mode manager, motion-taxonomy (import client), upload/import-zip/
+delete, POST/PUT motions, LLM/agent/vtuber/media/browser. Shell belum
 menjalankan server core (masih Bun). Increment aman & terverifikasi; menyusul.
 
 ## UPDATE 2026-09-22 (65) — EKSEKUSI Stage 0-1 migrasi Tauri + TEMUAN IPC penting

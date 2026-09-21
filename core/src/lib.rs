@@ -15,6 +15,7 @@ pub mod expressions;
 pub mod model;
 pub mod motions;
 pub mod paths;
+pub mod rescue;
 pub mod sheet;
 pub mod static_serve;
 
@@ -243,6 +244,22 @@ async fn static_handler(State(paths): State<AppPaths>, uri: Uri) -> Response {
     let mut pathname = uri.path().to_string();
     if pathname == "/" {
         pathname = "/index.html".to_string();
+    }
+    // Auto-Rescue: manifest virtual model/<folder>/__rescue__.model3.json
+    // dirakit di memori (tidak menulis folder), sama seperti index.ts.
+    if let Some(folder) = pathname
+        .strip_prefix("/model/")
+        .and_then(|s| s.strip_suffix(&format!("/{}", rescue::RESCUE_FILENAME)))
+    {
+        let decoded = static_serve::percent_decode_pub(folder);
+        if decoded.split(['/', '\\']).any(|s| s == "..") {
+            return text(StatusCode::FORBIDDEN, "Forbidden");
+        }
+        let dir = paths.model_dir.join(&decoded);
+        return match rescue::build_rescue_blueprint(&dir) {
+            Some(m) => json_status(StatusCode::OK, m),
+            None => json_status(StatusCode::NOT_FOUND, json!({ "error": "tak bisa dirakit" })),
+        };
     }
     match safe_join(&paths, &pathname) {
         Resolved::Forbidden => text(StatusCode::FORBIDDEN, "Forbidden"),

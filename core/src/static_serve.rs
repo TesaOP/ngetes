@@ -115,6 +115,11 @@ fn file_or_missing(f: PathBuf) -> Resolved {
     }
 }
 
+/// Decode persen publik (dipakai lib.rs untuk jalur rescue virtual).
+pub fn percent_decode_pub(s: &str) -> String {
+    percent_decode(s)
+}
+
 /// Decode persen minimal (%XX) — cukup untuk deteksi ".." ter-encode.
 fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();

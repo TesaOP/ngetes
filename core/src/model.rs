@@ -36,15 +36,17 @@ pub fn find_model3(root: &Path, depth: usize) -> Option<PathBuf> {
     None
 }
 
-/// Daftar folder model yang dapat dipakai (punya `.model3.json`), terurut.
-/// (Rescue-only folders belum termasuk — lihat catatan modul.)
+/// Daftar folder model yang dapat dipakai (punya `.model3.json` ATAU bisa
+/// dirakit Auto-Rescue), terurut — padanan handleListModels.
 pub fn list_models(model_dir: &Path) -> Vec<String> {
     let mut usable: Vec<String> = Vec::new();
     if let Ok(rd) = std::fs::read_dir(model_dir) {
         for e in rd.flatten() {
             if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                 let dir = e.path();
-                if find_model3(&dir, 0).is_some() {
+                if find_model3(&dir, 0).is_some()
+                    || crate::rescue::build_rescue_blueprint(&dir).is_some()
+                {
                     usable.push(e.file_name().to_string_lossy().into_owned());
                 }
             }
@@ -65,9 +67,20 @@ pub fn model_path_rel(data_dir: &Path, model_dir: &Path, name: &str) -> Option<S
     if !dir.starts_with(model_dir) || !dir.exists() {
         return None;
     }
-    let abs = find_model3(&dir, 0)?;
-    let rel = abs.strip_prefix(data_dir).ok()?;
-    Some(rel.to_string_lossy().replace('\\', "/"))
+    // Auto-Rescue: folder tanpa manifest → jalur virtual __rescue__.
+    match find_model3(&dir, 0) {
+        Some(abs) => {
+            let rel = abs.strip_prefix(data_dir).ok()?;
+            Some(rel.to_string_lossy().replace('\\', "/"))
+        }
+        None => {
+            if crate::rescue::build_rescue_blueprint(&dir).is_some() {
+                Some(format!("model/{name}/{}", crate::rescue::RESCUE_FILENAME))
+            } else {
+                None
+            }
+        }
+    }
 }
 
 /// Semua file (path relatif "/") di bawah `model_dir/name` — padanan
