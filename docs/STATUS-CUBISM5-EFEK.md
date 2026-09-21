@@ -100,9 +100,16 @@ Rute model READ-ONLY juga diport:
   `/api/model/path?name=lumine` = `model/lumine/lumine/lumine.model3.json`
   identik. Gap sengaja: Auto-Rescue belum diport (Bun masih pemilik selama transisi).
 
-BELUM diport: config TULIS (saveConnections/TTS/dst), Auto-Rescue, /api/sheet,
-expressions, motions, LLM/agent/vtuber/media/browser. Shell belum menjalankan
-server core (masih Bun). Increment aman & terverifikasi paritas; lanjut menyusul.
+Rute sheet juga diport:
+- `core/src/sheet.rs` — sanitize_key (huruf/angka Unicode dipertahankan: CJK/kana
+  utuh), get_sheet (tandai `_stale` bila scannerVersion≠2), save_sheet (stamp +
+  tulis atomik tmp+rename). Route GET/POST /api/sheet. Smoke OK: POST → path,
+  GET → {scannerVersion:2,...}, 404 bila tak ada. 16 test cargo hijau.
+
+BELUM diport: config TULIS (saveConnections/TTS/dst — DITUNDA, delicate mask
+round-trip apiKey), Auto-Rescue, expressions, motions, LLM/agent/vtuber/media/
+browser. Shell belum menjalankan server core (masih Bun). Increment aman &
+terverifikasi paritas; lanjut menyusul.
 
 ## UPDATE 2026-09-22 (65) — EKSEKUSI Stage 0-1 migrasi Tauri + TEMUAN IPC penting
 

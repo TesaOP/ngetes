@@ -13,6 +13,7 @@
 pub mod config;
 pub mod model;
 pub mod paths;
+pub mod sheet;
 pub mod static_serve;
 
 use axum::{
@@ -45,6 +46,7 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/config", get(get_config))
         .route("/api/models", get(get_models))
         .route("/api/model/path", get(get_model_path))
+        .route("/api/sheet", get(get_sheet_h).post(post_sheet_h))
         .fallback(static_handler)
         .with_state(paths)
 }
@@ -77,6 +79,39 @@ async fn get_model_path(
         Some(rel) => json_status(StatusCode::OK, json!({ "path": rel })),
         None => json_status(StatusCode::NOT_FOUND, json!({ "error": "not found" })),
     }
+}
+
+/// GET /api/sheet?name=X — cache sheet karakter (tandai _stale bila versi lama).
+async fn get_sheet_h(
+    State(paths): State<AppPaths>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let name = q.get("name").map(String::as_str).unwrap_or("default");
+    let (status, body) = sheet::get_sheet(&paths.sheets_dir, name);
+    json_raw(status, body)
+}
+
+/// POST /api/sheet — stamp scannerVersion + tulis atomik.
+async fn post_sheet_h(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let parsed: Option<serde_json::Value> = serde_json::from_slice(&body).ok();
+    match parsed {
+        Some(v) => {
+            let (status, out) = sheet::save_sheet(&paths.sheets_dir, &paths.data_dir, &v);
+            json_raw(status, out)
+        }
+        None => json_status(StatusCode::BAD_REQUEST, json!({ "error": "sheet kosong" })),
+    }
+}
+
+/// Bangun Response JSON dari status u16 + body string (untuk handler yang sudah
+/// menghasilkan JSON string + status sendiri).
+fn json_raw(status: u16, body: String) -> Response {
+    Response::builder()
+        .status(StatusCode::from_u16(status).unwrap_or(StatusCode::OK))
+        .header(header::CONTENT_TYPE, "application/json; charset=utf-8")
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .body(Body::from(body))
+        .unwrap()
 }
 
 /// Penyajian statis + SPA fallback (padanan blok fetch static di index.ts).
