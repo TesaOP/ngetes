@@ -1,0 +1,19 @@
+# live2d-core — Rust application core (Tauri) untuk Live2D Agent.
+#
+# Kerangka Stage 0: baru skeleton. Backend TypeScript/Bun akan dipindah ke sini
+# bertahap (config/persistence → AI → media → browser) sesuai
+# docs/ARCHITECTURE-TAURI-RUST.md. Renderer Live2D/Pixi TETAP di frontend TS.
+[package]
+name = "live2d-core"
+version = "0.1.0"
+description = "Application core (Rust) untuk Live2D Agent — dipanggil dari Tauri"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "live2d_core"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

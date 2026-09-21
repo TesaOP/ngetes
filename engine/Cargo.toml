@@ -14,6 +14,10 @@ description = "Sidecar inferensi native (SuperTonic TTS + Whisper STT) untuk Liv
 edition = "2021"
 rust-version = "1.77"
 
+[lib]
+name = "live2d_engine"
+path = "src/lib.rs"
+
 [[bin]]
 name = "live2d-engine"
 path = "src/main.rs"
@@ -35,9 +39,6 @@ default = []
 # Aktifkan setelah cmake + LLVM/libclang terpasang:  cargo build --release --features stt
 stt = ["dep:whisper-rs"]
 
-[profile.release]
-# Longgar untuk FFI besar (ort/whisper.cpp). Bukan opt-level="s" seperti shell:
-# di sini kecepatan inferensi > ukuran biner.
-opt-level = 3
-lto = "thin"
-codegen-units = 1
+# Profil release dipindah ke workspace root (Cargo mengabaikan profil member).
+# Override opt-level=3 untuk crate ini ada di root Cargo.toml
+# ([profile.release.package.live2d-engine]).

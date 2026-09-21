@@ -23,9 +23,13 @@ data/
 # state CLI lokal (rencana sesi, artifact)
 .zcode/
 
-# shell Tauri — build artifacts only; sources are tracked
+# Rust workspace — build artifacts only; sources & Cargo.lock di-track.
+# Sejak jadi workspace (Cargo.toml root), target/ terpusat di root.
+/target/
 agent-shell/target/
 agent-shell/gen/
+engine/target/
+core/target/
 
 # lain-lain
 *.tmp

@@ -10,11 +10,10 @@
 //! TTS & STT dimuat malas (lazy) saat endpoint pertama dipakai, supaya start cepat
 //! dan model yang tak dipakai tak perlu ada.
 
-mod tts;
-mod text;
-mod wav;
+// Modul inti kini di lib (live2d_engine) supaya bisa diabsorb Rust core.
+use live2d_engine::{tts, wav};
 #[cfg(feature = "stt")]
-mod stt;
+use live2d_engine::stt;
 
 use std::path::PathBuf;
 use std::sync::Mutex;

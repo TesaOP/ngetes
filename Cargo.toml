@@ -1,0 +1,24 @@
+# Workspace Rust — Live2D Agent (migrasi backend → Rust core, Tauri IPC-first).
+# Lihat docs/ARCHITECTURE-TAURI-RUST.md untuk arah & roadmap.
+#
+# Anggota:
+#   agent-shell  — cangkang Tauri (jendela app + pet). Jadi host utama migrasi.
+#   engine       — lib+bin inferensi native (TTS SuperTonic + STT Whisper).
+#   core         — application core (skeleton; diisi bertahap Stage 2+).
+[workspace]
+members = ["agent-shell", "engine", "core"]
+resolver = "2"
+
+# Profil didefinisikan di root (Cargo mengabaikan [profile.*] di crate member
+# dalam workspace). Default kecil (untuk shell); engine di-override ke opt-level
+# 3 karena kecepatan inferensi > ukuran. Catatan: `lto` & `panic` hanya bisa
+# di level profil (bukan per-package), jadi dipilih yang aman untuk FFI berat
+# (ort/whisper.cpp): unwind default + lto tipis.
+[profile.release]
+opt-level = "s"
+lto = "thin"
+strip = true
+codegen-units = 1
+
+[profile.release.package.live2d-engine]
+opt-level = 3
