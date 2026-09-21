@@ -92,9 +92,17 @@ Grup rute BACA config juga sudah diport:
   (319 KB), /config.json → 403, /api/config → config asli dgn apiKey TERMASK
   (`sk-xt-••••••••0be6`) sama format TS. 13 test cargo hijau.
 
-BELUM diport: config TULIS (saveConnections/TTS/dst), /api/models (+rescue),
-LLM/agent/vtuber/media/browser. Shell belum menjalankan server core (masih Bun).
-Increment aman & terverifikasi; grup rute berikutnya menyusul.
+Rute model READ-ONLY juga diport:
+- `core/src/model.rs` — find_model3 (DFS depth≤6), list_models, model_path_rel.
+  Route GET /api/models + /api/model/path.
+- **Paritas LIVE vs server Bun** (core:8341 vs bun:8312): `/api/models` =
+  `["lumine","ren_official_cubism","神宫白子模型"]` IDENTIK (termasuk nama CJK);
+  `/api/model/path?name=lumine` = `model/lumine/lumine/lumine.model3.json`
+  identik. Gap sengaja: Auto-Rescue belum diport (Bun masih pemilik selama transisi).
+
+BELUM diport: config TULIS (saveConnections/TTS/dst), Auto-Rescue, /api/sheet,
+expressions, motions, LLM/agent/vtuber/media/browser. Shell belum menjalankan
+server core (masih Bun). Increment aman & terverifikasi paritas; lanjut menyusul.
 
 ## UPDATE 2026-09-22 (65) — EKSEKUSI Stage 0-1 migrasi Tauri + TEMUAN IPC penting
 

@@ -11,6 +11,7 @@
 //! Stage 2: static serving + /api/version. Rute Bun lain diport bertahap.
 
 pub mod config;
+pub mod model;
 pub mod paths;
 pub mod static_serve;
 
@@ -42,6 +43,8 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/health", get(health))
         .route("/api/version", get(version))
         .route("/api/config", get(get_config))
+        .route("/api/models", get(get_models))
+        .route("/api/model/path", get(get_model_path))
         .fallback(static_handler)
         .with_state(paths)
 }
@@ -57,6 +60,23 @@ async fn version() -> Json<serde_json::Value> {
 /// GET /api/config — apiKey dimask, roles dinormalisasi (padanan handler TS).
 async fn get_config(State(paths): State<AppPaths>) -> Json<serde_json::Value> {
     Json(config::api_config_response(&paths.data_dir.join("config.json")))
+}
+
+/// GET /api/models — daftar folder model yang punya `.model3.json` (terurut).
+async fn get_models(State(paths): State<AppPaths>) -> Json<serde_json::Value> {
+    Json(json!({ "models": model::list_models(&paths.model_dir) }))
+}
+
+/// GET /api/model/path?name=X — path .model3.json relatif ke data/ (atau 404).
+async fn get_model_path(
+    State(paths): State<AppPaths>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let name = q.get("name").map(String::as_str).unwrap_or("");
+    match model::model_path_rel(&paths.data_dir, &paths.model_dir, name) {
+        Some(rel) => json_status(StatusCode::OK, json!({ "path": rel })),
+        None => json_status(StatusCode::NOT_FOUND, json!({ "error": "not found" })),
+    }
 }
 
 /// Penyajian statis + SPA fallback (padanan blok fetch static di index.ts).
