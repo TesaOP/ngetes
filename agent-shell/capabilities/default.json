@@ -3,6 +3,9 @@
   "identifier": "default",
   "description": "Izin minimal untuk jendela shell (pet & main): kelola jendela sendiri tanpa akses lain.",
   "windows": ["pet", "main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:*", "http://localhost:*"]
+  },
   "permissions": [
     "core:default",
     "core:window:allow-set-ignore-cursor-events",

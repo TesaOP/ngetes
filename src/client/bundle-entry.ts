@@ -59,6 +59,17 @@ if (typeof window !== "undefined") {
   // backend. Call-site baru pakai window.__transport; migrasi call-site lama
   // bertahap. Lihat docs/ARCHITECTURE-TAURI-RUST.md.
   window.__transport = transport;
+  // Indikator core native: bila berjalan di shell Tauri, tanyakan app_info lewat
+  // IPC dan cerminkan di judul jendela ("· core vX native"). Di browser biasa
+  // (hasTauri=false) tak berubah. Sekaligus bukti seam IPC hidup (Stage 1b).
+  // Indikator core native: bila berjalan di shell Tauri DAN command app_info
+  // terotorisasi, cerminkan di judul jendela. Catatan (temuan Stage 1b): saat
+  // frontend disajikan dari server HTTP (origin "remote"), Tauri v2 memblokir
+  // command app — jadi ini hanya menyala bila frontend disajikan LOKAL oleh
+  // Tauri (frontendDist). Lihat docs/ARCHITECTURE-TAURI-RUST.md §Temuan IPC.
+  transport.appInfo().then((info) => {
+    if (info) document.title = document.title + " · core v" + info.core_version + " (native)";
+  }).catch(() => { /* di luar Tauri / origin remote → biarkan */ });
   // Panel agent (mode Assistant) — dipanggil mode-runtime.js saat tab
   // assistant aktif. Remake tampilan ala ZCode tinggal di sini (TS).
   window.__agentPanel = { start: startAssistantPanel };

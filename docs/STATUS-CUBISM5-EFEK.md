@@ -64,6 +64,42 @@ sudah selaras dengan arsitektur ini.
    (user bilang hapus manual saat sudah stabil) + blocker Core di SHA lama
    GitHub (risiko sudah diterima user — jangan dibuka lagi).
 
+## UPDATE 2026-09-22 (65) — EKSEKUSI Stage 0-1 migrasi Tauri + TEMUAN IPC penting
+
+Lanjutan (64). User: "gas implementasikan hingga akhir" + "kamu tes sendiri".
+Dikerjakan Stage 0 & 1 (fondasi), lalu spike IPC membongkar satu asumsi kunci.
+
+**SELESAI & gate hijau:**
+- **Stage 0** (commit 77913fa): cargo **workspace** (agent-shell + engine +
+  core), `engine/` jadi **lib+bin**, crate `core` skeleton. Profil release di
+  root (shell opt-level=s, engine=3). `cargo check --workspace` + test hijau.
+- **Stage 1a/1b** (commit 1cf2234): seam `src/client/transport/`
+  (apiBase/apiUrl/apiFetch/getJson/postJson + hasTauri/tauriInvoke/appInfo,
+  window.__transport, 9 unit test) + command Tauri `app_info` + invoke_handler +
+  agent-shell depend live2d-core. Additive, call-site lama belum diubah.
+
+**TEMUAN SPIKE IPC (dibuktikan headless — mengubah rencana):**
+`window.__TAURI__.core.invoke` ada & command ter-registrasi, TAPI ditolak:
+`"app_info not allowed. Plugin not found"`. Akar (authority.rs::resolve_access):
+otorisasi difilter per-origin. Shell load frontend via `WebviewUrl::External`
+(http://127.0.0.1:8310) = origin **Remote**; command app default konteks
+**Local**; capability `remote.urls` tak menolong karena command app tak punya
+identifier permission. → **Selama frontend disajikan server HTTP (remote),
+Tauri IPC command app TIDAK bisa.** frontendDist/origin-lokal jadi PRASYARAT
+IPC-first (bukan langkah akhir). Detail + 2 opsi keputusan (A: pindah frontend
+ke Tauri-served lebih dulu; B: pertahankan HTTP transport) di
+docs/ARCHITECTURE-TAURI-RUST.md §6b.
+
+**Yang terbukti jalan:** frontend penuh (Live2D+Pixi+TTS/STT) mulus di jendela
+Tauri via HTTP ("model muncul, suara keluar"). HttpTransport valid; hanya IPC
+yang menuntut origin lokal.
+
+**Belum:** Stage 1c (3 spike) & Stage 2-5 tertahan menunggu keputusan A/B.
+Computer-use MCP TIDAK tersedia di sesi ini (Tool not found) — verifikasi GUI
+dilakukan headless (launch exe + baca log diag). Catatan: pet click-through
+(core:window dari pet.html remote) kemungkinan kena isu origin yang sama —
+belum pernah terverifikasi di shell nyata.
+
 ## UPDATE 2026-09-22 (64) — RENCANA MIGRASI Tauri + Rust core (dokumen saja, belum eksekusi)
 
 User: "sekarang mungkin memigrasikan backend ke rust dan frontend ke tauri.

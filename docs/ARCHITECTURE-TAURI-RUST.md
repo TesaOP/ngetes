@@ -231,6 +231,48 @@ berhenti aman di situ.
 
 ---
 
+## 6b. TEMUAN IPC (spike Stage 1 — mengubah urutan migrasi)
+
+Diverifikasi headless (server + jendela Tauri nyata + diagnostik):
+
+- `window.__TAURI__.core.invoke` ADA, command `app_info` ter-registrasi
+  (`generate_handler!`), tapi invoke **ditolak**: `"app_info not allowed.
+  Plugin not found"`.
+- Akar masalah (dibaca dari `tauri-2.11.6/src/ipc/authority.rs::resolve_access`):
+  otorisasi command difilter `origin.matches(&cmd.context)`. Shell memuat
+  frontend via `WebviewUrl::External("http://127.0.0.1:8310")` → origin
+  **Remote**. Command app default konteksnya **Local**, dan capability yang
+  cuma berisi permission `core:*` tidak memberi command app ke origin remote.
+  Menambah `remote.urls` ke capability pun tak menolong: command app **tidak
+  punya identifier permission** (dicek: tak ada di `gen/schemas`), jadi tak bisa
+  didaftarkan sebagai permission bercakupan-remote.
+
+**Konsekuensi (load-bearing):** selama frontend disajikan oleh server HTTP
+(origin remote), **Tauri IPC untuk command app tidak bisa dipakai.** Ini
+membalik urutan rencana: **frontend harus disajikan LOKAL oleh Tauri**
+(`frontendDist` → origin `tauri://`/`http://tauri.localhost`) SEBELUM IPC-first
+bisa jalan. Artinya "packaging frontendDist" (dulu Stage 5) menjadi
+**prasyarat Stage 1**, bukan langkah akhir.
+
+**Dampak ke arsitektur "shell load External URL":** model saat ini (shell =
+`WebviewUrl::External` ke server Bun) harus berubah jadi Tauri menyajikan aset
+frontend lokal, dan server HTTP turun peran jadi *compat adapter* (untuk CLI
+agent + OBS overlay + akses HP) — persis niat "HTTP = kompatibilitas opsional",
+tapi transisinya harus lebih awal.
+
+**Yang SUDAH terbukti jalan:** frontend penuh (Live2D + Pixi + TTS/STT) berjalan
+mulus di dalam jendela Tauri via HTTP (origin remote) — "model muncul, suara
+keluar". Jadi HttpTransport (mode kompatibilitas) valid; hanya jalur IPC yang
+menuntut origin lokal.
+
+**Keputusan terbuka untuk user** (belum diputus):
+- **A. Pindah frontend ke Tauri-served (local origin) lebih dulu** → buka jalan
+  IPC-first sesuai rencana; perubahan besar di shell (`frontendDist`, resolusi
+  aset model lewat protocol lokal — spike custom protocol jadi wajib duluan).
+- **B. Pertahankan HTTP transport** (sudah terbukti jalan), Tauri tetap sekadar
+  cangkang jendela; tunda/urungkan IPC-first. Jauh lebih sederhana, tapi
+  menyimpang dari pilihan "Tauri IPC-first".
+
 ## 7. Risiko utama & mitigasi
 
 | Risiko | Mitigasi |
