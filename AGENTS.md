@@ -29,8 +29,9 @@ bukan instruksi untukmu.
 | 2 | [`docs/SHEET-SYSTEM.md`](docs/SHEET-SYSTEM.md) | menyentuh sheet, preset, migrasi, atau analisa LLM |
 | 3 | [`docs/MOTION-SYSTEM-SPEC.md`](docs/MOTION-SYSTEM-SPEC.md) | menyentuh pipeline motion / Motion Studio |
 | 4 | [`docs/MODES.md`](docs/MODES.md) | menyentuh mode, runtime, atau teardown |
-| 5 | [`docs/STATUS-CUBISM5-EFEK.md`](docs/STATUS-CUBISM5-EFEK.md) | **awal sesi**: baca entri teratas (handoff sesi sebelumnya) · **akhir sesi**: tambah entri baru |
-| 6 | [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | debugging perilaku yang dilaporkan user |
+| 5 | [`docs/ARCHITECTURE-TAURI-RUST.md`](docs/ARCHITECTURE-TAURI-RUST.md) | menyentuh **apa pun** terkait migrasi backend→Rust / Tauri IPC / transport (arah + invarian; masih rencana) |
+| 6 | [`docs/STATUS-CUBISM5-EFEK.md`](docs/STATUS-CUBISM5-EFEK.md) | **awal sesi**: baca entri teratas (handoff sesi sebelumnya) · **akhir sesi**: tambah entri baru |
+| 7 | [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | debugging perilaku yang dilaporkan user |
 
 ## Perintah & definisi "selesai"
 

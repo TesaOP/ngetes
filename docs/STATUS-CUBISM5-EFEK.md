@@ -64,6 +64,45 @@ sudah selaras dengan arsitektur ini.
    (user bilang hapus manual saat sudah stabil) + blocker Core di SHA lama
    GitHub (risiko sudah diterima user — jangan dibuka lagi).
 
+## UPDATE 2026-09-22 (64) — RENCANA MIGRASI Tauri + Rust core (dokumen saja, belum eksekusi)
+
+User: "sekarang mungkin memigrasikan backend ke rust dan frontend ke tauri.
+Planning aja dulu". Hasil: dokumen rencana di-commit; **kode belum berubah.**
+
+**Deliverable:** `docs/ARCHITECTURE-TAURI-RUST.md` — kontrak arah migrasi
+backend TypeScript/Bun → Rust core di dalam Tauri, frontend Live2D/Pixi TETAP
+TypeScript. Baca dokumen itu sebelum menyentuh apa pun terkait migrasi.
+
+**4 keputusan yang dikunci user (via AskUserQuestion):**
+1. Transport **Tauri IPC-first** (bukan HTTP-parity) — tiap modul pindah →
+   invoke()/event; frontend berubah per langkah, guard ikut update.
+2. **Desktop-first; HTTP = kompatibilitas opsional** (compat adapter axum untuk
+   CLI agent + OBS overlay vtuber.html + akses browser/HP). HTTP bukan inti.
+3. Sidecar **engine/ (Whisper+SuperTonic) diabsorb in-process** jadi lib Rust —
+   hilang port 8330 + spawn/health/restart dance.
+4. Renderer (live2d/pixi/MotionRuntime/ParameterArbiter) tetap TypeScript.
+
+**Roadmap Stage 0–5** (detail di dokumen): 0 kontrak+cargo workspace →
+1 transport seam `src/client/transport/` + IPC shell + 3 spike (blob IPC,
+custom protocol `lumi://` aset model, Channel streaming) → 2 core infra
+(config/paths/mode/file-mgr + port motion-dsl/taxonomy ke Rust) → 3 AI
+(LlmProvider trait + agent loop/21 tool/gate + bus push + vtuber; compat adapter
+paralel) → 4 media+browser+engine absorb → 5 packaging 1 exe + pangkas Bun.
+
+**Invarian yang dijaga** (§5 dokumen): format file data byte-compatible
+(config.json/sessions/.agent-memory), replay kursor `since=0`, kosakata SSE
+panel, mask apiKey, Model-Agnostic (TANPA id param di Rust), aturan sheet
+user>ai, teardown mode, frame-loop TIDAK lewat IPC, klien mandiri
+(CLI/OBS/pet), guard legacy ikut update.
+
+**Catatan eksplorasi kunci:** frontend tanpa WebSocket, 1 SSE (panel assistant),
+sisanya polling berkursor; ±60 pemanggil `/api/*` di 6+ file (5 pola origin);
+`appRoot()` choke point path data; kopling server→client (index.ts import
+motion-dsl + motion-taxonomy); klien HTTP mandiri = vtuber.html/pet.html/CLI.
+
+**Belum dikerjakan:** semua Stage. Eksekusi mulai Stage 0 di sesi berikutnya
+setelah user membaca rencana.
+
 ## UPDATE 2026-09-21 (63) — STT & TTS NATIVE: sidecar Rust (Whisper + SuperTonic) jadi default
 
 User: "supertonic sama whisper bakal jadi default projek ini" + "cloud tetap
