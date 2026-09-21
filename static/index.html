@@ -638,49 +638,52 @@
           </div>
         </div>
 
-        <!-- Kelakuan (Behaviour).
-             User bisa atur masa tenang / idle lewat profil atau slider mentah,
-             tanpa menyentuh config.json manual. Aksi mengupdate EVENTS live + persist. -->
-        <div class="section-title" data-i18n="beh.title">Kelakuan</div>
+        <!-- Inisiatif (Kelakuan).
+             User atur KAPAN karakter mulai proaktif lewat profil (Mati..Hidup)
+             atau slider mentah — tanpa menyentuh config.json manual. Aksi
+             mengupdate EVENTS live + persist. -->
+        <div class="section-title" data-i18n="beh.title">Inisiatif</div>
         <div class="cfg-box" id="behaviour-box">
-          <p class="hint" data-i18n="beh.hint">Atur seberapa sering karakter bicara sendiri saat kamu diam.
-            Default (config) membuatnya diam 30 menit — pakai profil di bawah untuk langsung merasakan.</p>
+          <p class="hint" data-i18n="beh.hint">Menentukan kapan karakter mulai berinisiatif jadi pendamping —
+            setelah masa tenang berlalu, dia bisa bicara sendiri saat kamu diam, pamit saat kamu pergi, dan
+            menyapa saat kamu balik. Pilih Mati untuk menonaktifkan semuanya.</p>
           <div class="behaviour-profiles">
-            <button class="mini-btn profil" data-profil="hidup" data-i18n="beh.profil.hidup">Hidup</button>
-            <button class="mini-btn profil" data-profil="sedang" data-i18n="beh.profil.sedang">Sedang</button>
+            <button class="mini-btn profil" data-profil="mati" data-i18n="beh.profil.mati">Mati</button>
             <button class="mini-btn profil" data-profil="tenang" data-i18n="beh.profil.tenang">Tenang</button>
+            <button class="mini-btn profil" data-profil="sedang" data-i18n="beh.profil.sedang">Sedang</button>
+            <button class="mini-btn profil" data-profil="hidup" data-i18n="beh.profil.hidup">Hidup</button>
           </div>
           <div class="note-row">
             <span id="behaviour-profil-status" class="note-status" role="status" aria-live="polite"></span>
           </div>
 
           <div class="cfg-checks">
-            <label class="cfg-check"><input type="checkbox" id="beh-idleSpeak" /> <span data-i18n="beh.idleSpeak">Bicara saat diam (idle)</span></label>
-            <label class="cfg-check"><input type="checkbox" id="beh-awaySpeak" /> <span data-i18n="beh.awaySpeak">Bicara saat kamu pergi</span></label>
+            <label class="cfg-check"><input type="checkbox" id="beh-idleSpeak" /> <span data-i18n="beh.idleSpeak">Bicara sendiri saat kamu diam</span></label>
+            <label class="cfg-check"><input type="checkbox" id="beh-awaySpeak" /> <span data-i18n="beh.awaySpeak">Pamit saat kamu pergi</span></label>
             <label class="cfg-check"><input type="checkbox" id="beh-returnSpeak" /> <span data-i18n="beh.returnSpeak">Sapa saat kamu balik</span></label>
           </div>
 
           <details class="beh-advanced">
             <summary data-i18n="beh.advanced">Mode lanjutan (angka mentah)</summary>
             <label class="cfg-row" for="beh-quietMs">
-              <span class="cfg-label" data-i18n="beh.quietMs">Masa tenang awal</span>
-              <input type="range" id="beh-quietMs" min="0" max="600000" step="1000" />
+              <span class="cfg-label" data-i18n="beh.quietMs">Masa tenang sejak mulai</span>
+              <input type="range" id="beh-quietMs" min="0" max="3600000" step="1000" />
               <output id="beh-quietMs-out" class="cfg-out"></output>
             </label>
             <label class="cfg-row" for="beh-idleMs">
-              <span class="cfg-label" data-i18n="beh.idleMs">Tunggu sebelum idle</span>
-              <input type="range" id="beh-idleMs" min="5000" max="600000" step="1000" />
+              <span class="cfg-label" data-i18n="beh.idleMs">Diam selama ... sebelum dia mulai</span>
+              <input type="range" id="beh-idleMs" min="5000" max="3600000" step="1000" />
               <output id="beh-idleMs-out" class="cfg-out"></output>
             </label>
             <label class="cfg-row" for="beh-idleRepeatMs">
-              <span class="cfg-label" data-i18n="beh.idleRepeatMs">Ulangi tiap</span>
-              <input type="range" id="beh-idleRepeatMs" min="10000" max="600000" step="1000" />
+              <span class="cfg-label" data-i18n="beh.idleRepeatMs">Jeda antar inisiatif</span>
+              <input type="range" id="beh-idleRepeatMs" min="10000" max="3600000" step="1000" />
               <output id="beh-idleRepeatMs-out" class="cfg-out"></output>
             </label>
           </details>
 
           <div class="note-row">
-            <button id="btn-beh-save" class="mini-btn" data-i18n="beh.save">Simpan Kelakuan</button>
+            <button id="btn-beh-save" class="mini-btn" data-i18n="beh.save">Simpan</button>
             <span id="beh-save-status" class="note-status" role="status" aria-live="polite"></span>
           </div>
           <p class="hint" id="beh-quiet-countdown" data-i18n="beh.quietCountdown">Masa tenang: —</p>
@@ -772,6 +775,7 @@
       <span id="pn-save-status" class="note-status" role="status" aria-live="polite"></span>
     </div>
     <input id="pn-search" class="pn-search" type="search" data-i18n-ph="pn.searchPh" placeholder="Cari param / label / catatan…" autocomplete="off">
+    <label class="cfg-check pn-pose-row"><input type="checkbox" id="pn-pose-mode" /> <span data-i18n="pn.poseMode">Mode pose — model tetap diam selama panel ini terbuka</span></label>
     <div id="pn-countdown" class="pn-countdown"></div>
     <div id="paramnotes-popup-list" class="paramnotes-list"></div>
   </div>

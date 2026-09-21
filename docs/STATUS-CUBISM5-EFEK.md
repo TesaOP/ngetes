@@ -64,6 +64,307 @@ sudah selaras dengan arsitektur ini.
    (user bilang hapus manual saat sudah stabil) + blocker Core di SHA lama
    GitHub (risiko sudah diterima user — jangan dibuka lagi).
 
+## UPDATE 2026-09-21 (62) — MOTION BUATAN MANUAL UNTUK LUMINE: malu_menoleh + penasaran_miring
+
+User: "suruh kamu aja yang bikinin motion untuk lumine" — bikin langsung,
+tanpa LLM.
+
+- **Dua Motion Asset** disimpan via `POST /api/motions` (model-key
+  `model_lumine_lumine_lumine_model3_json`) mengikuti MOTION-SYSTEM-SPEC:
+  target track role kanonik (`ax/ay/ex/ey/mouthForm/bodyZ`), pulang ke 0 di
+  keyframe terakhir, easing halus (ease-out attack, ease-in-out release),
+  amplitudo realistis (kepala ≤14°, mata ≤0.5, mouthForm ≥-0.35).
+  1. `malu_menoleh` (2.6 dtk) — contoh flagship spesifikasi §33: menoleh
+     kiri, tatapan menghindar bawah, mulut terkatup; emo malu 0.95.
+  2. `penasaran_miring` (2.2 dtk) — bodyZ+ax miring kanan, mendongak sedikit,
+     mata ke atas kanan; emo normal 0.6 / senang 0.45.
+- **Verifikasi runtime**: GET library mengembalikan keduanya (5 track/aset);
+  registry klien live (`__live2dAgent.listRegistryMotions()`) = 11 entri
+  (9 builtin + 2 user) → otomatis masuk katalog LLM (bisa dipilih director
+  saat konteks cocok) dan tampil di library Motion Studio. Belum diverifikasi
+  visual (pane uji rAF beku) — preview via Motion Studio di browser user;
+  file di `data/motions/model_lumine_…/` bisa diedit/tuning.
+
+## UPDATE 2026-09-21 (61) — MOTION STUDIO: ANALISA & GENERATE TAHAN ECHO JUGA
+
+User: motion studio juga ada analisa AI (maksudnya: terapkan perlakuan sama).
+
+- **Dua alur diperkuat** (`handleMotionsAnalyze`, `handleMotionsGenerate`):
+  helper baru `extractJSONObjectLoose` (`llm-client.ts`) — pindai semua blok
+  `{…}` seimbang (string-aware), kandidat TERAKHIR yang valid menang; template
+  instruksi pada echo (`"<emosi>": 0.0-1.0` — bukan JSON valid) otomatis
+  terlewati. Parse regex `\{[\s\S]*\}` lama (greedy first-to-last) diganti.
+  Echo (marker "balas JSON"/"Kamu menganalisa"/"Permintaan user") → retry
+  sekali dengan koreksi eksplisit; gagal dua kali → warning/error menyebut
+  "model mengulang instruksi dua kali". Prompt diperkuat: "MULAI balasanmu
+  langsung dengan { dan AKHIRI dengan }".
+- **Uji**: 5 unit test baru `extractJSONObjectLoose` (sehat, prosa+markdown,
+  echo+answer → jawaban menang, echo murni → null, sampah → null). End-to-end
+  stub echo→jawaban di server port 8311: `motions/analyze` → deskripsi+tag+
+  emotionCompatibility utuh; `motions/generate` → motion asli lolos
+  `sanitizeMotionAsset` (track role `ay`, durasi, emosi dinormalisasi) —
+  jawaban stub tanpa track ditolak sanitizer sesuai desain. Config
+  dikembalikan (aktif: zyloai); stub dihapus; server uji dimatikan.
+- Gate: tsc + 536 unit + 416 guard hijau.
+
+## UPDATE 2026-09-21 (60) — "GA ADA SARAN?": LUBANG TRANSPARANSI TERTUTUP — PENYEBAB NYATA KUOTA 429
+
+User: AI ga ngasih saran — bingung itu beneran habis sarannya, salah input,
+atau AI ga nyaranin apa-apa.
+
+- **Reproduksi** (endpoint analyze-sheet, data lumine asli, koneksi zyloai/
+  muse-glimmer-30b): HTTP 200, 0 preset, TANPA warning — tiga kemungkinan
+  tak bisa dibedakan user. Dua sumber lubang: (1) sanitizer membuang saran
+  (nama bentrok preset user — lumine punya 33! / id param tak ada) secara
+  senyap; (2) kegagalan provider tak selalu sampai ke status.
+- **Penyebab nyata kali ini**: zyloai **HTTP 429 — daily token cap 200.000
+  token (Basic plan)**, reset tengah malam UTC (±07:00 WIB). Bukan "habis
+  saran". Catatan: prompt analisa besar (223 param) — kuota cepat habis.
+- **Fix server** (`handleAnalyzeSheet`): sanitizer kini melacak ALASAN —
+  duplikat nama (dgn sampel nama) vs id/struktur tidak valid. 0 saran →
+  warning eksplisit: "model tidak mengusulkan apa pun (array kosong)" ATAU
+  "model mengusulkan N preset tapi SEMUANYA dibuang: X nama sudah dipakai
+  (mis. …), Y ditolak…". Saat ada yang lolos → respons membawa `stats`
+  (raw/kept/droppedDup/droppedInvalid/dupNames).
+- **Fix klien** (`analyzeSheetPresets` + handler Analisa AI): stats disampaikan
+  di status — "N saran preset (saran AI)" + "X usulan AI dibuang (…)".
+- **Bukti mekanisme entri 59 bekerja di dunia nyata**: log server menunjukkan
+  muse-glimmer ECHO lagi → terdeteksi (echo=true) → retry koreksi jalan →
+  retry kena 429 → alasannya tampil. Persis rantai yang didesain.
+- Gate: tsc + 531 unit + 416 guard hijau. Server user harus RESTART untuk
+  kode server baru; halaman di-reload untuk app.js baru.
+
+## UPDATE 2026-09-21 (59) — BALASAN LLM TAK TERSTRUKTUR (MODEL KECIL ECHO PROMPT): PARSER TANGGUH + RETRY KOREKSI
+
+User: beberapa model apalagi model kecil kadang gagal bikin response
+terstruktur — bukti: "awalan balasan: Kamu pakar rigging Live2D Cubism..."
+= model MENGULANG prompt, bukan menjawab. (Provider kini zyloai — user ganti
+dari apinex yang 402, dan saran AI mulai mengalir.)
+
+- **Helper baru `extractJSONArrayLoose`** (`src/shared/llm-client.ts`):
+  parse langsung → objek pembungkus ({presets:[…]} dst.) → pindai SEMUA blok
+  `[…]` seimbang (string-aware) dan ambil kandidat TERAKHIR yang isinya
+  array-of-objects — array pertama pada kasus echo adalah CONTOH FORMAT dari
+  prompt, jawaban asli ada setelahnya → salvage terpotong. Dipakai 3 handler:
+  analyze-sheet, classify-params, animate-text (pengganti parse regex rapuh).
+- **Kebijakan anti-saran-palsu di analyze-sheet**: balasan yang mengandung
+  penanda prompt ("PARAMETER TERSEDIA" / awal "Kamu pakar") = echo → array
+  contoh dari prompt TIDAK disajikan sebagai saran; handler retry SEKALI
+  dengan koreksi eksplisit ("balas HANYA array JSON, mulai dengan ["), hasil
+  retry yang dipakai. Retry gagal + echo → warning "model mengulang instruksi
+  dua kali"; tanpa echo → warning truncation seperti dulu.
+- **Prompt diperkuat** di ekornya: "MULAI balasanmu langsung dengan [ dan
+  AKHIRI dengan ] — JANGAN mengulang instruksi".
+- **Uji**: 7 unit test baru di `test/llm-client-parse.test.ts` (sehat, prosa/
+  markdown, objek pembungkus, echo+answer → jawaban terakhir menang, echo
+  tanpa jawaban, terpotong, sampah). End-to-end dengan stub yang PANGGILAN
+  PERTAMA meng-echo prompt dan setelah koreksi menjawab array → endpoint
+  mengembalikan preset ASLI stub ("Senyum Sedikit"/"Merenggis"), bukan
+  "Senang"/"Sedih" dari contoh prompt. Config dikembalikan (aktif: zyloai);
+  stub dihapus; server uji dimatikan.
+- Gate: tsc + 531 unit + 416 guard hijau.
+
+## UPDATE 2026-09-21 (58) — UJI "APA AI BENER-BENER MEMBERI SARAN?": PIPELINE BENAR, PROVIDER 402
+
+User: coba cari tahu apakah AI benar-benar memberikan saran preset ekspresi/
+aksesoris — uji di model lumine dan yang Jepang (神宫白子/面饼0).
+
+- **Fakta provider**: koneksi aktif SATU-SATUNYA (apinex, `free/claude-sonnet-
+  4.6`) menolak SEMUA panggilan LLM dengan **HTTP 402** ("model ini hanya untuk
+  pelanggan berlangganan") — dua-duanya: `analyze-sheet` maupun
+  `classify-params`. Jadi 0 saran masuk, dan yang terlihat user cuma
+  "tidak ada saran preset baru" — PENYEBABNYA disembunyikan. Ini penyebab
+  nyata "AI tidak pernah memberi saran".
+- **UX fix**: `analyzeSheetPresets` kini melempar `data.warning` saat 0 saran
+  (handler sudah menampilkan "preset gagal: <penyebab>") — kegagalan provider/
+  parse tidak lagi tersamar jadi "tidak ada saran baru".
+- **Pembuktian pipeline** (stub openai-compatible lokal port 8399 yang membalas
+  12 preset dari parameter NYATA di prompt, dipasang lewat `POST /api/config
+  {action:add,setActive}`): lumine → **11 saran (5 emosi, 3 properti, 3
+  aksesoris)**; 面饼0 → **12 saran (6 emosi, 3 properti, 3 aksesoris)**; semua
+  id valid, sanitizer membuang saran ber-id yang tak ada di model (kerja
+  benar), hasil tampil di UI "Saran AI" per kategori. Pipeline server→LLM→
+  sanitize→sheet→UI BENAR; kemacetannya murni provider.
+- **Bersih-bersih**: koneksi stub dihapus + activeId dikembalikan ke apinex;
+  cache `presets.ai` sisa stub dikosongkan di localStorage + disk (cache ini
+  memang dibangun ulang tiap Analisa AI; preset USER utuh — lumine 33,
+  mianbing 0); `tmp-stub-llm.ts` dihapus; kedua server uji dimatikan.
+- Gate: tsc + 524 unit + 416 guard hijau.
+- **Untuk user**: supaya Analisa AI benar-benar jalan, ganti provider —
+  apinex free/claude-sonnet-4.6 sekarang meminta langganan (402). Tambah
+  koneksi baru (Gemini/Groq/OpenAI-compatible lain) di Stream/Connections →
+  jadikan aktif, lalu tekan Analisa AI lagi.
+
+## UPDATE 2026-09-21 (57) — DAFTAR PRESET DIPERSIMPel: GRUP + SARAN AI YANG DIPAKAI HILANG DARI DAFTAR
+
+User: daftar preset ribet & membingungkan — saran AI yang sudah dipakai tetap
+menumpuk, tak terbaca sudah dipakai atau belum.
+
+- **Akar keruwetan**: `applyAISuggestion` menyalin saran ke `presets.user`
+  tanpa menyentuh cache `presets.ai`, dan `resolvePresets` menandai saran
+  yang namanya sudah diambil user sebagai `suggestion:true` → baris
+  "tertutup AI" menumpuk selamanya sebagai duplikat preset milikmu. Badge
+  per-baris ("milikmu"/"saran AI"/"tertutup AI") menambah kebisingan, dan
+  tab kategori menghitung baris tersembunyi ikut saran tertutup.
+- **Redesign `paintPresetList`**: tiga kelompok — header "Preset kamu" →
+  baris user (Terap · Edit · Hapus), header "Saran AI" → saran terbuka
+  (Pakai), lalu saran yang SUDAH dipakai diringkas jadi satu baris toggle
+  "N saran AI sudah dipakai — jadi preset milikmu" (expand = nama saja,
+  dim, tanpa tombol — Pakai di sana akan menimpa preset user dengan nama
+  sama, jadi sengaja tak ada). Badge per-baris dihapus (header grup yang
+  bicara); hasil Pakai langsung HILANG dari daftar saran + count toggle
+  naik. Tab kategori kini menghitung baris TERLIHAT saja.
+- **Tombol "Coba" dihapus**: implementasinya identik "Terap" (dua-duanya
+  `releasePresetPreview` + `applyPreset`; tooltip "pratinjau tanpa
+  mengunci" tidak pernah ada implementasinya) — satu aksi satu tombol.
+- **i18n**: kunci baru `sheet.group.mine`, `sheet.group.ai`,
+  `sheet.closedSummary` di kedua kamus (keys badge lama dipertahankan —
+  tak lagi dipakai render).
+- **Verifikasi runtime** (Browser Use, round-trip tanpa jejak): struktur
+  grup + toggle "4 saran AI sudah dipakai" tampil; Pakai "Jijik" → pindah
+  ke "Preset kamu" (17→18, saran 5→4, toggle 4→5, hilang dari saran);
+  Hapus preset uji (confirm di-override untuk uji) → pulih 17/5/4, saran
+  "Jijik" terbuka kembali. Gate: build + tsc + 524 unit + 416 guard hijau
+  (guard Reset Pose `textContent` tetap utuh).
+
+## UPDATE 2026-09-21 (56) — PANEL PARAM: PILIHAN MODE POSE + FIX HITUNG MUNDUR 1000→10 DTK
+
+User: countdown di panel parameter slider — bisa dipilih tidak? "balik gerak
+otomatis setelah 10 dtk tanpa perubahan" vs "bener-bener tidak boleh gerak".
+
+- **Bug tertangkap**: hitung mundur freeze ternyata `remaining = 1000` (≈16,7
+  mnt) padahal label & i18n `pn.sub` menjanjikan 10 dtk — setelah geser slider,
+  model beku belasan menit, bukan 10 detik. Diperbaiki jadi konstanta
+  `PN_FREEZE_SECONDS = 10`.
+- **Pilihan mode pose** (permintaan user): checkbox "Mode pose — model tetap
+  diam selama panel ini terbuka" di popup param (`#pn-pose-mode`). Dicentang →
+  freeze persisten (teks "❄ mode pose"), tanpa hitung mundur; panel ditutup →
+  unfreeze (jalur `closeParamNotesPopup` sudah ada). Tidak dicentang → perilaku
+  lama yang benar: balik gerak 10 dtk setelah geseran terakhir. Preferensi
+  persist di localStorage `l2d_pn_pose_mode` (preferensi UI, bukan config
+  karakter). Ganti mode saat sedang beku langsung mengalihkan teks/hitung
+  mundur (`pnFreeze()` re-freeze); slider onInput & unfreezeMaybe kini lewat
+  `pnFreeze()` yang membaca mode.
+- **i18n**: teks freeze yang hardcoded di-i18n-kan — kunci baru `pn.poseMode`,
+  `pn.freezePose`, `pn.freezeAuto` ({t} detik), `pn.freezeRestore` di KEDUA
+  kamus.
+- **Verifikasi runtime** (Browser Use, server sendiri — server user sedang
+  mati): auto mode "10 dtk"→"8 dtk"→"✓ gerak idle aktif kembali" tepat 10 dtk;
+  pose mode tetap beku setelah 12 dtk + persist "1"; uncheck saat beku →
+  langsung hitung mundur; tutup panel → unfreeze. Preferensi user dikembalikan
+  ke "0" (auto) setelah uji; tak ada Simpan yang ditekan. Gate: build + tsc +
+  524 unit + 416 guard hijau.
+
+## UPDATE 2026-09-21 (55) — PANEL KELAKUAN → INISIATIF: PROFIL "MATI" + FRAMING COMPANION PROAKTIF
+
+User: panel kelakuan terlalu ribet, bingung cara mematikan, dan semantiknya
+salah — seharusnya "kapan dia jadi proaktif companion", bukan "dia nanya tiap
+N menit".
+
+- **Redesign UI** (`static/index.html` + `app.js` initBehaviourPanel + kamus
+  id/en): judul "Kelakuan" → "Inisiatif"; profil kini 4 tingkat berurutan
+  **Mati · Tenang · Sedang · Hidup** — Mati = ketiga boolean false (brain
+  sudah menolak idle/away/return lewat `getEvents()`; tak ada perubahan
+  runtime). Hint/label direframe ke semantik inisiatif ("Bicara sendiri saat
+  kamu diam", "Pamit saat kamu pergi", "Jeda antar inisiatif", dsb.); tombol
+  Simpan dipendekkan jadi "Simpan".
+- **Sorotan profil kini dari state form** (`updateProfileHighlight(src)`,
+  dipisah dari `paintForm`): uncheck ketiga checkbox secara manual langsung
+  menyorot Mati. Listener `change` checkbox memanggil highlight dari
+  `readForm()` — BUKAN paintForm (yang menimpa form balik ke config live dan
+  membatalkan edit manual — bug versi pertama yang tertangkap saat uji).
+- **Countdown jujur**: semua inisiatif off → "Inisiatif mati — karakter hanya
+  merespons kalau kamu bicara dulu." (bukan hitung mundur yang menyesatkan).
+  Countdown tetap membaca config LIVE (perilaku berjalan), bukan form belum
+  disimpan.
+- **Bug bonus tertangkap**: max slider `beh-quietMs/idleMs/idleRepeatMs`
+  600000 (10 mnt) sementara profil Tenang memakai 1800000 (30 mnt) — nilai
+  prefill ter-clamp slider, jadi Simpan dari slider akan MERUSAK config 30
+  menit jadi 10 menit dan sorotan profil tak pernah cocok. Max dinaikkan ke
+  3600000.
+- **Verifikasi runtime** (Browser Use, lewat server dev user yang sedang
+  jalan — EADDRINUSE, tak ada server kedua): 4 profil tampil berurut; Mati →
+  semua checkbox off + tersorot; check/uncheck manual → sorotan mengikuti
+  (Tenang/Mati); slider menampilkan "30 mnt" tanpa clamp; countdown off
+  branch tampil & pulih. Gate: tsc bersih, 524 unit + 416 guard hijau.
+  Config user TIDAK diubah (uji tanpa menekan Simpan).
+
+## UPDATE 2026-09-20 (54) — SLIDER PANEL PARAM HAMPIR TAK BERPENGARUH: RANGE SHEET ESTIMASI SEJAK MIGRASI
+
+User: geser slider di panel parameter, perubahan karakter tidak sebesar yang
+seharusnya.
+
+- **Akar masalah.** Slider panel param membaca `min`/`max` dari
+  `sheet.params`. Sejak migrasi Pixi 8, `inspectModel()` GAGAL mengukur range
+  secara diam-diam → sheet jatuh ke rentang tebakan (`rangeSource: estimated`;
+  id yang tak persis cocok PARAM_META dapet netral -1..1). Slider -1..1 yang
+  menulis ke param rig ber-range lebat (mis. ±30, ±10) hanya menggerakkan
+  3–10% jangkauan → "perubahan kecil". Lumine (223 param) & 神宫白子/面饼0
+  (214 param) kena penuh — semuanya estimated; ren lolos karena sheet-nya
+  terukur 2026-09-18 (era stack lama, `core-arrays`). Jalur role/emosi TIDAK
+  terdampak — `detectModelCapabilities` mengukur live lewat facade.
+- **Kenapa pengukuran gagal.** Dua cabang pengukur `inspectModel()` mati
+  berdua di stack baru: cabang "core-arrays" butuh `.parameters` mentah
+  (tidak di-expose wrapper), cabang "wrapper-accessors" mengecek accessor
+  (`getParameterCount`/`getParameterMinimumValue` dsb.) pada backend
+  coreModel — padahal backend hanya pintu tulis; accessor range ada di
+  wrapper hasil `coreModel.getModel()`. Kedua kondisi false → rawParams
+  kosong → fallback estimasi tanpa jejak di UI.
+- **Fix.** (1) `src/live2d/view/Live2DView.ts`: wrapper `getModel()` kini
+  expose `getParameterIds()` (plural, string[]). (2) `static/js/app.js`
+  `inspectModel()`: cabang "wrapper-accessors" membaca dari `gm` (hasil
+  `getModel()`) dengan fallback `cm` (kompatibel stack lama), plus fallback
+  id per-indeks bila plural tak ada — kegagalan ukur tak lagi senyap.
+- **Verifikasi runtime** (Browser Use): re-inspeksi 面饼0 & lumine dengan
+  build baru → `rangeSource: wrapper-accessors`, 0 param estimated,
+  ParamAngleX -30..30, Param77 面饼0 -10..10, ParamEyeLOpen lumine 0..2
+  (estimasi lama 0..1 — slider hanya mencakup separuh jangkauan). Panel
+  param menampilkan slider [-30..30] dst. Sheet keduanya sudah re-scan di
+  disk — user tidak perlu apa-apa. userNote aman (merge carried notes
+  dijaga guard).
+- **Catatan lingkungan uji:** pane Browser Use IAB punya rAF beku
+  (0 tick/600 ms) — render loop Live2D tidak jalan & loader tak tersembunyi
+  di pane tersebut (loader disembunyikan callback ticker rAF). Verifikasi
+  gerak visual penuh tetap di browser user; jalur tulis param
+  (AppWriteUpdater order 900) tidak berubah dan sudah terbukti dipakai
+  emosi/liveliness/lipsync.
+- Gate: `bunx tsc --noEmit` bersih, 524 unit + 416 guard hijau, build sukses.
+
+## UPDATE 2026-09-20 (53) — OVERLAY OBS PUTIH BURAM: preserveDrawingBuffer (koreksi entri 52)
+
+User: di OBS overlay tetap putih, tidak transparan. Entri (52) mengklaim
+"dikonfirmasi" — TAPI ujinya cuma on-screen (jalur composite on-frame). OBS
+Browser Source (CEF) & alat capture membaca drawing buffer **DI LUAR** siklus
+frame → jalur berbeda, hasil berbeda. Itu sebab (52) lolos padahal OBS putih.
+
+- **Akar masalah.** Pixi diinit `preserveDrawingBuffer: false`. Saat konsumen
+  membaca backbuffer di luar frame, WebGL mengembalikan buffer yang di-auto-
+  clear ke `gl.clearColor` **saat itu** — dan nilainya tertinggal PUTIH
+  `[1,1,1,1]` dari clear buffer mask Cubism (`cubismrenderer_webgl.ts:220`,
+  `_clearedMaskBufferFlags`). On-screen (composite on-frame) transparan; OBS
+  dapat putih.
+- **Diagnosis terukur (Browser Use + decode PNG).** Latar body magenta
+  `#ff00ff`. Canvas TAMPIL → screenshot **90% putih, 0% magenta**. Canvas
+  `display:none` → **100% magenta** (screenshot IAB jujur; CSS transparan
+  bekerja). Canvas WebGL transparan buatan tangan (`clearColor 0,0,0,0`) di
+  atas magenta → **95% magenta + biru** (readback off-frame jujur pada canvas
+  transparan). `draw()` manual + readPixels in-frame → 91/100 sampel alpha≈0 +
+  9 piksel warna karakter alpha 255 (output WebGL SEBENARNYA transparan+model).
+  `COLOR_CLEAR_VALUE` = `[1,1,1,1]`. Paksa runtime `gl.clearColor(0,0,0,0)` →
+  screenshot berubah **90% putih → 89.7% magenta+model**. Terbukti.
+- **Fix `src/live2d/view/Live2DView.ts`** (2 lapis): (1) init Pixi
+  `preserveDrawingBuffer: true` — buffer yang dibaca OBS = frame yang digambar.
+  (2) `pixiStateReset` reset `gl.clearColor(0,0,0,0)` tiap frame (setelah
+  Cubism menggambar) — auto-clear off-frame jadi transparan, bukan putih.
+- **Verifikasi build baru** (tanpa patch runtime): body magenta + model penuh
+  → screenshot **89.8% magenta tembus + ~10% piksel model**. `bunx tsc
+  --noEmit` bersih, `bun run build` sukses (live2d-view.mjs regenerate).
+- **Aksi user di OBS:** refresh cache Browser Source (Properties → Refresh
+  cache of current page) atau hapus+tambah ulang, supaya OBS memuat
+  live2d-view.mjs baru — kalau tidak, masih pakai versi lama yang putih.
+- CATATAN pelajaran: uji transparansi overlay HARUS lewat readback off-frame
+  (screenshot/OBS), bukan cuma mata di layar app. Keduanya jalur berbeda.
+
 ## UPDATE 2026-09-20 (52) — OVERLAY OBS: TRANSPARANSI DIKONFIRMASI + TAMPILAN MURNI KARAKTER
 
 User tanya: overlay OBS bisa transparan? dan minta overlay TIDAK menampilkan

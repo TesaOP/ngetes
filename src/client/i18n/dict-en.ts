@@ -280,6 +280,10 @@ export const DICT_EN: Record<string, string> = {
 
   // ── pn — parameter notes popup ─────────────────────────────────
   "pn.sub": "Move the sliders to see the effect on the model directly. While you drag, idle motion & mouse-follow are frozen; after 10 s untouched, idle motion resumes smoothly.",
+  "pn.poseMode": "Pose mode — model stays still while this panel is open",
+  "pn.freezePose": "❄ Pose mode: model is still (idle/blink/breathing off)",
+  "pn.freezeAuto": "❄ Frozen — idle motion resumes in {t}s",
+  "pn.freezeRestore": "✓ Idle motion is back",
   "pn.searchPh": "Search param / label / note…",
 
   // ── conn — AI connection editor modal ──────────────────────────
@@ -309,22 +313,24 @@ export const DICT_EN: Record<string, string> = {
   "conn.save": "Save",
   "conn.cancel": "Cancel",
 
-  // ── beh — behaviour panel ──────────────────────────────────────
-  "beh.title": "Behaviour",
-  "beh.hint": "Control how often the character talks to herself while you're idle. The default (config) keeps her quiet for 30 minutes — use the profiles below to feel it instantly.",
+  // ── beh — initiative (behaviour) panel ─────────────────────────
+  "beh.title": "Initiative",
+  "beh.hint": "Decides when the character starts taking initiative as a companion — after the quiet window, she may talk on her own while you're idle, say goodbye when you leave, and greet you when you return. Pick Off to disable everything.",
+  "beh.profil.mati": "Off",
   "beh.profil.hidup": "Lively",
   "beh.profil.sedang": "Medium",
   "beh.profil.tenang": "Calm",
   "beh.profil.applied": 'Profile "{name}" loaded — press Save.',
-  "beh.idleSpeak": "Talk while idle",
-  "beh.awaySpeak": "Talk when you leave",
+  "beh.idleSpeak": "Talk on her own while you're idle",
+  "beh.awaySpeak": "Say goodbye when you leave",
   "beh.returnSpeak": "Greet you when you return",
   "beh.advanced": "Advanced mode (raw numbers)",
-  "beh.quietMs": "Initial quiet window",
-  "beh.idleMs": "Wait before idle",
-  "beh.idleRepeatMs": "Repeat every",
-  "beh.save": "Save Behaviour",
+  "beh.quietMs": "Quiet window after start",
+  "beh.idleMs": "Idle for ... before she initiates",
+  "beh.idleRepeatMs": "Gap between initiatives",
+  "beh.save": "Save",
   "beh.quietCountdown": "Quiet window: —",
+  "beh.quietOff": "Initiative is off — the character only responds when you speak first.",
 
   // ── runtime app.js ─────────────────────────────────────────────
   "sys.errLoadModel": "Failed to load model: {msg}",
@@ -390,6 +396,9 @@ export const DICT_EN: Record<string, string> = {
   "sheet.badge.aiClosedTip": "AI suggestion, but you already have a preset with the same name — yours is used.",
   "sheet.badge.aiSuggestionTip": "AI suggestion. Inactive until you press Use.",
   "sheet.badge.mineTip": "Your own preset (active).",
+  "sheet.group.mine": "Your presets",
+  "sheet.group.ai": "AI suggestions",
+  "sheet.closedSummary": "{n} AI suggestions already used — now your presets",
   "sheet.emptyPlain": "No sheet yet. Inspect the model first.",
   "sheet.noFileOnServer": "no sheet file on the server",
   "sheet.reloaded": "reloaded from file ✓",
@@ -406,9 +415,9 @@ export const DICT_EN: Record<string, string> = {
   "pe.nameOk": "name is available",
   "pe.nameRequired": "preset name is required",
   "pe.savedNamed": "saved: {name}",
-  "beh.quietLeftLong": "Quiet window: {t} left (the character hasn't spoken on its own yet).",
-  "beh.quietDoneLong": "Quiet window over — the character can react on its own.",
-  "beh.savedToast": "Behaviour settings saved",
+  "beh.quietLeftLong": "Quiet window: {t} left — she won't initiate yet.",
+  "beh.quietDoneLong": "Quiet window over — she may start taking initiative while you're idle.",
+  "beh.savedToast": "Initiative settings saved",
   "conn.delConfirm": "Delete this connection?",
   "conn.allRoles": "all roles",
   "conn.offSkipped": "⏸ off — skipped",

@@ -205,6 +205,108 @@ export function salvageJSONArrayOfObjects(text: string): any[] {
   return out;
 }
 
+/**
+ * Ekstraksi array-of-objects yang TAHAN model kecil (analyze-sheet /
+ * classify-params). Urutan strategi:
+ *  1. Parse langsung (array) — kasus sehat.
+ *  2. Parse langsung (objek pembungkus: {presets:[…]}/{classifications:[…]}) —
+ *     sebagian model membungkus meski diminta array telanjang.
+ *  3. Pindai SEMUA blok `[…]` seimbang (string-aware), ambil kandidat
+ *     TERAKHIR yang isinya array-of-objects — model kecil sering MENGULANG
+ *     prompt (echo), dan contoh format ada di AWAL prompt; jawaban asli
+ *     ada setelahnya. Mengambil array pertama = mengambil contoh dari prompt.
+ *  4. salvageJSONArrayOfObjects — balasan terpotong di tengah array.
+ */
+export function extractJSONArrayLoose(text: string): any[] {
+  const src = String(text || "").replace(/```json/gi, "").replace(/```/g, "").trim();
+  if (!src) return [];
+  const looksLikeRecords = (a: any): a is any[] =>
+    Array.isArray(a) &&
+    a.length > 0 &&
+    a.every((it) => it && typeof it === "object" && !Array.isArray(it));
+  try {
+    const direct = JSON.parse(src);
+    if (looksLikeRecords(direct)) return direct;
+    if (direct && typeof direct === "object") {
+      for (const v of Object.values(direct as Record<string, unknown>)) {
+        if (looksLikeRecords(v)) return v;
+      }
+    }
+  } catch { /* lanjut pemindaian */ }
+  const cands: string[] = [];
+  let depth = 0, start = -1, inStr = false, esc = false;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === "[") { if (depth === 0) start = i; depth++; }
+    else if (ch === "]") {
+      depth--;
+      if (depth === 0 && start >= 0) { cands.push(src.slice(start, i + 1)); start = -1; }
+    }
+  }
+  for (let i = cands.length - 1; i >= 0; i--) {
+    try {
+      const parsed = JSON.parse(cands[i]);
+      if (looksLikeRecords(parsed)) return parsed;
+      if (parsed && typeof parsed === "object") {
+        for (const v of Object.values(parsed as Record<string, unknown>)) {
+          if (looksLikeRecords(v)) return v;
+        }
+      }
+    } catch { /* kandidat rusak → kandidat berikutnya */ }
+  }
+  return salvageJSONArrayOfObjects(src);
+}
+
+/**
+ * Saudara extractJSONArrayLoose untuk balasan berupa SATU objek JSON
+ * (motions/analyze, motions/generate). Pindai semua blok `{…}` seimbang
+ * (string-aware), ambil kandidat TERAKHIR yang berhasil di-parse — model
+ * kecil yang meng-echo prompt membawa TEMPLATE instruksi di awal (sering
+ * bukan JSON valid, mis. `"<emosi>": 0.0-1.0`), jawaban asli ada setelahnya.
+ * Null bila tidak ada yang bisa diparse.
+ */
+export function extractJSONObjectLoose(text: string): Record<string, unknown> | null {
+  const src = String(text || "").replace(/```json/gi, "").replace(/```/g, "").trim();
+  if (!src) return null;
+  try {
+    const direct = JSON.parse(src);
+    if (direct && typeof direct === "object" && !Array.isArray(direct))
+      return direct as Record<string, unknown>;
+  } catch { /* lanjut pemindaian */ }
+  const cands: string[] = [];
+  let depth = 0, start = -1, inStr = false, esc = false;
+  for (let i = 0; i < src.length; i++) {
+    const ch = src[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === "{") { if (depth === 0) start = i; depth++; }
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0 && start >= 0) { cands.push(src.slice(start, i + 1)); start = -1; }
+    }
+  }
+  for (let i = cands.length - 1; i >= 0; i--) {
+    try {
+      const parsed = JSON.parse(cands[i]);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+        return parsed as Record<string, unknown>;
+    } catch { /* kandidat rusak → kandidat berikutnya */ }
+  }
+  return null;
+}
+
 export async function callLLM(conn: Connection, messages: ChatMessage[], clientSystem: string = ""): Promise<string> {
   const provider = (conn.provider ?? "openai-compatible").toLowerCase() as LLMProvider;
   const apiKey = cleanKey(conn.apiKey);

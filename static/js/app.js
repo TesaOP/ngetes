@@ -4398,6 +4398,7 @@
 
     (function initBehaviourPanel() {
       const els = {
+        mati: $('[data-profil="mati"]'),
         hidup: $('[data-profil="hidup"]'),
         sedang: $('[data-profil="sedang"]'),
         tenang: $('[data-profil="tenang"]'),
@@ -4416,7 +4417,24 @@
         countdown: $("#beh-quiet-countdown"),
       };
 
+      // Profil inisiatif: Mati (off total) → Tenang → Sedang → Hidup.
+      // Angka di mati/sedang dsb. hanya prefills; yang membuat mati benar-benar
+      // mati adalah ketiga boolean false (brain menolak idle/away/return).
+      const PROFILE_ROWS = [
+        ["mati", els.mati],
+        ["tenang", els.tenang],
+        ["sedang", els.sedang],
+        ["hidup", els.hidup],
+      ];
       const PROFILES = {
+        mati: {
+          quietMs: 1800000,
+          idleMs: 1800000,
+          idleRepeatMs: 1800000,
+          idleSpeak: false,
+          awaySpeak: false,
+          returnSpeak: false,
+        },
         hidup: {
           quietMs: 15000,
           idleMs: 45000,
@@ -4458,6 +4476,23 @@
       window.__agentStartApprox = window.__agentStartApprox || Date.now();
       let countdownTimer = null;
 
+      // Sorotan profil dihitung dari sumber state apa pun (config live saat
+      // paint, form saat edit manual) — dipisah dari paintForm supaya
+      // perubahan checkbox TIDAK menimpa balik isi form dengan config.
+      function updateProfileHighlight(src) {
+        const match = (p) =>
+          PROFILES[p] &&
+          PROFILES[p].idleSpeak === !!src.idleSpeak &&
+          PROFILES[p].awaySpeak === !!src.awaySpeak &&
+          PROFILES[p].returnSpeak === !!src.returnSpeak &&
+          PROFILES[p].quietMs === (Number(src.quietMs) || 0) &&
+          PROFILES[p].idleMs === (Number(src.idleMs) || 0) &&
+          PROFILES[p].idleRepeatMs === (Number(src.idleRepeatMs) || 0);
+        PROFILE_ROWS.forEach(([k, b]) => {
+          if (b) b.classList.toggle("active", match(k));
+        });
+      }
+
       function paintForm() {
         const e = window.__appEvents || EVENTS;
         if (els.idleSpeak) els.idleSpeak.checked = !!e.idleSpeak;
@@ -4476,18 +4511,7 @@
           els.repeatOut.textContent = fmtMs(Number(e.idleRepeatMs) || 0);
         }
 
-        const match = (p) =>
-          PROFILES[p] &&
-          PROFILES[p].quietMs === (Number(e.quietMs) || 0) &&
-          PROFILES[p].idleMs === (Number(e.idleMs) || 0) &&
-          PROFILES[p].idleRepeatMs === (Number(e.idleRepeatMs) || 0);
-        [
-          ["hidup", els.hidup],
-          ["sedang", els.sedang],
-          ["tenang", els.tenang],
-        ].forEach(([k, b]) => {
-          if (b) b.classList.toggle("active", match(k));
-        });
+        updateProfileHighlight(e);
       }
 
       function readForm() {
@@ -4525,11 +4549,7 @@
         else if (kind === "err") window.showToast?.(msg, "error");
       }
 
-      [
-        ["hidup", els.hidup],
-        ["sedang", els.sedang],
-        ["tenang", els.tenang],
-      ].forEach(([k, b]) => {
+      PROFILE_ROWS.forEach(([k, b]) => {
         if (!b) return;
         b.addEventListener("click", () => {
           const p = PROFILES[k];
@@ -4548,11 +4568,7 @@
             els.idleRepeatMs.value = p.idleRepeatMs;
             els.repeatOut.textContent = fmtMs(p.idleRepeatMs);
           }
-          [
-            ["hidup", els.hidup],
-            ["sedang", els.sedang],
-            ["tenang", els.tenang],
-          ].forEach(([, x]) => x && x.classList.remove("active"));
+          PROFILE_ROWS.forEach(([, x]) => x && x.classList.remove("active"));
           b.classList.add("active");
           if (els.profilStatus)
             els.profilStatus.textContent = __t("beh.profil.applied", {
@@ -4573,6 +4589,12 @@
         els.idleRepeatMs.addEventListener("input", () => {
           els.repeatOut.textContent = fmtMs(Number(els.idleRepeatMs.value));
         });
+      // Checkbox berubah manual → sorotan profil dihitung ulang dari FORM:
+      // uncheck ketiganya = Mati, langsung terlihat tanpa menimpa isi form.
+      [els.idleSpeak, els.awaySpeak, els.returnSpeak].forEach((c) => {
+        if (!c) return;
+        c.addEventListener("change", () => updateProfileHighlight(readForm()));
+      });
 
       if (els.save) {
         els.save.addEventListener("click", async () => {
@@ -4604,10 +4626,16 @@
 
       function tickCountdown() {
         const e = window.__appEvents || EVENTS;
-        const q = Number(e.quietMs) || 0;
-        const elapsed = Date.now() - (window.__agentStartApprox || Date.now());
-        const left = q - elapsed;
         if (els.countdown) {
+          if (!e.idleSpeak && !e.awaySpeak && !e.returnSpeak) {
+            // Semua inisiatif off — jangan tayangkan hitung mundur yang
+            // menyesatkan (masa tenang tak relevan kalau tak ada inisiatif).
+            els.countdown.textContent = __t("beh.quietOff");
+            return;
+          }
+          const q = Number(e.quietMs) || 0;
+          const elapsed = Date.now() - (window.__agentStartApprox || Date.now());
+          const left = q - elapsed;
           if (left > 0)
             els.countdown.textContent = __t("beh.quietLeftLong", { t: fmtMs(left) });
           else
@@ -4787,7 +4815,11 @@
       if (!box) return;
       box.textContent = "";
       for (const cat of PRESET_CATEGORIES) {
-        const n = resolvePresets(sheet, cat).length;
+        // Hitung baris yang TERLIHAT saja: saran AI yang sudah dipakai
+        // (tertutup, tersembunyi) tidak dihitung supaya angka tab = isi daftar.
+        const n = resolvePresets(sheet, cat).filter(
+          (p) => p.source !== "ai" || !p.suggestion,
+        ).length;
         const b = document.createElement("button");
         b.type = "button";
         b.className = "sheet-cat" + (cat === sheetCatFilter ? " active" : "");
@@ -4849,7 +4881,22 @@
         box.appendChild(p);
         return;
       }
-      for (const p of items) {
+      // Tiga kelompok: milikmu, saran yang bisa dipakai, dan saran yang SUDAH
+      // dipakai (namanya kini jadi preset user) — yang terakhir disembunyikan
+      // di balik satu baris ringkas supaya daftar tidak menumpuk duplikat.
+      const users = items.filter((p) => p.source === "user");
+      const openAI = items.filter((p) => p.source === "ai" && !p.suggestion);
+      const closedAI = items.filter((p) => p.source === "ai" && p.suggestion);
+
+      const groupHeader = (label, tip) => {
+        const h = document.createElement("div");
+        h.className = "preset-group-header";
+        h.textContent = label;
+        if (tip) h.title = tip;
+        box.appendChild(h);
+      };
+
+      const buildRow = (p) => {
         const row = document.createElement("div");
 
         const isAI = p.source === "ai";
@@ -4861,20 +4908,6 @@
         if (p.renamedFrom)
           nm.title = __t("sheet.renamedTitle", { from: p.renamedFrom });
         row.appendChild(nm);
-
-        const badge = document.createElement("span");
-        badge.className = "p-badge";
-        badge.textContent = isAI
-          ? p.suggestion
-            ? __t("sheet.badge.aiClosed")
-            : __t("sheet.badge.aiSuggestion")
-          : __t("sheet.badge.mine");
-        badge.title = isAI
-          ? p.suggestion
-            ? __t("sheet.badge.aiClosedTip")
-            : __t("sheet.badge.aiSuggestionTip")
-          : __t("sheet.badge.mineTip");
-        row.appendChild(badge);
 
         if (!isAI) {
           const applyBtn = document.createElement("button");
@@ -4896,28 +4929,6 @@
             );
           });
           row.appendChild(applyBtn);
-
-          const tryBtn = document.createElement("button");
-          tryBtn.type = "button";
-          tryBtn.className = "p-act";
-          tryBtn.textContent = __t("sheet.tryBtn");
-          tryBtn.title =
-            "Pratinjau pose ini tanpa menguncinya sebagai preset aktif.";
-          tryBtn.addEventListener("click", () => {
-            if (!state.model) {
-              setSheetStatus(__t("sheet.loadFirstShort"), "err");
-              return;
-            }
-            releasePresetPreview();
-            const ok = applyPreset(p, p.category);
-            setSheetStatus(
-              ok
-                ? "pratinjau: " + p.name + " (batal via Reset Pose)"
-                : "tidak ada target valid di preset ini",
-              ok ? "" : "err",
-            );
-          });
-          row.appendChild(tryBtn);
 
           const editBtn = document.createElement("button");
           editBtn.type = "button";
@@ -4977,6 +4988,35 @@
           row.appendChild(useBtn);
         }
         box.appendChild(row);
+      };
+
+      if (users.length) {
+        groupHeader(__t("sheet.group.mine"));
+        users.forEach(buildRow);
+      }
+      if (openAI.length) {
+        groupHeader(__t("sheet.group.ai"), __t("sheet.badge.aiSuggestionTip"));
+        openAI.forEach(buildRow);
+      }
+      if (closedAI.length) {
+        const detail = document.createElement("div");
+        detail.className = "preset-closed-list hidden";
+        for (const p of closedAI) {
+          const nm = document.createElement("div");
+          nm.className = "preset-closed-name";
+          nm.textContent = p.name;
+          nm.title = __t("sheet.badge.aiClosedTip");
+          detail.appendChild(nm);
+        }
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "preset-closed-toggle";
+        toggle.textContent = __t("sheet.closedSummary", { n: closedAI.length });
+        toggle.addEventListener("click", () =>
+          detail.classList.toggle("hidden"),
+        );
+        box.appendChild(toggle);
+        box.appendChild(detail);
       }
     }
 
@@ -4990,6 +5030,33 @@
     const pnSearch = $('#pn-search');
     let pnTimer = null;
     const pnStuckIds = new Set();
+
+    // Mode pose panel parameter: dicentang = model tetap diam selama popup
+    // terbuka (tanpa hitung mundur); tidak = gerak idle kembali otomatis
+    // PN_FREEZE_SECONDS setelah geseran terakhir. Pilihan persist di
+    // localStorage — preferensi UI, bukan config karakter.
+    const PN_FREEZE_SECONDS = 10;
+    const PN_POSE_KEY = "l2d_pn_pose_mode";
+    const pnPoseMode = $("#pn-pose-mode");
+    let pnPoseOn = false;
+    try {
+      pnPoseOn = localStorage.getItem(PN_POSE_KEY) === "1";
+    } catch (e) {}
+    if (pnPoseMode) {
+      pnPoseMode.checked = pnPoseOn;
+      pnPoseMode.addEventListener("change", () => {
+        pnPoseOn = !!pnPoseMode.checked;
+        try {
+          localStorage.setItem(PN_POSE_KEY, pnPoseOn ? "1" : "0");
+        } catch (e) {}
+        // Beku yang sedang berjalan langsung mengikuti mode baru (teks &
+        // hitung mundur) tanpa menunggu geseran berikutnya.
+        if (state.frozen) pnFreeze();
+      });
+    }
+    function pnFreeze() {
+      freezeModelForEdit(pnCountdown, pnPoseOn);
+    }
 
     function setPnStatus(row, msg, kind) {
       const el = row.querySelector(".pn-status");
@@ -5062,18 +5129,17 @@
       if (_freezeStatusEl) {
         _freezeStatusEl.classList.add("frozen");
         _freezeStatusEl.textContent = persistent
-          ? "❄ mode pose: model diam (idle/blink/napas dimatikan)"
-          : "❄ dibekukan — gerak idle kembali dalam 10 dtk";
+          ? __t("pn.freezePose")
+          : __t("pn.freezeAuto", { t: PN_FREEZE_SECONDS });
       }
 
       if (persistent) return;
-      let remaining = 1000;
+      let remaining = PN_FREEZE_SECONDS;
       const tickCountdown = () => {
         remaining--;
         if (remaining > 0) {
           if (_freezeStatusEl)
-            _freezeStatusEl.textContent =
-              "❄ dibekukan — gerak idle kembali dalam " + remaining + " dtk";
+            _freezeStatusEl.textContent = __t("pn.freezeAuto", { t: remaining });
           _freezeTimer = setTimeout(tickCountdown, 1000);
         } else {
           unfreezeModelForEdit();
@@ -5098,7 +5164,7 @@
       if (state.aiLock) state.aiLock = false;
       if (_freezeStatusEl) {
         _freezeStatusEl.classList.remove("frozen");
-        _freezeStatusEl.textContent = "✓ gerak idle aktif kembali";
+        _freezeStatusEl.textContent = __t("pn.freezeRestore");
       }
       _freezeStatusEl = null;
     }
@@ -5260,7 +5326,7 @@
           if (isPart) window.__live2dAgent.setPartOpacity(id, v);
           else window.__live2dAgent.setParameter(id, v);
           pnStuckIds.add(id);
-          freezeModelForEdit(pnCountdown);
+          pnFreeze();
         },
         onCommit: () => {
           unfreezeMaybe();
@@ -5384,7 +5450,7 @@
     }
 
     function unfreezeMaybe() {
-      if (state.frozen) freezeModelForEdit(pnCountdown);
+      if (state.frozen) pnFreeze();
     }
 
     async function commitPn(row, paramId, value) {
@@ -5762,11 +5828,12 @@
         try {
           const parts = [];
           if (presets.status === "fulfilled") {
-            const n =
-              presets.value && presets.value.count ? presets.value.count : 0;
+            const v = presets.value || { count: 0 };
+            const n = v.count ? v.count : 0;
             parts.push(
               n ? n + " saran preset (saran AI)" : "tidak ada saran preset baru",
             );
+            if (v.note) parts.push(v.note);
           } else {
             parts.push("preset gagal: " + presets.reason.message);
           }
@@ -8107,24 +8174,40 @@
           });
         }
       } else if (
-        cm &&
-        typeof cm.getParameterCount === "function" &&
-        typeof cm.getParameterMinimumValue === "function"
+        (gm || cm) &&
+        typeof (gm || cm).getParameterCount === "function" &&
+        typeof (gm || cm).getParameterMinimumValue === "function"
       ) {
+        // Stack baru (Pixi 8): accessor range ada di wrapper hasil
+        // coreModel.getModel() (gm), bukan di backend coreModel (cm) —
+        // cm hanya pintu tulis. Stack lama: gm === cm (objek yang sama).
         rangeSource = "wrapper-accessors";
-        const count = cm.getParameterCount();
+        const src = gm && typeof gm.getParameterMinimumValue === "function" ? gm : cm;
+        const count = src.getParameterCount();
         const ids =
-          typeof cm.getParameterIds === "function"
-            ? cm.getParameterIds()
+          typeof src.getParameterIds === "function"
+            ? src.getParameterIds()
             : null;
         for (let i = 0; i < count; i++) {
-          const id = ids ? ids[i] : "";
+          // Fallback per-indeks: backend tanpa getParameterIds() plural
+          // tidak boleh meloloskan semua param (id kosong → skip semua →
+          // sheet jatuh ke rentang tebakan diam-diam).
+          let id = ids ? ids[i] : "";
+          if (!id && typeof src.getParameterId === "function") {
+            const raw = src.getParameterId(i);
+            id =
+              typeof raw === "string"
+                ? raw
+                : raw && typeof raw.getString === "function"
+                  ? raw.getString()
+                  : "";
+          }
           if (!id) continue;
           rawParams.push({
             id,
-            min: cm.getParameterMinimumValue(i),
-            max: cm.getParameterMaximumValue(i),
-            def: cm.getParameterDefaultValue(i),
+            min: src.getParameterMinimumValue(i),
+            max: src.getParameterMaximumValue(i),
+            def: src.getParameterDefaultValue(i),
           });
         }
       }
@@ -8520,7 +8603,31 @@
       (data.presets || []).filter((p) => p && p.category !== "gerak"),
       "ai",
     );
-    if (!incoming.length) return { count: 0 };
+    if (!incoming.length) {
+      // Sama sekali tidak ada saran + server memberi warning (mis. provider
+      // LLM HTTP 402/429, balasan tak terparse, semua usulan dibuang
+      // penyaring) → lempar supaya status menampilkan PENYEBABNYA, bukan
+      // "tidak ada saran preset baru" yang menyesatkan.
+      if (data.warning) throw new Error(data.warning);
+      return { count: 0 };
+    }
+    // Beberapa usulan mungkin dibuang penyaring (nama bentrok preset milikmu,
+    // id parameter tak ada) — sampaikan angkanya, jangan senyap.
+    const st = data.stats || null;
+    const note =
+      st && st.droppedDup + st.droppedInvalid > 0
+        ? st.droppedDup +
+          st.droppedInvalid +
+          " usulan AI dibuang (" +
+          st.droppedDup +
+          " nama sudah ada" +
+          (Array.isArray(st.dupNames) && st.dupNames.length
+            ? ": " + st.dupNames.join(", ")
+            : "") +
+          ", " +
+          st.droppedInvalid +
+          " id tak valid)"
+        : "";
 
     sheet.presets.ai = incoming;
     projectEmotionPresets(sheet);
@@ -8542,7 +8649,7 @@
         typeof window.__agent.invalidateCapabilityProfile === "function" &&
         window.__agent.invalidateCapabilityProfile();
     } catch (e) {}
-    return { count: incoming.length };
+    return { count: incoming.length, note };
   }
 
   function loadCharacterSheet() {

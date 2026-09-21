@@ -3,7 +3,7 @@
  * Tanpa dependensi eksternal selain Bun (ws untuk Twitch IRC ikut di-bundle).
  */
 import { ConfigManager, queueJsonWrite, mergeEventsIntoConfig } from "../shared/config";
-import { llmWithFallback, callLLM, llmForRole, normalizeRoles, salvageJSONArrayOfObjects } from "../shared/llm-client";
+import { llmWithFallback, callLLM, llmForRole, normalizeRoles, salvageJSONArrayOfObjects, extractJSONArrayLoose, extractJSONObjectLoose } from "../shared/llm-client";
 import type { ChatMessage } from "../shared/types";
 import { sanitizeMotionAsset } from "../client/animation/motion-dsl";
 import { readdirSync, readFileSync, existsSync, statSync, mkdirSync, writeFileSync, unlinkSync, rmSync } from "fs";
@@ -1227,7 +1227,7 @@ Format:
 ]`;
   try{
     const {reply}=await llmForRole("sheet", ()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:prompt}]);
-    let clean=reply.replace(/```json/gi,"").replace(/```/g,"").trim(); let parsed:any=[]; try{parsed=JSON.parse(clean);}catch{ const m=clean.match(/\[\s*\{[\s\S]*\}\s*\]/); if(m) try{parsed=JSON.parse(m[0]);}catch{}}
+    const parsed=extractJSONArrayLoose(reply);
     const requestedIds=new Set(unclassified.map((u:any)=>String(u.id))); const allowedRoles=new Set(KNOWN_ROLES);
     const str=(v:any,cap:number)=> (typeof v==="string"? v.replace(/[\u0000-\u001F\u007F]/g,"").trim().slice(0,cap): "");
     const safe=(Array.isArray(parsed)?parsed:[]).reduce((acc:any[],it:any)=>{
@@ -1281,7 +1281,7 @@ ATURAN KERAS:
    - Usahakan setiap preset punya kombinasi parameter yang unik — hindari 2 preset dengan isi "values" yang nyaris identik.
    - Jika model punya banyak parameter custom/EX yang belum kepakai sama sekali di preset manapun, prioritaskan membuat preset baru yang memakainya, selama hasilnya tetap masuk akal secara visual.
 
-KEMBALIKAN HANYA JSON array valid, tanpa markdown atau kata pembuka/penutup.
+KEMBALIKAN HANYA JSON array valid. MULAI balasanmu langsung dengan karakter [ dan AKHIRI dengan ] — JANGAN mengulang instruksi ini, tanpa markdown, tanpa kata pembuka/penutup.
 Format (Note: INI Contoh STRUKTUR, bukan daftar yang wajib diikuti — ganti dengan emosi & parameter milik model ini):
 [
   { "name": "Senang", "category": "emosi", "values": { "ParamMouthForm": 1 }, "parts": {} },
@@ -1289,31 +1289,62 @@ Format (Note: INI Contoh STRUKTUR, bukan daftar yang wajib diikuti — ganti den
   { "name": "Kacamata", "category": "aksesoris", "values": {}, "parts": { "PartGlasses": 1 } }
 ]`;
   try{
-    const {reply}=await llmForRole("sheet", ()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:prompt}]);
-    let clean=reply.replace(/```json/gi,"").replace(/```/g,"").trim(); let parsed:any=[]; try{parsed=JSON.parse(clean);}catch{ const m=clean.match(/\[\s*\{[\s\S]*\}\s*\]/); if(m) try{parsed=JSON.parse(m[0]);}catch{}}
-    // Balasan ada tapi TIDAK memuat array utuh → coba salvage: balasan terpotong
-    // (budget token habis / koneksi putus di tengah array) biasanya masih
-    // memuat N-1 preset utuh. Lebih baik 11 preset daripada 0 + tebakan user.
-    if(!Array.isArray(parsed)||!parsed.length){ const salvaged=salvageJSONArrayOfObjects(clean); if(salvaged.length){ parsed=salvaged; console.warn("[analyze-sheet] balasan LLM terpotong — diselamatkan", salvaged.length, "preset utuh dari array rusak"); } }
-    // Masih kosong juga = bukan truncation parsial; jelaskan ke user.
-    if(!Array.isArray(parsed)||!parsed.length){ return json({presets:[], warning:"balasan LLM tidak berisi array preset yang bisa diparse (kemungkinan terpotong — perbesar maxTokens koneksi, atau coba lagi / pakai koneksi lain); awalan balasan: "+String(clean).slice(0,120)}); }
+    const ask=(msgs:any[])=>llmForRole("sheet", ()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), msgs);
+    let {reply}=await ask([{role:"user",content:prompt}]);
+    let clean=String(reply||"").replace(/```json/gi,"").replace(/```/g,"").trim();
+    let parsed=extractJSONArrayLoose(reply);
+    // Balasan yang mengandung penanda prompt = model kecil MENGULANG
+    // instruksi (echo). Array yang terbaca dari balasan itu bisa jadi cuma
+    // CONTOH format dari prompt — menyajikannya sebagai "saran AI" = saran
+    // palsu. Karena itu: echo WAJIB retry dengan koreksi; kalau retry juga
+    // gagal, contoh dari echo dibuang (bukan disajikan).
+    const echoed=()=>/PARAMETER TERSEDIA/i.test(clean)||/^kamu\s+pakar/i.test(clean);
+    if(echoed()||!parsed.length){
+      console.warn("[analyze-sheet] balasan tidak berisi array jawaban (echo="+echoed()+") — retry dengan koreksi; awalan:", clean.slice(0,80));
+      const {reply:reply2}=await ask([
+        {role:"user",content:prompt},
+        {role:"assistant",content:clean.slice(0,2000)},
+        {role:"user",content:"Balasanmu tadi salah: kamu mengulang instruksi, bukan menjawab. Balas HANYA array JSON preset — mulai dengan karakter [ langsung, tanpa mengulang instruksi, tanpa markdown, tanpa penjelasan."},
+      ]);
+      const clean2=String(reply2||"").replace(/```json/gi,"").replace(/```/g,"").trim();
+      const parsed2=extractJSONArrayLoose(reply2);
+      if(parsed2.length){ reply=reply2; clean=clean2; parsed=parsed2; }
+      else if(echoed()){ parsed=[]; clean=clean2; }
+    }
+    if(!Array.isArray(parsed)||!parsed.length){
+      // Klasifiksi kegagalan supaya user tahu arah solusinya.
+      const why=echoed()
+        ? "model mengulang teks instruksi (echo) dua kali — coba lagi atau pakai model lain"
+        : "kemungkinan terpotong — perbesar maxTokens koneksi, atau coba lagi / pakai koneksi lain";
+      return json({presets:[], warning:"balasan LLM tidak berisi array preset yang bisa diparse ("+why+"); awalan balasan: "+String(clean).slice(0,120)});
+    }
     const ranges=new Map(params.map((p:any)=>[p.id,{lo:Number(p.min),hi:Number(p.max)}])); const partIds=new Set(parts); const existingSet=new Set(existing);
     const str=(v:any,cap:number)=> (typeof v==="string"? v.replace(/[\u0000-\u001F\u007F]/g,"").trim().slice(0,cap): "");
-    const seen=new Set<string>(); let dropped=0;
+    const seen=new Set<string>(); let dup=0, invalid=0; const dupNames:string[]=[];
     const safe=(Array.isArray(parsed)?parsed:[]).reduce((acc:any[],it:any)=>{
-      if(!it||typeof it!=="object"||Array.isArray(it)){dropped++;return acc;}
+      if(!it||typeof it!=="object"||Array.isArray(it)){invalid++;return acc;}
       const name=str(it.name,60); const category=CATS.includes(it.category)? it.category:null;
-      if(!name||!category){dropped++;return acc;}
-      const key=category+"\u0000"+name.toLowerCase(); if(existingSet.has(name.toLowerCase())||seen.has(key)){dropped++;return acc;}
+      if(!name||!category){invalid++;return acc;}
+      const key=category+"\u0000"+name.toLowerCase(); if(existingSet.has(name.toLowerCase())||seen.has(key)){dup++; if(dupNames.length<5)dupNames.push(name); return acc;}
       const values:Record<string,number>={};
       if(it.values&&typeof it.values==="object"&&!Array.isArray(it.values)){ for(const k of Object.keys(it.values)){ const r=ranges.get(k) as {lo:number;hi:number}|undefined; const n=Number((it.values as any)[k]); if(!r||!Number.isFinite(n)) continue; values[k]=Math.max(r.lo, Math.min(r.hi,n)); } }
       const pparts:Record<string,number>={};
       if(it.parts&&typeof it.parts==="object"&&!Array.isArray(it.parts)){ for(const k of Object.keys(it.parts)){ const n=Number((it.parts as any)[k]); if(!partIds.has(k)||!Number.isFinite(n)) continue; pparts[k]=Math.max(0,Math.min(1,n)); } }
-      if(!Object.keys(values).length && !Object.keys(pparts).length){dropped++;return acc;}
+      if(!Object.keys(values).length && !Object.keys(pparts).length){invalid++;return acc;}
       seen.add(key); acc.push({name,category,values,parts:pparts,source:"ai"}); return acc;
     },[]).slice(0,12);
-    if(dropped) console.warn("[analyze-sheet] dropped",dropped);
-    return json({presets:safe});
+    if(dup+invalid) console.warn("[analyze-sheet] dibuang:",dup,"duplikat nama,",invalid,"id/struktur tidak valid");
+    if(!safe.length){
+      // Nol saran HARUS menjelaskan kenapa — inilah yang bikin user bingung
+      // "udah gada saran lagi atau salah input?": model bisa saja mengusulkan
+      // banyak preset tapi semuanya dibuang penyaring.
+      const raw=Array.isArray(parsed)?parsed.length:0;
+      const why = !raw
+        ? "model tidak mengusulkan apa pun (array kosong) — coba lagi"
+        : `model mengusulkan ${raw} preset tapi SEMUANYA dibuang: ${dup} nama sudah dipakai preset milikmu${dupNames.length? " (mis. "+dupNames.join(", ")+")":""}, ${invalid} ditolak (id parameter tidak ada di model ini / struktur salah)`;
+      return json({presets:[], warning:why});
+    }
+    return json({presets:safe, stats:{raw:Array.isArray(parsed)?parsed.length:0, kept:safe.length, droppedDup:dup, droppedInvalid:invalid, dupNames}});
   }catch(e:any){ console.warn("[analyze-sheet]",e.message); return json({presets:[], warning:e.message}); }
 }
 
@@ -1390,7 +1421,7 @@ Skema (bukan contoh isi — hanya struktur):
 ]`;
   try{
     const {reply}=await llmForRole("motion", ()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:directorPrompt}]);
-    let clean=reply.replace(/```json/gi,"").replace(/```/g,"").trim(); let parsed:any=[]; try{parsed=JSON.parse(clean);}catch{ const m=clean.match(/\[\s*\{[\s\S]*\}\s*\]/); if(m) try{parsed=JSON.parse(m[0]);}catch{}}
+    const parsed=extractJSONArrayLoose(reply);
     const okEmotion=new Set(emotions); const okGesture=new Set(gestures); const okMotion=new Set(motions.map((m:any)=>m.id));
     const segments=(Array.isArray(parsed)?parsed:[]).reduce((acc:any[],s:any)=>{
       if(!s||typeof s!=="object") return acc; const t=typeof s.text==="string"? s.text:""; if(!t.trim()) return acc;
@@ -1428,11 +1459,27 @@ TUGAS: tebak gerakan ini sedang menyampaikan apa, lalu balas JSON:
   "emotionCompatibility": { "<emosi>": 0.0-1.0 }
 }
 Emosi yang boleh dipakai HANYA: [${emotions.join(", ")}]
-KEMBALIKAN HANYA JSON, tanpa markdown atau kata pengantar.`;
+KEMBALIKAN HANYA JSON. MULAI balasanmu langsung dengan { dan AKHIRI dengan } — JANGAN mengulang instruksi ini.`;
   try{
-    const {reply}=await llmForRole("motion", ()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:prompt}]);
-    let clean=String(reply||"").replace(/```json/gi,"").replace(/```/g,"").trim(); let parsed:any=null; try{parsed=JSON.parse(clean);}catch{ const mm=clean.match(/\{[\s\S]*\}/); if(mm) try{parsed=JSON.parse(mm[0]);}catch{}}
-    if(!parsed||typeof parsed!=="object") return json({warning:"AI tidak mengembalikan JSON valid"});
+    const ask=(msgs:any[])=>llmForRole("motion", ()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), msgs);
+    let {reply}=await ask([{role:"user",content:prompt}]);
+    let parsed=extractJSONObjectLoose(reply);
+    // Model kecil kadang meng-echo prompt (template "balas JSON" ikut
+    // terbawa dan bukan JSON valid) → retry sekali dengan koreksi.
+    let clean=String(reply||"").replace(/```json/gi,"").replace(/```/g,"").trim();
+    const echoed=()=>/balas JSON/i.test(clean)||/Kamu menganalisa/i.test(clean);
+    if((!parsed||echoed())){
+      console.warn("[motions/analyze] balasan tak berisi objek jawaban (echo="+echoed()+") — retry; awalan:", clean.slice(0,80));
+      const {reply:reply2}=await ask([
+        {role:"user",content:prompt},
+        {role:"assistant",content:clean.slice(0,2000)},
+        {role:"user",content:"Balasanmu tadi salah: kamu mengulang instruksi. Balas HANYA objek JSON {description, tags, emotionCompatibility} — mulai dengan karakter { langsung, tanpa mengulang instruksi."},
+      ]);
+      const parsed2=extractJSONObjectLoose(reply2);
+      clean=String(reply2||"").replace(/```json/gi,"").replace(/```/g,"").trim();
+      if(parsed2){ parsed=parsed2; } else if(echoed()){ parsed=null; }
+    }
+    if(!parsed||typeof parsed!=="object") return json({warning:"AI tidak mengembalikan JSON valid"+(echoed()?" (model mengulang instruksi dua kali — coba lagi / pakai model lain)":"")});
     const okEmo=new Set(emotions); const emo:Record<string,number>={};
     if(parsed.emotionCompatibility&&typeof parsed.emotionCompatibility==="object"){ for(const [k,v] of Object.entries(parsed.emotionCompatibility as Record<string,unknown>)){ const n=Number(v); if(!okEmo.has(k)||!Number.isFinite(n)) continue; emo[k]=Math.max(0,Math.min(1,n)); } }
     const tags=Array.isArray(parsed.tags)? parsed.tags.slice(0,5).map((t:any)=>String(t).trim().toLowerCase().slice(0,30)).filter(Boolean):[];
@@ -1482,11 +1529,26 @@ Balas JSON persis format ini:
   ]
 }
 Emosi yang boleh dipakai HANYA: [${emotions.join(", ")}]
-KEMBALIKAN HANYA JSON, tanpa markdown atau kata pengantar.`;
+KEMBALIKAN HANYA JSON. MULAI balasanmu langsung dengan { dan AKHIRI dengan } — JANGAN mengulang instruksi ini.`;
   try{
-    const {reply}=await llmForRole("motion", ()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), [{role:"user",content:prompt}]);
-    let clean=String(reply||"").replace(/```json/gi,"").replace(/```/g,"").trim(); let parsed:any=null; try{parsed=JSON.parse(clean);}catch{ const mm=clean.match(/\{[\s\S]*\}/); if(mm) try{parsed=JSON.parse(mm[0]);}catch{}}
-    if(!parsed||typeof parsed!=="object") return json({error:"AI tidak mengembalikan JSON valid"});
+    const ask=(msgs:any[])=>llmForRole("motion", ()=>config.connections,()=>config.activeConnection,(c)=>config.saveConnections(c,config.load().activeId), msgs);
+    let {reply}=await ask([{role:"user",content:prompt}]);
+    let parsed=extractJSONObjectLoose(reply) as any;
+    // Sama dengan motions/analyze: echo prompt → retry sekali dengan koreksi.
+    let clean=String(reply||"").replace(/```json/gi,"").replace(/```/g,"").trim();
+    const echoed=()=>/balas JSON/i.test(clean)||/Permintaan user/i.test(clean);
+    if((!parsed||echoed())){
+      console.warn("[motions/generate] balasan tak berisi objek jawaban (echo="+echoed()+") — retry; awalan:", clean.slice(0,80));
+      const {reply:reply2}=await ask([
+        {role:"user",content:prompt},
+        {role:"assistant",content:clean.slice(0,2000)},
+        {role:"user",content:"Balasanmu tadi salah: kamu mengulang instruksi. Balas HANYA objek JSON motion (id, name, duration, tracks, emotionCompatibility) — mulai dengan karakter { langsung, tanpa mengulang instruksi."},
+      ]);
+      const parsed2=extractJSONObjectLoose(reply2) as any;
+      clean=String(reply2||"").replace(/```json/gi,"").replace(/```/g,"").trim();
+      if(parsed2){ parsed=parsed2; } else if(echoed()){ parsed=null; }
+    }
+    if(!parsed||typeof parsed!=="object") return json({error:"AI tidak mengembalikan JSON valid"+(echoed()?" (model mengulang instruksi dua kali — coba lagi / pakai model lain)":"")});
     if(parsed.emotionCompatibility&&typeof parsed.emotionCompatibility==="object"){ const okEmo=new Set(emotions); for(const k of Object.keys(parsed.emotionCompatibility)) if(!okEmo.has(k)) delete (parsed.emotionCompatibility as any)[k]; }
     parsed.id=String(parsed.id||desc).toLowerCase().replace(/[^a-z0-9]+/g,"_").replace(/^_|_$/g,"").slice(0,60)||"gerakan_ai";
     const r=sanitizeMotionAsset(parsed,{requireTracks:true, source:"user"} as any);

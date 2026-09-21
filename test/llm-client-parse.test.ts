@@ -5,7 +5,7 @@
  * Content-Type text/event-stream, padahal request tidak meminta stream.
  */
 import { describe, it, expect } from "bun:test";
-import { extractJSON, salvageJSONArrayOfObjects } from "../src/shared/llm-client";
+import { extractJSON, salvageJSONArrayOfObjects, extractJSONArrayLoose, extractJSONObjectLoose } from "../src/shared/llm-client";
 
 const RELAY_BODY =
   '{"id":"chatcmpl-RXCYt5B1g88yDAiLwcqSzYmZ","object":"chat.completion","created":1788073032,' +
@@ -105,5 +105,92 @@ describe("salvageJSONArrayOfObjects", () => {
     expect(salvageJSONArrayOfObjects('{"bukan":"array"}')).toEqual([]);
     expect(salvageJSONArrayOfObjects("")).toEqual([]);
     expect(salvageJSONArrayOfObjects("respon teks polos tanpa kurung")).toEqual([]);
+  });
+});
+
+describe("extractJSONArrayLoose — balasan LLM tak steril", () => {
+  it("array sehat langsung terparse", () => {
+    const arr = extractJSONArrayLoose('[{"name":"Senang","category":"emosi"}]');
+    expect(arr.length).toBe(1);
+    expect(arr[0].name).toBe("Senang");
+  });
+
+  it("dikelilingi prosa/markdown tetap terparse", () => {
+    const t = "Berikut sarannya:\n```json\n[{\"name\":\"Sedih\"}]\n```\nSemoga membantu!";
+    expect(extractJSONArrayLoose(t)[0].name).toBe("Sedih");
+  });
+
+  it("objek pembungkus {presets:[...]} diterima", () => {
+    const arr = extractJSONArrayLoose('{"presets":[{"name":"Kaget"},{"name":"Malu"}]}');
+    expect(arr.length).toBe(2);
+    expect(arr[1].name).toBe("Malu");
+  });
+
+  it("ECHO: model mengulang prompt (contoh format ikut terbawa) → array JAWABAN yang terakhir yang menang", () => {
+    const promptEcho = `Kamu pakar rigging Live2D Cubism. Berdasarkan daftar parameter model di bawah...
+PARAMETER TERSEDIA:
+- "ParamMouthForm" range [-1, 1] default 0
+KEMBALIKAN HANYA JSON array valid.
+Format:
+[{"name":"Senang","category":"emosi","values":{"ParamMouthForm":1},"parts":{}}]`;
+    const answer = '[{"name":"Ceria Bahagia","category":"emosi","values":{"ParamMouthForm":0.8},"parts":{}}]';
+    const arr = extractJSONArrayLoose(promptEcho + "\n\n" + answer);
+    expect(arr.length).toBe(1);
+    expect(arr[0].name).toBe("Ceria Bahagia");
+  });
+
+  it("echo tanpa jawaban → salvage contoh dari prompt (lebih baik dari 0), tetap array", () => {
+    const t = "Kamu pakar rigging. PARAMETER TERSEDIA:\n- \"ParamX\" range [-1, 1]\nFormat:\n" +
+      '[{"name":"Senang","category":"emosi","values":{"ParamMouthForm":1},"parts":{}}]';
+    const arr = extractJSONArrayLoose(t);
+    expect(arr.length).toBe(1);
+    expect(arr[0].name).toBe("Senang");
+  });
+
+  it("array terpotong di tengah → salvage N-1 objek utuh", () => {
+    const t = '[{"name":"Senyum"},{"name":"Sedih"},{"name":"Kaget","val';
+    const arr = extractJSONArrayLoose(t);
+    expect(arr.length).toBe(2);
+  });
+
+  it("sampah total → []", () => {
+    expect(extractJSONArrayLoose("")).toEqual([]);
+    expect(extractJSONArrayLoose("balasan teks polos tanpa kurung sekali pun")).toEqual([]);
+  });
+});
+
+describe("extractJSONObjectLoose — balasan objek tunggal (motion studio)", () => {
+  it("objek sehat langsung terparse", () => {
+    const o = extractJSONObjectLoose('{"description":"anggukan santai","tags":["santai"]}');
+    expect(o?.description).toBe("anggukan santai");
+  });
+
+  it("prosa + markdown tetap terparse", () => {
+    const o = extractJSONObjectLoose("Ini hasilnya:\n```json\n{\"description\":\"menyeringai\"}\n```");
+    expect(o?.description).toBe("menyeringai");
+  });
+
+  it("ECHO: template instruksi (0.0-1.0, bukan JSON valid) terlewati → objek JAWABAN yang menang", () => {
+    const echo = `Kamu menganalisa satu gerakan karakter Live2D.
+balas JSON:
+{
+  "description": "satu kalimat bahasa Indonesia",
+  "tags": ["3-5 tag"],
+  "emotionCompatibility": { "<emosi>": 0.0-1.0 }
+}`;
+    const answer = '{"description":"kepala manggut-manggut","tags":["mengantuk"],"emotionCompatibility":{"mengantuk":0.9}}';
+    const o = extractJSONObjectLoose(echo + "\n\n" + answer);
+    expect(o?.description).toBe("kepala manggut-manggut");
+    expect(o?.emotionCompatibility.mengantuk).toBe(0.9);
+  });
+
+  it("echo murni tanpa jawaban valid → null (bukan template sampah)", () => {
+    const echo = "Kamu menganalisa satu gerakan. balas JSON:\n{ \"description\": \"x\", \"emotionCompatibility\": { \"<emosi>\": 0.0-1.0 } }";
+    expect(extractJSONObjectLoose(echo)).toBeNull();
+  });
+
+  it("sampah total → null", () => {
+    expect(extractJSONObjectLoose("")).toBeNull();
+    expect(extractJSONObjectLoose("teks polos tanpa kurung")).toBeNull();
   });
 });

@@ -288,6 +288,10 @@ export const DICT_ID: Record<string, string> = {
 
   // ── pn — popup penjelasan parameter ────────────────────────────
   "pn.sub": "Geser slider untuk melihat efeknya langsung di model. Saat kamu menggeser, gerak idle & mouse-follow dibekukan; setelah 10 dtk tidak digeser, gerak idle kembali mulus.",
+  "pn.poseMode": "Mode pose — model tetap diam selama panel ini terbuka",
+  "pn.freezePose": "❄ mode pose: model diam (idle/blink/napas dimatikan)",
+  "pn.freezeAuto": "❄ dibekukan — gerak idle kembali dalam {t} dtk",
+  "pn.freezeRestore": "✓ gerak idle aktif kembali",
   "pn.searchPh": "Cari param / label / catatan…",
 
   // ── conn — modal editor koneksi AI ─────────────────────────────
@@ -317,22 +321,24 @@ export const DICT_ID: Record<string, string> = {
   "conn.save": "Simpan",
   "conn.cancel": "Batal",
 
-  // ── beh — panel kelakuan ───────────────────────────────────────
-  "beh.title": "Kelakuan",
-  "beh.hint": "Atur seberapa sering karakter bicara sendiri saat kamu diam. Default (config) membuatnya diam 30 menit — pakai profil di bawah untuk langsung merasakan.",
+  // ── beh — panel inisiatif (kelakuan) ───────────────────────────
+  "beh.title": "Inisiatif",
+  "beh.hint": "Menentukan kapan karakter mulai berinisiatif jadi pendamping — setelah masa tenang berlalu, dia bisa bicara sendiri saat kamu diam, pamit saat kamu pergi, dan menyapa saat kamu balik. Pilih Mati untuk menonaktifkan semuanya.",
+  "beh.profil.mati": "Mati",
   "beh.profil.hidup": "Hidup",
   "beh.profil.sedang": "Sedang",
   "beh.profil.tenang": "Tenang",
   "beh.profil.applied": 'Profil "{name}" dipakai — tekan Simpan.',
-  "beh.idleSpeak": "Bicara saat diam (idle)",
-  "beh.awaySpeak": "Bicara saat kamu pergi",
+  "beh.idleSpeak": "Bicara sendiri saat kamu diam",
+  "beh.awaySpeak": "Pamit saat kamu pergi",
   "beh.returnSpeak": "Sapa saat kamu balik",
   "beh.advanced": "Mode lanjutan (angka mentah)",
-  "beh.quietMs": "Masa tenang awal",
-  "beh.idleMs": "Tunggu sebelum idle",
-  "beh.idleRepeatMs": "Ulangi tiap",
-  "beh.save": "Simpan Kelakuan",
+  "beh.quietMs": "Masa tenang sejak mulai",
+  "beh.idleMs": "Diam selama ... sebelum dia mulai",
+  "beh.idleRepeatMs": "Jeda antar inisiatif",
+  "beh.save": "Simpan",
   "beh.quietCountdown": "Masa tenang: —",
+  "beh.quietOff": "Inisiatif mati — karakter hanya merespons kalau kamu bicara dulu.",
 
   // ── runtime app.js ─────────────────────────────────────────────
   "sys.errLoadModel": "Gagal memuat model: {msg}",
@@ -398,6 +404,9 @@ export const DICT_ID: Record<string, string> = {
   "sheet.badge.aiClosedTip": "Saran AI, tapi kamu sudah punya preset dengan nama sama — punyamu yang dipakai.",
   "sheet.badge.aiSuggestionTip": "Saran AI. Belum aktif sampai kamu tekan Pakai.",
   "sheet.badge.mineTip": "Preset milikmu (aktif).",
+  "sheet.group.mine": "Preset kamu",
+  "sheet.group.ai": "Saran AI",
+  "sheet.closedSummary": "{n} saran AI sudah dipakai — jadi preset milikmu",
   "sheet.emptyPlain": "Belum ada sheet. Inspeksi model dulu.",
   "sheet.noFileOnServer": "tidak ada file sheet di server",
   "sheet.reloaded": "dimuat ulang dari file ✓",
@@ -414,9 +423,9 @@ export const DICT_ID: Record<string, string> = {
   "pe.nameOk": "nama boleh dipakai",
   "pe.nameRequired": "nama preset wajib diisi",
   "pe.savedNamed": "tersimpan: {name}",
-  "beh.quietLeftLong": "Masa tenang: sisa {t} (karakter belum bicara sendiri).",
-  "beh.quietDoneLong": "Masa tenang selesai — karakter bisa bereaksi sendiri.",
-  "beh.savedToast": "Pengaturan kelakuan tersimpan",
+  "beh.quietLeftLong": "Masa tenang: sisa {t} — dia belum mulai berinisiatif.",
+  "beh.quietDoneLong": "Masa tenang lewat — dia boleh mulai berinisiatif saat kamu diam.",
+  "beh.savedToast": "Pengaturan inisiatif tersimpan",
   "conn.delConfirm": "Hapus connection ini?",
   "conn.allRoles": "semua peran",
   "conn.offSkipped": "⏸ off — dilewati",

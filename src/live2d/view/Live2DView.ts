@@ -148,6 +148,14 @@ export class Live2DView {
         resolution,
         autoDensity: true,
         preference: "webgl",
+        // OBS Browser Source & alat capture membaca drawing buffer DI LUAR
+        // siklus frame. Dengan preserveDrawingBuffer=false, WebGL mengembalikan
+        // buffer yang di-auto-clear ke gl.clearColor saat itu — dan clearColor
+        // tersisa PUTIH dari clear buffer mask Cubism (renderer_webgl:220 dst).
+        // Akibatnya overlay tampak putih buram di OBS walau on-screen transparan.
+        // preserveDrawingBuffer=true → buffer yang dibaca = frame yang digambar
+        // (transparan + model). Wajib untuk transparansi overlay.
+        preserveDrawingBuffer: true,
       });
       this.pixiApp = pixiApp;
       const gl = (canvas.getContext("webgl2") || canvas.getContext("webgl")) as WebGL2RenderingContext;
@@ -169,6 +177,10 @@ export class Live2DView {
         gl.depthMask(true);
         gl.frontFace(gl.CCW);
         gl.activeTexture(gl.TEXTURE0);
+        // Buffer mask Cubism meninggalkan clearColor PUTIH (renderer_webgl:220).
+        // Kembalikan ke transparan tiap frame: bila alat capture (OBS/screenshot)
+        // membaca buffer di luar frame, auto-clear-nya transparan, bukan putih.
+        gl.clearColor(0, 0, 0, 0);
         const st = (pixiApp.renderer as any).state;
         if (st) {
           st.stateId = 0;
@@ -278,6 +290,17 @@ export class Live2DView {
           // getParameterId wajib mengembalikan STRING — itu kunci paramRange.
           getParameterCount: () => m.getParameterCount?.() ?? 0,
           getParameterId: (i: number) => m.getParameterId?.(i)?.getString?.() ?? "",
+          // Wajib ada: inspectModel app.js (cabang "wrapper-accessors") butuh
+          // daftar id plural — tanpa ini semua param ter-skip saat inspeksi dan
+          // sheet jatuh ke rentang tebakan -1..1 (slider panel param jadi
+          // hampir tak berpengaruh pada rig ber-range lebar, mis. ±30).
+          getParameterIds: () => {
+            const n = m.getParameterCount?.() ?? 0;
+            const out: string[] = [];
+            for (let i = 0; i < n; i++)
+              out.push(m.getParameterId?.(i)?.getString?.() ?? "");
+            return out;
+          },
           getParameterMinimumValue: (i: number) => m.getParameterMinimumValue?.(i) ?? 0,
           getParameterMaximumValue: (i: number) => m.getParameterMaximumValue?.(i) ?? 0,
           getParameterDefaultValue: (i: number) => m.getParameterDefaultValue?.(i) ?? 0,
