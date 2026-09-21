@@ -123,7 +123,16 @@ Ekspresi juga diport:
   lumine IDENTIK** (fix bug: localeCompare TS → banding lowercase, bukan byte
   cmp). 20 test cargo hijau. Gap: rescue-only folder belum ditangani.
 
-BELUM diport: Auto-Rescue, motions, mode, model files/avatar/motion-taxonomy,
+Motions (read/delete) + model files/avatar juga diport:
+- `core/src/motions.rs` — list/get/delete (validasi id [A-Za-z0-9_-]{1,60},
+  sanitize_key modelKey). `core/src/model.rs` +list_model_files (walk) +
+  find_avatar (AVATAR_PREFERRED lalu walk depth≤2, skip aset model3/moc3) +
+  avatar_mime. Routes: GET /api/model/files, GET /api/model/avatar (biner),
+  GET /api/motions, GET+DELETE /api/motions/{id}. Paritas: files lumine 28=28,
+  avatar 200 image/png 104 KB, motions []. 21 test cargo hijau.
+  Gap: POST/PUT motions (butuh sanitizeMotionAsset client) belum diport.
+
+BELUM diport: Auto-Rescue, mode manager, motion-taxonomy (import client),
 upload/import-zip/delete, LLM/agent/vtuber/media/browser. Shell belum
 menjalankan server core (masih Bun). Increment aman & terverifikasi; menyusul.
 

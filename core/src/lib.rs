@@ -13,6 +13,7 @@
 pub mod config;
 pub mod expressions;
 pub mod model;
+pub mod motions;
 pub mod paths;
 pub mod sheet;
 pub mod static_serve;
@@ -53,6 +54,10 @@ pub fn router(paths: AppPaths) -> Router {
             "/api/model/expressions-adoption",
             get(get_adoption).post(post_adoption),
         )
+        .route("/api/model/files", get(get_model_files))
+        .route("/api/model/avatar", get(get_model_avatar))
+        .route("/api/motions", get(get_motions_list))
+        .route("/api/motions/{id}", get(get_motion_h).delete(del_motion_h))
         .fallback(static_handler)
         .with_state(paths)
 }
@@ -153,6 +158,73 @@ async fn post_adoption(State(paths): State<AppPaths>, body: axum::body::Bytes) -
         }
         None => json_status(StatusCode::BAD_REQUEST, json!({ "error": "body JSON rusak" })),
     }
+}
+
+/// GET /api/model/files?name=X — semua file relatif di folder model.
+async fn get_model_files(
+    State(paths): State<AppPaths>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let name = q.get("name").map(String::as_str).unwrap_or("");
+    match model::list_model_files(&paths.model_dir, name) {
+        Some(files) => json_status(StatusCode::OK, json!({ "name": name, "files": files })),
+        None => json_status(StatusCode::NOT_FOUND, json!({ "error": "not found" })),
+    }
+}
+
+/// GET /api/model/avatar?name=X — gambar avatar (biner) atau 404.
+async fn get_model_avatar(
+    State(paths): State<AppPaths>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let name = q.get("name").map(String::as_str).unwrap_or("");
+    match model::find_avatar(&paths.model_dir, name) {
+        Some(fp) => {
+            let mime = model::avatar_mime(&fp);
+            match tokio::fs::read(&fp).await {
+                Ok(bytes) => Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, mime)
+                    .header(header::CACHE_CONTROL, "no-cache")
+                    .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                    .body(Body::from(bytes))
+                    .unwrap(),
+                Err(e) => json_status(StatusCode::INTERNAL_SERVER_ERROR, json!({ "error": e.to_string() })),
+            }
+        }
+        None => json_status(StatusCode::NOT_FOUND, json!({ "error": "no avatar" })),
+    }
+}
+
+/// GET /api/motions?model=X — daftar motion buatan user.
+async fn get_motions_list(
+    State(paths): State<AppPaths>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let model = q.get("model").map(String::as_str).unwrap_or("default");
+    json_status(StatusCode::OK, motions::list_motions(&paths.motions_dir, model))
+}
+
+/// GET /api/motions/:id?model=X — satu motion.
+async fn get_motion_h(
+    State(paths): State<AppPaths>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let model = q.get("model").map(String::as_str).unwrap_or("default");
+    let (status, body) = motions::get_motion(&paths.motions_dir, model, &id);
+    json_raw(status, body)
+}
+
+/// DELETE /api/motions/:id?model=X — hapus motion.
+async fn del_motion_h(
+    State(paths): State<AppPaths>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let model = q.get("model").map(String::as_str).unwrap_or("default");
+    let (status, body) = motions::delete_motion(&paths.motions_dir, model, &id);
+    json_raw(status, body)
 }
 
 /// Bangun Response JSON dari status u16 + body string (untuk handler yang sudah
