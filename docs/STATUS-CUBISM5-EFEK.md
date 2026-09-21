@@ -82,9 +82,19 @@ frontend & aset statis** dari Rust — fondasi Tauri-serve-frontend (single-exe)
 - 9 test cargo hijau (traversal 403, config forbidden, model→data, MIME, api
   404 JSON, health, version).
 
-BELUM diport: config read/write byte-compatible, /api/models (+rescue),
+Grup rute BACA config juga sudah diport:
+- `core/src/config.rs` — load() byte-compat (merge {...DEFAULT, ...base}, nilai
+  user tak ditimpa), mask_key (6+8bullet+4), normalize_roles (LLM_ROLES),
+  api_config_response (GET /api/config: apiKey koneksi & tts dimask, roles
+  dinormalisasi). Route GET /api/config di router.
+- **Smoke terverifikasi** (`cargo run -p live2d-core --example serve` di root
+  repo, port 8340): GET / → index.html asli (74 KB, text/html), /js/app.js asli
+  (319 KB), /config.json → 403, /api/config → config asli dgn apiKey TERMASK
+  (`sk-xt-••••••••0be6`) sama format TS. 13 test cargo hijau.
+
+BELUM diport: config TULIS (saveConnections/TTS/dst), /api/models (+rescue),
 LLM/agent/vtuber/media/browser. Shell belum menjalankan server core (masih Bun).
-Ini increment aman & terverifikasi; grup rute berikutnya menyusul.
+Increment aman & terverifikasi; grup rute berikutnya menyusul.
 
 ## UPDATE 2026-09-22 (65) — EKSEKUSI Stage 0-1 migrasi Tauri + TEMUAN IPC penting
 

@@ -10,6 +10,7 @@
 //!
 //! Stage 2: static serving + /api/version. Rute Bun lain diport bertahap.
 
+pub mod config;
 pub mod paths;
 pub mod static_serve;
 
@@ -40,6 +41,7 @@ pub fn router(paths: AppPaths) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/api/version", get(version))
+        .route("/api/config", get(get_config))
         .fallback(static_handler)
         .with_state(paths)
 }
@@ -50,6 +52,11 @@ async fn health() -> Json<serde_json::Value> {
 
 async fn version() -> Json<serde_json::Value> {
     Json(json!({ "core_version": VERSION, "engine": "rust-in-process" }))
+}
+
+/// GET /api/config — apiKey dimask, roles dinormalisasi (padanan handler TS).
+async fn get_config(State(paths): State<AppPaths>) -> Json<serde_json::Value> {
+    Json(config::api_config_response(&paths.data_dir.join("config.json")))
 }
 
 /// Penyajian statis + SPA fallback (padanan blok fetch static di index.ts).
