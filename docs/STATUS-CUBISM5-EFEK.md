@@ -106,10 +106,18 @@ Rute sheet juga diport:
   tulis atomik tmp+rename). Route GET/POST /api/sheet. Smoke OK: POST → path,
   GET → {scannerVersion:2,...}, 404 bila tak ada. 16 test cargo hijau.
 
-BELUM diport: config TULIS (saveConnections/TTS/dst — DITUNDA, delicate mask
-round-trip apiKey), Auto-Rescue, expressions, motions, LLM/agent/vtuber/media/
+Config TULIS juga diport (user OK: config.json gitignored + key di-reroll):
+- `core/src/config.rs` +save_connections/events/tts/i18n (atomic tmp+rename) +
+  handle_config_post (add/update/delete/setActive/saveEvents/saveTTS/saveI18n/
+  save) — persis handleConfigPost TS: id `conn_<base36>`, roles dinormalisasi,
+  update tanpa apiKey → key lama dipertahankan, cleanStr apiKey, saveTTS balas
+  termask tapi FILE simpan key asli. Route POST /api/config. 18 test cargo hijau
+  (add→aktif+roles, update key-preserve, setActive 404, delete→activeId null,
+  saveTTS mask+merge).
+
+BELUM diport: Auto-Rescue, expressions, motions, mode, LLM/agent/vtuber/media/
 browser. Shell belum menjalankan server core (masih Bun). Increment aman &
-terverifikasi paritas; lanjut menyusul.
+terverifikasi; lanjut menyusul.
 
 ## UPDATE 2026-09-22 (65) — EKSEKUSI Stage 0-1 migrasi Tauri + TEMUAN IPC penting
 

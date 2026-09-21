@@ -43,7 +43,7 @@ pub fn router(paths: AppPaths) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/api/version", get(version))
-        .route("/api/config", get(get_config))
+        .route("/api/config", get(get_config).post(post_config))
         .route("/api/models", get(get_models))
         .route("/api/model/path", get(get_model_path))
         .route("/api/sheet", get(get_sheet_h).post(post_sheet_h))
@@ -62,6 +62,19 @@ async fn version() -> Json<serde_json::Value> {
 /// GET /api/config — apiKey dimask, roles dinormalisasi (padanan handler TS).
 async fn get_config(State(paths): State<AppPaths>) -> Json<serde_json::Value> {
     Json(config::api_config_response(&paths.data_dir.join("config.json")))
+}
+
+/// POST /api/config — action add/update/delete/setActive/saveEvents/saveTTS/
+/// saveI18n/save (padanan handleConfigPost). data/config.json gitignored.
+async fn post_config(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let parsed: Option<serde_json::Value> = serde_json::from_slice(&body).ok();
+    match parsed {
+        Some(v) => {
+            let (status, out) = config::handle_config_post(&paths.data_dir.join("config.json"), &v);
+            json_raw(status, out)
+        }
+        None => json_status(StatusCode::BAD_REQUEST, json!({ "error": "body JSON rusak" })),
+    }
 }
 
 /// GET /api/models — daftar folder model yang punya `.model3.json` (terurut).
