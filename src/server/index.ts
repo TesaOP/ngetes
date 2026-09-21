@@ -1163,9 +1163,11 @@ async function handleTTSOptions(req:Request):Promise<Response>{
   if(apiKey && apiKey.indexOf("•")!==-1){ const stored=config.load().tts||{}; if(stored.apiKey) realKey=stored.apiKey; }
   try{
     if(provider==="supertonic"||provider==="native"){
-      // Voice style dari sidecar native (F1..F5, M1..M5). Model tunggal.
-      const voices=await engineTtsVoices();
-      return json({voices:voices.length?voices:["F1","F2","F3","F4","F5","M1","M2","M3","M4","M5"], models:[{id:"supertonic-3",name:"SuperTonic 3 (native)"}], styles:[]});
+      // Voice style dari sidecar native (F1..F5, M1..M5). Dropdown UI butuh
+      // bentuk {id,name} — bukan string mentah.
+      const names=await engineTtsVoices();
+      const list=(names.length?names:["F1","F2","F3","F4","F5","M1","M2","M3","M4","M5"]);
+      return json({voices:list.map((v:string)=>({id:v,name:v})), models:[{id:"supertonic-3",name:"SuperTonic 3 (native)"}], styles:[]});
     }
     if(provider==="gemini"){
       let models:any[]=GEMINI_TTS_MODELS;

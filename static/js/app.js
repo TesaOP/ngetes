@@ -4278,10 +4278,12 @@
       $$(".tts-key-row").forEach((el) =>
         el.classList.toggle("hidden", !needKey),
       );
-      // Gemini & ElevenLabs pakai alamat resmi masing-masing — endpoint
-      // disembunyikan supaya tidak membingungkan.
+      // Gemini & ElevenLabs pakai alamat resmi masing-masing; SuperTonic
+      // native jalan di sidecar lokal (tanpa endpoint) — endpoint disembunyikan
+      // supaya tidak membingungkan.
+      const noEndpoint = needKey || p === "supertonic" || p === "native";
       $$(".tts-endpoint-row").forEach((el) =>
-        el.classList.toggle("hidden", needKey),
+        el.classList.toggle("hidden", noEndpoint),
       );
       // Gaya bicara hanya bermakna untuk Gemini & OpenAI gpt-4o-mini-tts
       $$(".tts-style-row").forEach((el) =>
