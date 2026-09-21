@@ -58,6 +58,7 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/model/files", get(get_model_files))
         .route("/api/model/avatar", get(get_model_avatar))
         .route("/api/model/upload", axum::routing::post(post_model_upload))
+        .route("/api/model/import-zip", axum::routing::post(post_import_zip))
         .route("/api/model/{name}", axum::routing::delete(delete_model_h))
         .route("/api/motions", get(get_motions_list))
         .route("/api/motions/{id}", get(get_motion_h).delete(del_motion_h))
@@ -218,6 +219,19 @@ async fn post_model_upload(State(paths): State<AppPaths>, body: axum::body::Byte
             json_raw(status, out)
         }
         None => json_status(StatusCode::BAD_REQUEST, json!({ "error": "body JSON rusak" })),
+    }
+}
+
+/// POST /api/model/import-zip {name, base64}.
+async fn post_import_zip(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    match serde_json::from_slice::<serde_json::Value>(&body).ok() {
+        Some(v) => {
+            let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("");
+            let b64 = v.get("base64").and_then(|x| x.as_str()).unwrap_or("");
+            let (status, out) = model::import_zip(&paths.model_dir, &paths.data_dir, name, b64);
+            json_raw(status, out)
+        }
+        None => json_status(StatusCode::BAD_REQUEST, json!({ "error": "zip kosong" })),
     }
 }
 

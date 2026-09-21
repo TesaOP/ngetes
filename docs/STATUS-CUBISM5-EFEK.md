@@ -146,9 +146,19 @@ Model delete + upload (base64) juga diport:
   Smoke end-to-end (temp root): upload testmdl → /api/models=[testmdl] → delete
   → []; tanpa route-conflict (GET /api/model/path tetap jalan). 23 test hijau.
 
-BELUM diport: import-zip (butuh crate zip), mode manager (coupling runtime),
-motion-taxonomy + POST/PUT motions (import client), LLM/agent/vtuber/media/
-browser. Shell belum menjalankan server core (masih Bun). Menyusul.
+Import-zip juga diport (crate `zip`, bukan shell unzip):
+- `core/src/model.rs` +import_zip — decode base64, ekstrak via `zip` crate
+  (enclosed_name menolak traversal), sanitize_model_folder_name, wajib
+  *.model3.json. Route POST /api/model/import-zip. 24 test hijau (uji rakit
+  zip in-memory → ekstrak → temukan model3, sanitize '!'→'_').
+
+**Stage 2 file/config/model/sheet surface: SELESAI diport** (static, config r/w,
+models, model/path, sheet r/w, expressions+adoption, motions r/d, files, avatar,
+auto-rescue, delete, upload, import-zip) — semua paritas/uji vs Bun, 24 test.
+
+BELUM diport (coupling ke kode lain): mode manager (runtime modes), POST/PUT
+motions + motion-taxonomy (client motion-dsl/classifier), LLM/agent/vtuber/media/
+browser (Stage 3-4). Shell belum menjalankan server core (masih Bun).
 
 ## UPDATE 2026-09-22 (65) — EKSEKUSI Stage 0-1 migrasi Tauri + TEMUAN IPC penting
 

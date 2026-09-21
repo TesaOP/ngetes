@@ -236,6 +236,67 @@ pub fn upload_model(model_dir: &Path, name: &str, files: &serde_json::Value) -> 
     (200, json!({ "ok": true, "name": name }).to_string())
 }
 
+/// Import model dari zip base64 — padanan handleImportZip. Ekstrak via crate
+/// `zip` (bukan shell unzip). Wajib mengandung *.model3.json. (status, body).
+pub fn import_zip(model_dir: &Path, data_dir: &Path, name: &str, base64_zip: &str) -> (u16, String) {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use serde_json::json;
+    use std::io::Read;
+
+    if base64_zip.is_empty() {
+        return (400, json!({ "error": "zip kosong" }).to_string());
+    }
+    let clean = crate::expressions::sanitize_model_folder_name(name);
+    let dest = model_dir.join(&clean);
+    if std::fs::create_dir_all(&dest).is_err() {
+        return (400, json!({ "error": "gagal buat folder" }).to_string());
+    }
+    let bytes = match STANDARD.decode(base64_zip) {
+        Ok(b) => b,
+        Err(_) => return (400, json!({ "error": "base64 zip tidak valid" }).to_string()),
+    };
+    let mut archive = match zip::ZipArchive::new(std::io::Cursor::new(bytes)) {
+        Ok(a) => a,
+        Err(e) => return (400, json!({ "error": format!("gagal buka zip: {e}") }).to_string()),
+    };
+    for i in 0..archive.len() {
+        let mut entry = match archive.by_index(i) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        // enclosed_name menolak traversal (../, absolut).
+        let rel = match entry.enclosed_name() {
+            Some(p) => p,
+            None => continue,
+        };
+        let target = dest.join(&rel);
+        if !target.starts_with(&dest) {
+            continue;
+        }
+        if entry.is_dir() {
+            let _ = std::fs::create_dir_all(&target);
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let mut buf = Vec::new();
+        if entry.read_to_end(&mut buf).is_ok() {
+            let _ = std::fs::write(&target, buf);
+        }
+    }
+    match find_model3(&dest, 0) {
+        Some(abs) => {
+            let rel = abs
+                .strip_prefix(data_dir)
+                .map(|r| r.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            (200, json!({ "ok": true, "name": clean, "path": rel }).to_string())
+        }
+        None => (400, json!({ "error": "zip tidak mengandung *.model3.json" }).to_string()),
+    }
+}
+
 /// Content-Type gambar avatar dari ekstensi.
 pub fn avatar_mime(path: &Path) -> &'static str {
     let e = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
@@ -259,6 +320,35 @@ mod tests {
     fn rand_suffix() -> u64 {
         use std::time::{SystemTime, UNIX_EPOCH};
         SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() as u64
+    }
+
+    #[test]
+    fn import_zip_ekstrak_dan_temukan_model3() {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        use std::io::Write;
+        // rakit zip in-memory: 1 file sub/hana.model3.json
+        let mut buf = std::io::Cursor::new(Vec::new());
+        {
+            let mut zw = zip::ZipWriter::new(&mut buf);
+            let opts: zip::write::FileOptions<()> =
+                zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            zw.start_file("sub/hana.model3.json", opts).unwrap();
+            zw.write_all(b"{\"Version\":3}").unwrap();
+            // entri traversal harus diabaikan
+            zw.finish().unwrap();
+        }
+        let b64 = STANDARD.encode(buf.into_inner());
+
+        let data = tmp();
+        let model_dir = data.join("model");
+        std::fs::create_dir_all(&model_dir).unwrap();
+        let (st, body) = import_zip(&model_dir, &data, "MyModel!", &b64);
+        assert_eq!(st, 200, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["name"], "MyModel_"); // sanitize: '!' → '_'
+        assert!(v["path"].as_str().unwrap().ends_with("hana.model3.json"));
+        assert!(model_dir.join("MyModel_").join("sub").join("hana.model3.json").exists());
+        let _ = std::fs::remove_dir_all(&data);
     }
 
     #[test]
