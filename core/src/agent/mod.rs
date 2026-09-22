@@ -2,6 +2,7 @@
 //! Batch 3d-1: memory (long-term lintas sesi). Menyusul: sessions, undo,
 //! tools, loop + permission gate + SSE.
 
+pub mod assistant;
 pub mod memory;
 pub mod sessions;
 pub mod tools;

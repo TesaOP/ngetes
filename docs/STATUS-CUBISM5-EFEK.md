@@ -204,6 +204,21 @@ butuh Bun: assistant (agent loop), vtuber, browser, pet, upload/motions-write.
   subagent/plan → "belum diport"), public_tool_args. 48 test cargo hijau
   (run_command echo NYATA, detect multi-format, dispatch). Sisa: loop agentAsk
   + permission gate (pause/resume) + /api/assistant/ask-stream.
+- **batch 3d-5 (loop + gate + endpoints)**: `core/src/agent/assistant.rs` —
+  Runtime global (workDir/history/approvals/busy, tokio Mutex), run_loop
+  (LLM "assistant" → detect_tool_call → gate mutating: jeda+minta izin / exec
+  safe langsung → ulang MAX_ITERATIONS, anti-stuck seen-calls), ask, approve
+  (resume loop setelah izin), start/status/stop, strip_tool_directive. Routes
+  POST /api/assistant/{start,ask,ask-stream(SSE),approve,stop} + GET status.
+  **Verifikasi LLM NYATA** (core.exe, config asli apinex): ask "tolong bantu"
+  → agent balas kontekstual "Siap bantu! …folder /tmp/work?" (no-tool→final,
+  history=2). 50 test cargo + 416 guard hijau. Gate mutating & tool-exec:
+  unit-tested (detect/exec/run_command). Sisa: browser/subagent tools, true
+  token-stream + event tool_call/approval di SSE.
+
+**Assistant mode kini berjalan di Rust core** (loop + gate + FS/run_command
+tools) — Bun tak lagi wajib untuk assistant dasar. Sisa Bun: vtuber, browser
+CDP, pet, tool browser/subagent.
 
 ## WIRING Stage 5 (parsial) — shell luncurkan server Rust
 - `core/src/mode.rs` + GET/POST `/api/mode` (kunci "active" utk probe shell

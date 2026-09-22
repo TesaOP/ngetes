@@ -60,6 +60,12 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/tts", axum::routing::post(post_tts))
         .route("/api/stt", axum::routing::post(post_stt))
         .route("/api/mode", get(get_mode).post(post_mode))
+        .route("/api/assistant/start", axum::routing::post(post_assistant_start))
+        .route("/api/assistant/status", get(get_assistant_status))
+        .route("/api/assistant/stop", axum::routing::post(post_assistant_stop))
+        .route("/api/assistant/ask", axum::routing::post(post_assistant_ask))
+        .route("/api/assistant/ask-stream", axum::routing::post(post_assistant_ask_stream))
+        .route("/api/assistant/approve", axum::routing::post(post_assistant_approve))
         .route("/api/assistant/memory", get(get_memory))
         .route("/api/assistant/memory/forget", axum::routing::post(post_memory_forget))
         .route("/api/assistant/sessions", get(get_sessions))
@@ -154,6 +160,79 @@ async fn post_tts(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Res
             .body(Body::from(buf))
             .unwrap(),
         Err(e) => json_status(StatusCode::BAD_GATEWAY, json!({ "error": format!("TTS error: {e}") })),
+    }
+}
+
+/// POST /api/assistant/start {workDir?, persona?}.
+async fn post_assistant_start(body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let wd = v.get("workDir").and_then(|x| x.as_str()).unwrap_or("");
+    json_status(StatusCode::OK, agent::assistant::start(wd).await)
+}
+
+/// GET /api/assistant/status.
+async fn get_assistant_status() -> Json<serde_json::Value> {
+    Json(agent::assistant::status().await)
+}
+
+/// POST /api/assistant/stop.
+async fn post_assistant_stop() -> Response {
+    json_status(StatusCode::OK, agent::assistant::stop().await)
+}
+
+/// POST /api/assistant/ask {text} — jalankan tugas agent (loop penuh).
+async fn post_assistant_ask(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("");
+    let cfg = paths.data_dir.join("config.json");
+    let r = agent::assistant::ask(&cfg, &paths.root, text).await;
+    if r.ok {
+        json_status(StatusCode::OK, json!({ "reply": r.reply, "paused": r.paused }))
+    } else {
+        json_status(StatusCode::BAD_GATEWAY, json!({ "error": r.error.unwrap_or_default() }))
+    }
+}
+
+/// POST /api/assistant/ask-stream — SSE. Kosakata event dijaga sama panel
+/// (stream.ts): emit `data:{delta}` (jawaban) lalu `data:{done,reply,paused}`.
+/// (Belum true token-stream: loop menjalankan tool dulu, hasil final di-emit.)
+async fn post_assistant_ask_stream(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use axum::response::IntoResponse;
+    use futures_util::StreamExt;
+    use tokio_stream::wrappers::UnboundedReceiverStream;
+
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let cfg = paths.data_dir.join("config.json");
+    let root = paths.root.clone();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    tokio::spawn(async move {
+        let r = agent::assistant::ask(&cfg, &root, &text).await;
+        if r.ok {
+            if !r.reply.is_empty() {
+                let _ = tx.send(json!({ "delta": r.reply }).to_string());
+            }
+            let _ = tx.send(json!({ "done": true, "reply": r.reply, "paused": r.paused }).to_string());
+        } else {
+            let _ = tx.send(json!({ "done": true, "error": r.error.unwrap_or_default() }).to_string());
+        }
+    });
+    let stream = UnboundedReceiverStream::new(rx).map(|d| Ok::<_, std::convert::Infallible>(Event::default().data(d)));
+    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+}
+
+/// POST /api/assistant/approve {id, approve}.
+async fn post_assistant_approve(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
+    let approve_it = v.get("approve").and_then(|x| x.as_bool()).unwrap_or(false);
+    let cfg = paths.data_dir.join("config.json");
+    let r = agent::assistant::approve(&cfg, &paths.root, id, approve_it).await;
+    if r.ok {
+        json_status(StatusCode::OK, json!({ "reply": r.reply, "paused": r.paused }))
+    } else {
+        json_status(StatusCode::BAD_REQUEST, json!({ "error": r.error.unwrap_or_default() }))
     }
 }
 
