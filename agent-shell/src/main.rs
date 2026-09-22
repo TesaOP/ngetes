@@ -200,6 +200,11 @@ fn main() {
                 let port = host_port.rsplit(':').next().unwrap_or("8310").to_string();
                 match Command::new(&path)
                     .env("PORT", &port)
+                    // stdin null WAJIB: build release GUI (windows_subsystem="windows")
+                    // tak punya console; mewarisi stdin invalid ke child bisa
+                    // menggagalkan CreateProcess → sidecar tak menyala. null handle
+                    // memberi child handle valid.
+                    .stdin(Stdio::null())
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
                     .spawn()

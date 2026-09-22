@@ -94,7 +94,7 @@ pub fn launch(root: &Path, port: u16) -> Value {
 
     // Shell 1: Tauri (transparan + klik-tembus).
     if let Some(shell) = find_shell_exe(root) {
-        match std::process::Command::new(&shell).args(["pet", &url]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
+        match std::process::Command::new(&shell).args(["pet", &url]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
             Ok(child) => {
                 let mut s = state().lock().unwrap();
                 s.pid = Some(child.id());
@@ -122,6 +122,7 @@ pub fn launch(root: &Path, port: u16) -> Value {
             "--window-position=40,40",
             "--autoplay-policy=no-user-gesture-required",
         ])
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
