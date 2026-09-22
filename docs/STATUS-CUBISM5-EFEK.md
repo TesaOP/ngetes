@@ -175,7 +175,11 @@ auto-rescue, delete, upload, import-zip) — semua paritas/uji vs Bun, 24 test.
   build prompt director, parse via extract_json_array_loose + validasi ketat
   (emosi/gesture/motion hanya dari daftar model — Model-Agnostic), fallback aman.
   35 test cargo hijau; smoke mock → fallback 1 segment {emotion:normal,...}.
-  Sisa endpoint LLM-role: classify-params, analyze-sheet, motions analyze/generate.
+  Sisa endpoint LLM-role: analyze-sheet, motions analyze/generate.
+- **batch 3b-sheet**: `core/src/sheet_ai.rs` — port handleClassifyParams
+  (/api/model/classify-params, role "sheet"): prompt + KNOWN_ROLES, parse via
+  extract_json_array_loose + validasi (requested-id, allowed-role, str cap).
+  36 test cargo hijau (uji echo-resistance + filter requested-id).
 
 BELUM diport (coupling ke kode lain): mode manager (runtime modes), POST/PUT
 motions + motion-taxonomy (client motion-dsl/classifier), LLM/agent/vtuber/media/

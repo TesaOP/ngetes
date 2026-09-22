@@ -20,6 +20,7 @@ pub mod motions;
 pub mod paths;
 pub mod rescue;
 pub mod sheet;
+pub mod sheet_ai;
 pub mod static_serve;
 
 use axum::{
@@ -52,6 +53,7 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/config", get(get_config).post(post_config))
         .route("/api/chat", axum::routing::post(post_chat))
         .route("/api/animate-text", axum::routing::post(post_animate_text))
+        .route("/api/model/classify-params", axum::routing::post(post_classify_params))
         .route("/api/models", get(get_models))
         .route("/api/model/path", get(get_model_path))
         .route("/api/sheet", get(get_sheet_h).post(post_sheet_h))
@@ -126,6 +128,16 @@ async fn post_animate_text(State(paths): State<AppPaths>, body: axum::body::Byte
         None => return json_status(StatusCode::BAD_REQUEST, json!({ "error": "body JSON rusak" })),
     };
     let out = director::handle_animate_text(&paths.data_dir.join("config.json"), &v).await;
+    json_status(StatusCode::OK, out)
+}
+
+/// POST /api/model/classify-params — klasifikasi parameter rig (role "sheet").
+async fn post_classify_params(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = match serde_json::from_slice(&body).ok() {
+        Some(v) => v,
+        None => return json_status(StatusCode::BAD_REQUEST, json!({ "error": "body JSON rusak" })),
+    };
+    let out = sheet_ai::classify_params(&paths.data_dir.join("config.json"), &v).await;
     json_status(StatusCode::OK, out)
 }
 
