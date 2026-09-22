@@ -35,6 +35,8 @@ tokio-stream = "0.1"
 # Twitch chat = IRC over WebSocket (wss). rustls agar konsisten dgn reqwest
 # (tanpa OpenSSL). YouTube live chat pakai reqwest (poll) — sudah ada.
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+# Parser URL (kebijakan browser agent) — sudah jadi dep transitif reqwest.
+url = "2"
 # Engine inferensi native sebagai LIBRARY — TTS SuperTonic dipanggil IN-PROCESS
 # (tanpa sidecar/HTTP). STT (whisper) di belakang feature `engine-stt` karena
 # butuh cmake+libclang; TTS (ort) tidak.

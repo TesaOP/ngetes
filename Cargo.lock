@@ -2049,6 +2049,7 @@ dependencies = [
  "tokio-stream",
  "tokio-tungstenite",
  "tower",
+ "url",
  "zip",
 ]
 

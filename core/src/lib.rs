@@ -11,6 +11,7 @@
 //! Stage 2: static serving + /api/version. Rute Bun lain diport bertahap.
 
 pub mod agent;
+pub mod browser;
 pub mod config;
 pub mod director;
 pub mod expressions;
@@ -76,6 +77,18 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/vtuber/conn", get(get_vtuber_conn))
         .route("/api/vtuber/config", axum::routing::post(post_vtuber_config))
         .route("/api/vtuber/operator", axum::routing::post(post_vtuber_operator))
+        .route("/api/browser/status", get(get_browser_status))
+        .route("/api/browser/screenshot", get(get_browser_screenshot))
+        .route("/api/browser/open", axum::routing::post(post_browser_open))
+        .route("/api/browser/navigate", axum::routing::post(post_browser_navigate))
+        .route("/api/browser/history", axum::routing::post(post_browser_history))
+        .route("/api/browser/inspect", axum::routing::post(post_browser_inspect))
+        .route("/api/browser/click", axum::routing::post(post_browser_click))
+        .route("/api/browser/point", axum::routing::post(post_browser_point))
+        .route("/api/browser/type", axum::routing::post(post_browser_type))
+        .route("/api/browser/focus", axum::routing::post(post_browser_focus))
+        .route("/api/browser/close", axum::routing::post(post_browser_close))
+        .route("/api/browser/grant", axum::routing::post(post_browser_grant))
         .route("/api/assistant/start", axum::routing::post(post_assistant_start))
         .route("/api/assistant/status", get(get_assistant_status))
         .route("/api/assistant/stop", axum::routing::post(post_assistant_stop))
@@ -467,6 +480,123 @@ async fn post_mode(body: axum::body::Bytes) -> Response {
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
     let (status, out) = mode::set_mode(&v);
     json_status(StatusCode::from_u16(status).unwrap_or(StatusCode::OK), out)
+}
+
+// ── Browser agent (CDP) ─────────────────────────────────────────────────────
+
+fn browser_result(r: Result<serde_json::Value, String>) -> Response {
+    match r {
+        Ok(v) => json_status(StatusCode::OK, v),
+        Err(e) => json_status(StatusCode::BAD_REQUEST, json!({ "error": e })),
+    }
+}
+
+async fn get_browser_status() -> Response {
+    json_status(StatusCode::OK, browser::status().await)
+}
+
+async fn get_browser_screenshot(uri: Uri) -> Response {
+    let q = uri.query().unwrap_or("");
+    let get = |k: &str| q.split('&').find_map(|kv| kv.strip_prefix(&format!("{k}="))).map(|s| s.to_string());
+    let format = if get("format").as_deref() == Some("jpeg") { "jpeg" } else { "png" };
+    let quality = get("quality").and_then(|s| s.parse::<u8>().ok()).unwrap_or(85);
+    match browser::screenshot(format, quality).await {
+        Ok((bytes, mime, w, h, ts)) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, mime)
+            .header(header::CACHE_CONTROL, "no-store")
+            .header("X-Browser-Timestamp", ts.to_string())
+            .header("X-Browser-Width", w.to_string())
+            .header("X-Browser-Height", h.to_string())
+            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+            .body(Body::from(bytes))
+            .unwrap(),
+        Err(e) => json_status(StatusCode::BAD_REQUEST, json!({ "error": e })),
+    }
+}
+
+async fn post_browser_open(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let url = v.get("url").and_then(|x| x.as_str()).unwrap_or("");
+    let allow_private = v.get("allowPrivate").and_then(|x| x.as_bool()).unwrap_or(false);
+    browser_result(browser::open(&paths.root, url, allow_private).await)
+}
+
+async fn post_browser_navigate(body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let url = v.get("url").and_then(|x| x.as_str()).unwrap_or("");
+    browser_result(browser::navigate(url).await)
+}
+
+async fn post_browser_history(body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let action = v.get("action").and_then(|x| x.as_str()).unwrap_or("");
+    match browser::history(action).await {
+        Ok(()) => json_status(StatusCode::OK, json!({ "ok": true, "action": action })),
+        Err(e) => json_status(StatusCode::BAD_REQUEST, json!({ "error": e })),
+    }
+}
+
+async fn post_browser_inspect(body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let cursor = v.get("cursor").and_then(|x| x.as_u64()).unwrap_or(0) as usize;
+    let max_chars = v.get("maxChars").and_then(|x| x.as_u64()).map(|n| n.clamp(1, 12_000) as usize).unwrap_or(12_000);
+    let snapshot_id = v.get("snapshotId").and_then(|x| x.as_str()).filter(|s| !s.is_empty());
+    browser_result(browser::inspect(cursor, max_chars, snapshot_id).await)
+}
+
+async fn post_browser_click(body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let sid = v.get("snapshotId").and_then(|x| x.as_str()).unwrap_or("");
+    let r = v.get("ref").and_then(|x| x.as_str()).unwrap_or("");
+    match browser::click(sid, r).await {
+        Ok(()) => json_status(StatusCode::OK, json!({ "ok": true })),
+        Err(e) => json_status(StatusCode::BAD_REQUEST, json!({ "error": e })),
+    }
+}
+
+async fn post_browser_point(body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let x = v.get("x").and_then(|x| x.as_f64()).unwrap_or(f64::NAN);
+    let y = v.get("y").and_then(|x| x.as_f64()).unwrap_or(f64::NAN);
+    match browser::click_point(x, y).await {
+        Ok(()) => json_status(StatusCode::OK, json!({ "ok": true, "x": x, "y": y })),
+        Err(e) => json_status(StatusCode::BAD_REQUEST, json!({ "error": e })),
+    }
+}
+
+async fn post_browser_type(body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let sid = v.get("snapshotId").and_then(|x| x.as_str()).unwrap_or("");
+    let r = v.get("ref").and_then(|x| x.as_str()).unwrap_or("");
+    let text = match v.get("text").and_then(|x| x.as_str()) {
+        Some(t) if t.len() <= 32_768 => t,
+        Some(_) => return json_status(StatusCode::BAD_REQUEST, json!({ "error": "text terlalu panjang" })),
+        None => return json_status(StatusCode::BAD_REQUEST, json!({ "error": "text wajib berupa string" })),
+    };
+    let submit = v.get("submit").and_then(|x| x.as_bool()).unwrap_or(false);
+    match browser::type_text(sid, r, text, submit).await {
+        Ok(()) => json_status(StatusCode::OK, json!({ "ok": true, "chars": text.chars().count(), "submit": submit })),
+        Err(e) => json_status(StatusCode::BAD_REQUEST, json!({ "error": e })),
+    }
+}
+
+async fn post_browser_focus() -> Response {
+    json_status(StatusCode::OK, json!({ "ok": browser::focus().await }))
+}
+
+async fn post_browser_close() -> Response {
+    browser::close().await;
+    json_status(StatusCode::OK, json!({ "ok": true }))
+}
+
+async fn post_browser_grant(body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let origin = v.get("origin").and_then(|x| x.as_str()).unwrap_or("");
+    match browser::grant_private_origin(origin).await {
+        Ok(o) => json_status(StatusCode::OK, json!({ "ok": true, "origin": o })),
+        Err(e) => json_status(StatusCode::BAD_REQUEST, json!({ "error": e })),
+    }
 }
 
 // ── VTuber runtime ──────────────────────────────────────────────────────────
