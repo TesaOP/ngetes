@@ -135,6 +135,33 @@ pub async fn history() -> Value {
     Value::Array(r.history.clone())
 }
 
+/// POST /api/assistant/quip {persona?, event?} — komentar berkarakter singkat
+/// (SUARA pet/VTuber) atas aksi agent. LLM role "chat". Stateless. Gagal →
+/// {quip:"", error}. Padanan handleAssistantQuip.
+pub async fn quip(config_path: &Path, persona: &str, event: &str) -> Value {
+    let persona: String = persona.chars().take(800).collect();
+    let event: String = event.chars().take(160).collect();
+    let en = lang_of(config_path) == "en";
+    let base = if en {
+        "You are the VOICE of a living character (desktop pet / VTuber) accompanying an AI agent as it works. You briefly react to what the agent JUST did — one casual spoken line, max 15 words, with personality. Never mention tool names, file paths, or technical terms. No emoji, no quotation marks."
+    } else {
+        "Kamu adalah SUARA karakter hidup (pet / VTuber) yang menemani agent AI bekerja. Reaksilah singkat atas apa yang agent BARU lakukan — satu kalimat santai, maksimal 15 kata, dengan kepribadian. Jangan sebut nama tool, path file, atau istilah teknis. Tanpa emoji, tanpa tanda kutip."
+    };
+    let sys = if persona.trim().is_empty() {
+        base.to_string()
+    } else if en {
+        format!("{base}\n\nYour character:\n{persona}")
+    } else {
+        format!("{base}\n\nKaraktermu:\n{persona}")
+    };
+    let user = if event.trim().is_empty() { "agent mulai berpikir".to_string() } else { event };
+    let messages = [ChatMessage { role: "user".into(), content: user }];
+    match llm::llm_for_role(config_path, "chat", &messages, &sys).await {
+        Ok(ok) => json!({ "quip": ok.reply.trim().chars().take(140).collect::<String>() }),
+        Err((_, msg)) => json!({ "quip": "", "error": msg }),
+    }
+}
+
 /// POST /api/assistant/reset — kosongkan riwayat (ditolak saat busy).
 pub async fn reset() -> Value {
     let mut r = rt().lock().await;

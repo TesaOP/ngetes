@@ -89,6 +89,7 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/assistant/events", get(get_assistant_events))
         .route("/api/assistant/undo", get(get_assistant_undo))
         .route("/api/assistant/revert", axum::routing::post(post_assistant_revert))
+        .route("/api/assistant/quip", axum::routing::post(post_assistant_quip))
         .route("/api/assistant/memory", get(get_memory))
         .route("/api/assistant/memory/forget", axum::routing::post(post_memory_forget))
         .route("/api/assistant/sessions", get(get_sessions))
@@ -351,6 +352,15 @@ async fn post_assistant_approve_stream(State(paths): State<AppPaths>, body: axum
 /// GET /api/assistant/history.
 async fn get_assistant_history() -> Json<serde_json::Value> {
     Json(agent::assistant::history().await)
+}
+
+/// POST /api/assistant/quip {persona?, event?} — komentar berkarakter singkat.
+async fn post_assistant_quip(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let persona = v.get("persona").and_then(|x| x.as_str()).unwrap_or("");
+    let event = v.get("event").and_then(|x| x.as_str()).unwrap_or("");
+    let out = agent::assistant::quip(&paths.data_dir.join("config.json"), persona, event).await;
+    json_status(StatusCode::OK, out)
 }
 
 /// POST /api/assistant/reset — kosongkan riwayat (ditolak saat busy).
