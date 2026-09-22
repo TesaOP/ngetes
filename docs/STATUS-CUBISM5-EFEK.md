@@ -179,6 +179,13 @@ Artinya: aplikasi inti (render + config + models + sheet + ekspresi + motions +
 chat/LLM + streaming + TTS) **berjalan penuh di Rust tanpa Bun**. Sisa yang masih
 butuh Bun: assistant (agent loop), vtuber, browser, pet, upload/motions-write.
 
+## Stage 3d (agent) MULAI — batch 3d-1: memory
+- `core/src/agent/memory.rs` — port memory.ts: remember/recall/memory_prompt_block/
+  memory_list/memory_delete. File `<root>/.agent-memory/memory.json` (BUKAN data/),
+  cap 100×1200. Routes GET /api/assistant/memory + POST memory/forget. 40 test
+  cargo hijau (remember/recall/timpa/forget/prompt-block). Menyusul: sessions,
+  undo, tool registry, loop+gate+SSE.
+
 ## WIRING Stage 5 (parsial) — shell luncurkan server Rust
 - `core/src/mode.rs` + GET/POST `/api/mode` (kunci "active" utk probe shell
   is_our_server + boot mode-runtime.js; sub-status vtuber/assistant/pet stub).

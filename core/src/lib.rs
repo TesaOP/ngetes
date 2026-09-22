@@ -10,6 +10,7 @@
 //!
 //! Stage 2: static serving + /api/version. Rute Bun lain diport bertahap.
 
+pub mod agent;
 pub mod config;
 pub mod director;
 pub mod expressions;
@@ -59,6 +60,8 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/tts", axum::routing::post(post_tts))
         .route("/api/stt", axum::routing::post(post_stt))
         .route("/api/mode", get(get_mode).post(post_mode))
+        .route("/api/assistant/memory", get(get_memory))
+        .route("/api/assistant/memory/forget", axum::routing::post(post_memory_forget))
         .route("/api/animate-text", axum::routing::post(post_animate_text))
         .route("/api/model/classify-params", axum::routing::post(post_classify_params))
         .route("/api/model/analyze-sheet", axum::routing::post(post_analyze_sheet))
@@ -148,6 +151,19 @@ async fn post_tts(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Res
             .unwrap(),
         Err(e) => json_status(StatusCode::BAD_GATEWAY, json!({ "error": format!("TTS error: {e}") })),
     }
+}
+
+/// GET /api/assistant/memory — daftar memory lintas sesi.
+async fn get_memory(State(paths): State<AppPaths>) -> Json<serde_json::Value> {
+    Json(json!({ "entries": agent::memory::memory_list(&paths.root) }))
+}
+
+/// POST /api/assistant/memory/forget {key}.
+async fn post_memory_forget(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let key = v.get("key").and_then(|x| x.as_str()).unwrap_or("");
+    let (status, out) = agent::memory::memory_delete(&paths.root, key);
+    json_status(StatusCode::from_u16(status).unwrap_or(StatusCode::OK), out)
 }
 
 /// GET /api/mode — status mode (kunci "active" dipakai probe shell Tauri).
