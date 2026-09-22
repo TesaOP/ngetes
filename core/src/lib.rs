@@ -16,6 +16,7 @@ pub mod expressions;
 pub mod jsonx;
 pub mod llm;
 pub mod model;
+pub mod motion_ai;
 pub mod motions;
 pub mod paths;
 pub mod rescue;
@@ -55,6 +56,7 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/animate-text", axum::routing::post(post_animate_text))
         .route("/api/model/classify-params", axum::routing::post(post_classify_params))
         .route("/api/model/analyze-sheet", axum::routing::post(post_analyze_sheet))
+        .route("/api/motions/analyze", axum::routing::post(post_motions_analyze))
         .route("/api/models", get(get_models))
         .route("/api/model/path", get(get_model_path))
         .route("/api/sheet", get(get_sheet_h).post(post_sheet_h))
@@ -150,6 +152,16 @@ async fn post_analyze_sheet(State(paths): State<AppPaths>, body: axum::body::Byt
     };
     let out = sheet_ai::analyze_sheet(&paths.data_dir.join("config.json"), &v).await;
     json_status(StatusCode::OK, out)
+}
+
+/// POST /api/motions/analyze — tebak makna motion (role "motion").
+async fn post_motions_analyze(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = match serde_json::from_slice(&body).ok() {
+        Some(v) => v,
+        None => return json_status(StatusCode::BAD_REQUEST, json!({ "error": "body JSON rusak" })),
+    };
+    let (status, out) = motion_ai::analyze_motion(&paths.data_dir.join("config.json"), &v).await;
+    json_raw(status, out)
 }
 
 /// GET /api/models — daftar folder model yang punya `.model3.json` (terurut).

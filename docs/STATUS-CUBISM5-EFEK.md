@@ -180,6 +180,12 @@ auto-rescue, delete, upload, import-zip) — semua paritas/uji vs Bun, 24 test.
   (/api/model/classify-params, role "sheet"): prompt + KNOWN_ROLES, parse via
   extract_json_array_loose + validasi (requested-id, allowed-role, str cap).
   36 test cargo hijau (uji echo-resistance + filter requested-id).
+- **batch 3b-analyze**: `sheet_ai.rs` +analyze_sheet (usul preset, echo-retry,
+  validasi ranges/parts/dedup); `motion_ai.rs` +analyze_motion (/api/motions/
+  analyze: deskripsi+tag+emotionCompatibility, echo-retry). 37 test hijau.
+  **Endpoint LLM non-stream SELESAI** kecuali /api/motions/generate (butuh
+  sanitizeMotionAsset client — ditunda). Sisa Stage 3: streaming SSE, agent
+  loop+tools, vtuber.
 
 BELUM diport (coupling ke kode lain): mode manager (runtime modes), POST/PUT
 motions + motion-taxonomy (client motion-dsl/classifier), LLM/agent/vtuber/media/
