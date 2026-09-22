@@ -221,6 +221,131 @@ pub async fn call_llm(conn: &Value, messages: &[ChatMessage], client_system: &st
     Err(LlmError { status: 0, message: format!("provider tidak dikenal: {provider}") })
 }
 
+/// Streaming: kirim delta teks lewat `tx` selagi mengalir, kembalikan teks
+/// penuh. Wire-format OpenAI (openai-compatible/groq/openai) benar-benar
+/// mengalir; provider lain (gemini/anthropic/mock) → satu delta utuh.
+/// Padanan callLLMStream. Timeout senyap 60s (reset tiap chunk) via reqwest.
+pub async fn call_llm_stream(
+    conn: &Value,
+    messages: &[ChatMessage],
+    client_system: &str,
+    tx: &tokio::sync::mpsc::UnboundedSender<String>,
+) -> Result<String, LlmError> {
+    use futures_util::StreamExt;
+
+    let provider = conn.get("provider").and_then(|v| v.as_str()).unwrap_or("openai-compatible").to_lowercase();
+    if provider != "openai-compatible" && provider != "groq" && provider != "openai" {
+        // provider tanpa jalur stream → satu delta.
+        let full = call_llm(conn, messages, client_system).await?;
+        let _ = tx.send(full.clone());
+        return Ok(full);
+    }
+    let api_key = clean_key(conn.get("apiKey").and_then(|v| v.as_str()).unwrap_or(""));
+    let model = {
+        let m = conn.get("model").and_then(|v| v.as_str()).unwrap_or("");
+        if m.is_empty() { default_model(&provider).to_string() } else { m.to_string() }
+    };
+    let temp = conn.get("temperature").and_then(|v| v.as_f64()).unwrap_or(0.8);
+    let max_t = conn.get("maxTokens").and_then(|v| v.as_u64()).unwrap_or(2048);
+    let sys = {
+        let sp = conn.get("systemPrompt").and_then(|v| v.as_str()).unwrap_or("");
+        [sp, client_system].iter().filter(|s| !s.is_empty()).cloned().collect::<Vec<_>>().join("\n\n")
+    };
+    let base = match provider.as_str() {
+        "groq" => "https://api.groq.com/openai/v1".to_string(),
+        "openai" => "https://api.openai.com/v1".to_string(),
+        _ => {
+            let b = conn.get("baseUrl").and_then(|v| v.as_str()).unwrap_or("").trim_end_matches('/').to_string();
+            if b.is_empty() {
+                return Err(LlmError { status: 0, message: "baseUrl belum diisi untuk openai-compatible".into() });
+            }
+            b
+        }
+    };
+    let body = json!({
+        "model": model,
+        "messages": build_chat_messages(messages, &sys),
+        "temperature": temp,
+        "max_tokens": max_t,
+        "stream": true
+    });
+    // read_timeout = timeout SENYAP per-chunk (bukan total) — reasoning panjang
+    // tak dibunuh, diam 60s dibunuh.
+    let client = reqwest::Client::builder()
+        .read_timeout(std::time::Duration::from_secs(DEFAULT_TIMEOUT_S))
+        .build()
+        .map_err(|e| LlmError { status: 0, message: e.to_string() })?;
+    let resp = client
+        .post(format!("{base}/chat/completions"))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| LlmError { status: 0, message: e.to_string() })?;
+    let status = resp.status().as_u16();
+    if status >= 400 {
+        let t = resp.text().await.unwrap_or_default();
+        return Err(LlmError { status, message: t.chars().take(200).collect() });
+    }
+
+    let mut stream = resp.bytes_stream();
+    let mut buf = String::new();
+    let mut raw = String::new();
+    let mut full = String::new();
+    let mut handle_line = |line: &str, full: &mut String| {
+        let t = line.trim_start();
+        if let Some(rest) = t.strip_prefix("data:") {
+            let payload = rest.trim();
+            if payload.is_empty() || payload == "[DONE]" {
+                return;
+            }
+            if let Ok(obj) = serde_json::from_str::<Value>(payload) {
+                let piece = obj
+                    .pointer("/choices/0/delta/content")
+                    .or_else(|| obj.pointer("/choices/0/message/content"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if !piece.is_empty() {
+                    full.push_str(piece);
+                    let _ = tx.send(piece.to_string());
+                }
+            }
+        }
+    };
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk.map_err(|e| LlmError { status: 0, message: e.to_string() })?;
+        let s = String::from_utf8_lossy(&bytes);
+        buf.push_str(&s);
+        raw.push_str(&s);
+        while let Some(idx) = buf.find('\n') {
+            let line: String = buf[..idx].trim_end_matches('\r').to_string();
+            buf = buf[idx + 1..].to_string();
+            handle_line(&line, &mut full);
+        }
+    }
+    if !buf.trim().is_empty() {
+        handle_line(&buf.clone(), &mut full);
+    }
+    // relay aneh: minta stream, balas satu JSON utuh non-SSE.
+    if full.trim().is_empty() {
+        if let Ok(j) = crate::jsonx::extract_json(&raw) {
+            let text = j
+                .pointer("/choices/0/message/content")
+                .or_else(|| j.pointer("/choices/0/delta/content"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if !text.is_empty() {
+                full.push_str(text);
+                let _ = tx.send(text.to_string());
+            }
+        }
+    }
+    if full.trim().is_empty() {
+        return Err(LlmError { status, message: format!("{provider} stream kosong") });
+    }
+    Ok(full.trim().to_string())
+}
+
 /// True bila koneksi melayani role (roles kosong = wildcard). Padanan connHasRole.
 pub fn conn_has_role(conn: &Value, role: &str) -> bool {
     let roles = config::normalize_roles(&conn.get("roles").cloned().unwrap_or(Value::Null));

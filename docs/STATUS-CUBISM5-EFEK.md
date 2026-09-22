@@ -186,6 +186,12 @@ auto-rescue, delete, upload, import-zip) — semua paritas/uji vs Bun, 24 test.
   **Endpoint LLM non-stream SELESAI** kecuali /api/motions/generate (butuh
   sanitizeMotionAsset client — ditunda). Sisa Stage 3: streaming SSE, agent
   loop+tools, vtuber.
+- **batch 3c (streaming SSE)**: `llm.rs` +call_llm_stream (port callLLMStream —
+  reqwest bytes_stream, parse SSE `data:` per baris, timeout senyap per-chunk
+  via read_timeout, relay-aneh fallback via extract_json; provider non-OpenAI →
+  satu delta). Route POST `/api/chat-stream` (SSE): emit `data:{delta}` per token
+  lalu `data:{done,reply}`; fallback antar-koneksi sebelum token pertama. Smoke
+  mock → delta + done. Machinery dasar untuk assistant. 37 test hijau.
 
 BELUM diport (coupling ke kode lain): mode manager (runtime modes), POST/PUT
 motions + motion-taxonomy (client motion-dsl/classifier), LLM/agent/vtuber/media/

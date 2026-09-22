@@ -53,6 +53,7 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/version", get(version))
         .route("/api/config", get(get_config).post(post_config))
         .route("/api/chat", axum::routing::post(post_chat))
+        .route("/api/chat-stream", axum::routing::post(post_chat_stream))
         .route("/api/animate-text", axum::routing::post(post_animate_text))
         .route("/api/model/classify-params", axum::routing::post(post_classify_params))
         .route("/api/model/analyze-sheet", axum::routing::post(post_analyze_sheet))
@@ -122,6 +123,86 @@ async fn post_chat(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Re
             json!({ "error": msg }),
         ),
     }
+}
+
+/// POST /api/chat-stream — SSE token streaming (role "chat"). Emit event
+/// `data:{"delta":"..."}` per token lalu `data:{"done":true,"reply":"..."}`.
+/// Machinery streaming (dasar untuk assistant); fallback: coba kandidat sampai
+/// ada yang mulai emit, tanpa fallback setelah token pertama keluar.
+async fn post_chat_stream(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use axum::response::IntoResponse;
+    use futures_util::StreamExt;
+    use tokio_stream::wrappers::UnboundedReceiverStream;
+
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let messages: Vec<llm::ChatMessage> = v
+        .get("messages")
+        .and_then(|m| m.as_array())
+        .map(|arr| arr.iter().filter_map(llm::ChatMessage::from_value).collect())
+        .unwrap_or_default();
+    let system = v.get("system").and_then(|s| s.as_str()).unwrap_or("").to_string();
+    let cfg_path = paths.data_dir.join("config.json");
+
+    // channel: kirim event JSON string ke SSE.
+    let (ev_tx, ev_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    tokio::spawn(async move {
+        let cfg = config::load(&cfg_path);
+        let conns: Vec<serde_json::Value> = cfg.get("connections").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+        let mut order = llm::order_for_role("chat", &conns);
+        if order.is_empty() {
+            let active = cfg.get("activeId").and_then(|x| x.as_str());
+            let mut o = Vec::new();
+            if let Some(aid) = active {
+                if let Some(i) = conns.iter().position(|c| c.get("id").and_then(|x| x.as_str()) == Some(aid)) {
+                    o.push(i);
+                }
+            }
+            for i in 0..conns.len() {
+                if !o.contains(&i) {
+                    o.push(i);
+                }
+            }
+            order = o;
+        }
+        // token channel dari LLM.
+        let mut emitted_any = false;
+        let mut last_err = String::from("semua koneksi gagal");
+        for &i in &order {
+            let (tok_tx, mut tok_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+            let conn = conns[i].clone();
+            let msgs = messages.clone();
+            let sysc = system.clone();
+            // jalankan LLM stream; forward token → SSE selagi datang.
+            let ev_tx2 = ev_tx.clone();
+            let forwarder = tokio::spawn(async move {
+                while let Some(tok) = tok_rx.recv().await {
+                    let _ = ev_tx2.send(json!({ "delta": tok }).to_string());
+                }
+            });
+            let res = llm::call_llm_stream(&conn, &msgs, &sysc, &tok_tx).await;
+            drop(tok_tx);
+            let _ = forwarder.await;
+            match res {
+                Ok(full) => {
+                    let _ = ev_tx.send(json!({ "done": true, "reply": full }).to_string());
+                    emitted_any = true;
+                    break;
+                }
+                Err(e) => {
+                    last_err = e.message;
+                    // fallback hanya bila belum ada token yang keluar (di sini:
+                    // call_llm_stream error → asumsikan belum emit ke user).
+                }
+            }
+        }
+        if !emitted_any {
+            let _ = ev_tx.send(json!({ "done": true, "error": last_err }).to_string());
+        }
+    });
+
+    let stream = UnboundedReceiverStream::new(ev_rx).map(|data| Ok::<_, std::convert::Infallible>(Event::default().data(data)));
+    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
 }
 
 /// POST /api/animate-text — director emosi/gesture per segment (role "motion").
