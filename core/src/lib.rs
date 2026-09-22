@@ -90,6 +90,7 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/assistant/undo", get(get_assistant_undo))
         .route("/api/assistant/revert", axum::routing::post(post_assistant_revert))
         .route("/api/assistant/quip", axum::routing::post(post_assistant_quip))
+        .route("/api/assistant/modify", axum::routing::post(post_assistant_modify))
         .route("/api/assistant/memory", get(get_memory))
         .route("/api/assistant/memory/forget", axum::routing::post(post_memory_forget))
         .route("/api/assistant/sessions", get(get_sessions))
@@ -361,6 +362,16 @@ async fn post_assistant_quip(State(paths): State<AppPaths>, body: axum::body::By
     let event = v.get("event").and_then(|x| x.as_str()).unwrap_or("");
     let out = agent::assistant::quip(&paths.data_dir.join("config.json"), persona, event).await;
     json_status(StatusCode::OK, out)
+}
+
+/// POST /api/assistant/modify {taskId?, text} — ganti tugas (cancel + pengganti).
+async fn post_assistant_modify(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let task_id = v.get("taskId").and_then(|x| x.as_str()).unwrap_or("");
+    let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("");
+    let out = agent::assistant::modify(&paths.data_dir.join("config.json"), &paths.root, task_id, text).await;
+    let ok = out.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    json_status(if ok { StatusCode::OK } else { StatusCode::BAD_REQUEST }, out)
 }
 
 /// POST /api/assistant/reset — kosongkan riwayat (ditolak saat busy).

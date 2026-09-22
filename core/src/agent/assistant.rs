@@ -42,6 +42,8 @@ pub struct Runtime {
     notes_files: Vec<String>,  // file tersentuh sesi ini (relatif)
     undo: Vec<UndoRec>,        // snapshot mutasi (cap MAX_UNDO)
     cancel: bool,              // cancel kooperatif antar-langkah
+    active_task: Option<Value>, // {taskId, prompt, status} — untuk status panel
+    next_task_seq: u64,        // penomor taskId
 }
 
 fn rt() -> &'static Mutex<Runtime> {
@@ -111,7 +113,7 @@ pub async fn status() -> Value {
         "notes": { "filesTouched": r.notes_files },
         "lastEvent": if r.running { bus::last_event() } else { Value::Null },
         "tools": loop_::TOOLS.iter().map(|t| json!({ "name": t.name, "level": t.level })).collect::<Vec<_>>(),
-        "activeTask": Value::Null,
+        "activeTask": r.active_task.clone().unwrap_or(Value::Null),
         "parkedTasks": [],
     })
 }
@@ -126,6 +128,7 @@ pub async fn stop() -> Value {
     r.plan.clear();
     r.notes_files.clear();
     r.undo.clear();
+    r.active_task = None;
     json!({ "ok": true })
 }
 
@@ -271,6 +274,7 @@ async fn run_loop(config_path: &Path, root: &Path) -> AskResult {
                 push_msg(&mut r, "assistant", "Dibatalkan oleh user.");
                 bus::emit("error", "dibatalkan: oleh user");
                 r.busy = false;
+                r.active_task = None;
                 return AskResult { ok: true, reply: "Dibatalkan oleh user.".into(), paused: false, error: None };
             }
         }
@@ -402,6 +406,7 @@ async fn run_loop(config_path: &Path, root: &Path) -> AskResult {
         push_msg(&mut r, "assistant", &final_clean);
         if !paused {
             r.busy = false;
+            r.active_task = None;
         }
     }
     AskResult { ok: true, reply: final_clean, paused, error: None }
@@ -451,10 +456,61 @@ pub async fn ask(config_path: &Path, root: &Path, text: &str) -> AskResult {
         let mut r = rt().lock().await;
         r.running = true;
         r.busy = true;
+        r.cancel = false;
         let t: String = text.chars().take(4000).collect();
+        let tid = format!("t_{}", r.next_task_seq);
+        r.next_task_seq += 1;
+        r.active_task = Some(json!({ "taskId": tid, "prompt": t.chars().take(120).collect::<String>(), "status": "running" }));
         push_msg(&mut r, "user", &t);
     }
     run_loop(config_path, root).await
+}
+
+/// POST /api/assistant/modify {taskId?, text} — ganti tugas. Model core sinkron:
+/// tanpa antrean parked penuh, "modify" = batalkan tugas aktif (kooperatif) lalu
+/// jalankan pengganti di background. Return {ok, taskId, target}.
+pub async fn modify(config_path: &Path, root: &Path, _task_id: &str, text: &str) -> Value {
+    let text: String = text.chars().take(4000).collect();
+    if text.trim().is_empty() {
+        return json!({ "ok": false, "error": "teks task kosong" });
+    }
+    let (running, busy) = {
+        let r = rt().lock().await;
+        (r.running, r.busy)
+    };
+    if !running {
+        return json!({ "ok": false, "error": "assistant mode tidak aktif" });
+    }
+    if busy {
+        // Batalkan tugas aktif; pengganti dijalankan di background begitu slot bebas.
+        {
+            let mut r = rt().lock().await;
+            r.cancel = true;
+            push_msg(&mut r, "assistant", "(tugas diganti user)");
+        }
+        let cp = config_path.to_path_buf();
+        let rt_root = root.to_path_buf();
+        let replacement = text.clone();
+        tokio::spawn(async move {
+            // tunggu tugas lama melepas slot (cancel kooperatif), lalu jalankan.
+            for _ in 0..600 {
+                if !rt().lock().await.busy {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            let _ = ask(&cp, &rt_root, &replacement).await;
+        });
+        let tid = {
+            let r = rt().lock().await;
+            format!("t_{}", r.next_task_seq)
+        };
+        json!({ "ok": true, "taskId": tid, "target": "active" })
+    } else {
+        // Idle → jalankan sebagai tugas baru (foreground).
+        let r = ask(config_path, root, &text).await;
+        json!({ "ok": r.ok, "reply": r.reply, "paused": r.paused, "target": "idle" })
+    }
 }
 
 /// POST /api/assistant/approve — resume loop setelah izin tool mutating.
