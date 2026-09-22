@@ -190,6 +190,12 @@ butuh Bun: assistant (agent loop), vtuber, browser, pet, upload/motions-write.
   /api/assistant/sessions + POST sessions/new|switch|delete (rail projek).
   42 test cargo hijau (create/switch/remove + migrasi legacy).
   Menyusul: undo, tool registry, loop+gate+SSE.
+- **batch 3d-3 (tools FS/search)**: `core/src/agent/tools.rs` — port
+  fs.ts+search.ts: safe_path (sandbox workDir, tolak ".."), clip, list_dir,
+  read_file, write_file, edit_file (tolak multi-match), delete_file, search_code
+  (walk skip node_modules/target/.git, cap 60 hit), git_diff. 45 test cargo
+  hijau. Belum diwire ke HTTP (dipanggil loop). Tool run_command/browser/subagent
+  ditunda bersama loop+gate (butuh verifikasi eksekusi nyata).
 
 ## WIRING Stage 5 (parsial) — shell luncurkan server Rust
 - `core/src/mode.rs` + GET/POST `/api/mode` (kunci "active" utk probe shell
