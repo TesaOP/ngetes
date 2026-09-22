@@ -30,6 +30,7 @@ pub const TOOLS: &[ToolDef] = &[
     ToolDef { name: "run_command", params: "command: string", level: "mutating" },
     ToolDef { name: "remember", params: "key: string, value: string", level: "safe" },
     ToolDef { name: "recall", params: "key: string opsional", level: "safe" },
+    ToolDef { name: "spawn_subagent", params: "tasks: [{task: deskripsi goal}] — delegasi riset/analisa INDEPENDEN ke subagent read-only paralel (maks 4)", level: "safe" },
 ];
 
 pub fn tool_level(name: &str) -> Option<&'static str> {

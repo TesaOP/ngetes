@@ -342,6 +342,24 @@ async fn run_loop(config_path: &Path, root: &Path) -> AskResult {
             break;
         }
 
+        // spawn_subagent: jalankan batch loop read-only paralel (async) — bukan
+        // exec_tool sinkron. Hasil ringkasan masuk history orchestrator.
+        if name == "spawn_subagent" {
+            let tasks = crate::agent::subagent::parse_tasks(&args);
+            let result = if tasks.is_empty() {
+                "ERROR: task kosong — kirim {tasks:[{task:'...'}]} atau {task:'...'}".to_string()
+            } else {
+                bus::emit("tool_call_start", "spawn_subagent");
+                let out = crate::agent::subagent::run_batch(config_path, root, &work_dir, tasks).await;
+                bus::emit("tool_call_end", "spawn_subagent");
+                out
+            };
+            let mut r = rt().lock().await;
+            push_msg(&mut r, "assistant", &strip_tool_directive(&reply));
+            push_msg(&mut r, "tool", &format!("[spawn_subagent] {}", clip_tool(&result)));
+            continue;
+        }
+
         // update_plan: state terpisah dari teks — ubah rt.plan (bukan exec_tool).
         if name == "update_plan" {
             let reason = args.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
