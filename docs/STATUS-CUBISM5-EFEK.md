@@ -196,6 +196,14 @@ butuh Bun: assistant (agent loop), vtuber, browser, pet, upload/motions-write.
   (walk skip node_modules/target/.git, cap 60 hit), git_diff. 45 test cargo
   hijau. Belum diwire ke HTTP (dipanggil loop). Tool run_command/browser/subagent
   ditunda bersama loop+gate (butuh verifikasi eksekusi nyata).
+- **batch 3d-4 (loop primitives)**: `core/src/agent/loop_.rs` + `tools.rs`
+  +run_command (shell exec workDir, timeout 30s via try_wait, exit≠0→ERROR).
+  loop_: TOOLS katalog + tool_level, build_system (id/en prompt+katalog),
+  detect_tool_call (parse longgar: JSON/kunci-tanpa-quote/kutip-tunggal),
+  exec_tool (dispatch FS/search/git/run_command/remember/recall; browser/
+  subagent/plan → "belum diport"), public_tool_args. 48 test cargo hijau
+  (run_command echo NYATA, detect multi-format, dispatch). Sisa: loop agentAsk
+  + permission gate (pause/resume) + /api/assistant/ask-stream.
 
 ## WIRING Stage 5 (parsial) — shell luncurkan server Rust
 - `core/src/mode.rs` + GET/POST `/api/mode` (kunci "active" utk probe shell

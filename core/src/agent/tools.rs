@@ -187,6 +187,66 @@ pub fn search_code(work_dir: &Path, query: &str, path: &str) -> Result<String, S
     Ok(clip(&body, 8000))
 }
 
+/// run_command {command} — jalankan perintah di workDir (shell), timeout 30s.
+/// Exit non-zero / timeout → string "ERROR: …" (bukan panic) supaya loop LLM
+/// bisa lanjut. Padanan toolRunCommand.
+pub fn run_command(work_dir: &Path, command: &str) -> String {
+    let cmd = command.trim();
+    if cmd.is_empty() {
+        return "ERROR: command kosong".into();
+    }
+    let (sh, flag) = if cfg!(windows) {
+        (std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into()), "/C")
+    } else {
+        (std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()), "-c")
+    };
+    let mut child = match Command::new(&sh)
+        .arg(flag)
+        .arg(cmd)
+        .current_dir(work_dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => return format!("ERROR: gagal menjalankan: {e}"),
+    };
+    // timeout 30s via polling try_wait.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_status)) => break,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return "ERROR: timeout 30s".into();
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => return format!("ERROR: {e}"),
+        }
+    }
+    let out = child.wait_with_output().map(|o| {
+        let mut s = String::from_utf8_lossy(&o.stdout).into_owned();
+        let err = String::from_utf8_lossy(&o.stderr);
+        if !o.status.success() {
+            if !s.is_empty() {
+                s.push('\n');
+            }
+            s.push_str(&err);
+            let t = s.trim();
+            let t = if t.is_empty() { "gagal tanpa output" } else { t };
+            if t.starts_with("ERROR:") { t.to_string() } else { format!("ERROR: {t}") }
+        } else if s.trim().is_empty() {
+            "(tanpa output)".to_string()
+        } else {
+            s
+        }
+    }).unwrap_or_else(|e| format!("ERROR: {e}"));
+    clip(&out, 12000)
+}
+
 pub fn git_diff(work_dir: &Path) -> Result<String, String> {
     let run = |args: &[&str]| -> String {
         Command::new("git")
