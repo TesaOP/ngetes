@@ -156,6 +156,23 @@ Import-zip juga diport (crate `zip`, bukan shell unzip):
 models, model/path, sheet r/w, expressions+adoption, motions r/d, files, avatar,
 auto-rescue, delete, upload, import-zip) — semua paritas/uji vs Bun, 24 test.
 
+## MILESTONE — bin `live2d-core.exe` (Rust) menyajikan app + TTS IN-PROCESS
+Tujuan user: **melepas runtime JS**. Tercapai untuk permukaan inti:
+- `core` kini punya **[[bin]] live2d-core** (src/main.rs) — server HTTP Rust
+  di PORT (default 8310, sama Bun). Menggantikan live2d-agent.exe (Bun).
+- `core/src/media.rs`: **TTS SuperTonic dipanggil IN-PROCESS** via lib
+  `live2d-engine` (bukan sidecar/HTTP/Bun). Model dari ~/.cache/supertonic3 atau
+  engines/models. Route POST /api/tts (audio/wav). Voice/lang dari config.tts.
+- **Smoke bin nyata** (`live2d-core.exe` PORT=8352, tanpa Bun sama sekali):
+  GET / → index.html (200), /api/models identik, **/api/tts → 282 KB WAV
+  in-process** (3s termasuk cold-load model, ~1.4s setelahnya). Log:
+  `[core] server HTTP in-process siap`.
+- STT (whisper) in-process di belakang feature `engine-stt` (butuh cmake+LLVM).
+
+Artinya: aplikasi inti (render + config + models + sheet + ekspresi + motions +
+chat/LLM + streaming + TTS) **berjalan penuh di Rust tanpa Bun**. Sisa yang masih
+butuh Bun: assistant (agent loop), vtuber, browser, pet, STT, upload/motions-write.
+
 ## Stage 3 MULAI (batch 3a) — LLM client + /api/chat
 - `core/src/llm.rs` — port llm-client (jalur non-stream): call_llm multi-provider
   (openai-compatible/groq/openai via reqwest, gemini, anthropic, mock),

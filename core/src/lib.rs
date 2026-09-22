@@ -15,6 +15,7 @@ pub mod director;
 pub mod expressions;
 pub mod jsonx;
 pub mod llm;
+pub mod media;
 pub mod model;
 pub mod motion_ai;
 pub mod motions;
@@ -54,6 +55,7 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/config", get(get_config).post(post_config))
         .route("/api/chat", axum::routing::post(post_chat))
         .route("/api/chat-stream", axum::routing::post(post_chat_stream))
+        .route("/api/tts", axum::routing::post(post_tts))
         .route("/api/animate-text", axum::routing::post(post_animate_text))
         .route("/api/model/classify-params", axum::routing::post(post_classify_params))
         .route("/api/model/analyze-sheet", axum::routing::post(post_analyze_sheet))
@@ -122,6 +124,26 @@ async fn post_chat(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Re
             StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
             json!({ "error": msg }),
         ),
+    }
+}
+
+/// POST /api/tts {text, ttsLang?} — sintesis suara IN-PROCESS (SuperTonic).
+/// Voice/lang dari config.tts. Return audio/wav biner.
+async fn post_tts(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let text = v.get("text").and_then(|s| s.as_str()).unwrap_or("");
+    if text.trim().is_empty() {
+        return json_status(StatusCode::BAD_REQUEST, json!({ "error": "no text" }));
+    }
+    let (voice, lang) = media::tts_voice_lang(&paths.data_dir.join("config.json"));
+    match media::synth_tts(&paths, text, &voice, &lang).await {
+        Ok((buf, mime)) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, mime)
+            .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+            .body(Body::from(buf))
+            .unwrap(),
+        Err(e) => json_status(StatusCode::BAD_GATEWAY, json!({ "error": format!("TTS error: {e}") })),
     }
 }
 
