@@ -24,8 +24,8 @@ pub fn status() -> Value {
         "active": cur,
         "vtuber": crate::vtuber::status(),
         "assistant": { "running": false, "busy": false, "workDir": null, "historyCount": 0, "pendingApprovals": [], "plan": [], "tools": [] },
-        "pet": { "running": false, "clickThrough": false, "shell": null },
-        "note": "core: runtime assistant/pet belum diport — sub-status stub"
+        "pet": crate::pet::status(),
+        "note": "core: sub-status assistant di /api/assistant/status (mode manager sinkron)"
     })
 }
 

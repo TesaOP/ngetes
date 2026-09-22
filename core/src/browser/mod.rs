@@ -38,7 +38,7 @@ fn chromium_candidates() -> Vec<String> {
     c
 }
 
-fn find_chromium() -> Option<String> {
+pub fn find_chromium() -> Option<String> {
     chromium_candidates().into_iter().find(|f| Path::new(f).exists())
 }
 

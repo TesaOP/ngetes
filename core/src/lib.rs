@@ -25,6 +25,7 @@ pub mod motion_dsl;
 pub mod motion_taxonomy;
 pub mod motions;
 pub mod paths;
+pub mod pet;
 pub mod rescue;
 pub mod sheet;
 pub mod sheet_ai;
@@ -69,6 +70,10 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/tts/translate", axum::routing::post(post_tts_translate))
         .route("/api/stt", axum::routing::post(post_stt))
         .route("/api/mode", get(get_mode).post(post_mode))
+        .route("/api/pet/launch", axum::routing::post(post_pet_launch))
+        .route("/api/pet/close", axum::routing::post(post_pet_close))
+        .route("/api/pet/clickthrough", axum::routing::post(post_pet_clickthrough))
+        .route("/api/pet/state", get(get_pet_state))
         .route("/api/vtuber/start", axum::routing::post(post_vtuber_start))
         .route("/api/vtuber/stop", axum::routing::post(post_vtuber_stop))
         .route("/api/vtuber/overlay", axum::routing::post(post_vtuber_overlay))
@@ -480,6 +485,27 @@ async fn post_mode(body: axum::body::Bytes) -> Response {
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
     let (status, out) = mode::set_mode(&v);
     json_status(StatusCode::from_u16(status).unwrap_or(StatusCode::OK), out)
+}
+
+// ── Pet overlay window ──────────────────────────────────────────────────────
+
+async fn post_pet_launch(State(paths): State<AppPaths>) -> Response {
+    let port: u16 = std::env::var("PORT").ok().and_then(|s| s.parse().ok()).unwrap_or(8310);
+    json_status(StatusCode::OK, pet::launch(&paths.root, port))
+}
+
+async fn post_pet_close() -> Response {
+    json_status(StatusCode::OK, pet::close())
+}
+
+async fn post_pet_clickthrough(body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let on = v.get("on").and_then(|x| x.as_bool()).unwrap_or(false);
+    json_status(StatusCode::OK, pet::set_click_through(on))
+}
+
+async fn get_pet_state() -> Response {
+    json_status(StatusCode::OK, pet::status())
 }
 
 // ── Browser agent (CDP) ─────────────────────────────────────────────────────
