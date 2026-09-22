@@ -3,7 +3,9 @@
 //! tools, loop + permission gate + SSE.
 
 pub mod assistant;
+pub mod bus;
 pub mod memory;
+pub mod plan;
 pub mod sessions;
 pub mod tools;
 #[path = "loop_.rs"]

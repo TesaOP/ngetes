@@ -23,6 +23,7 @@ pub const TOOLS: &[ToolDef] = &[
     ToolDef { name: "read_file", params: "path: string", level: "safe" },
     ToolDef { name: "search_code", params: "query: string, path: string opsional", level: "safe" },
     ToolDef { name: "git_diff", params: "", level: "safe" },
+    ToolDef { name: "update_plan", params: "todos: [{id,task,status,note?}], reason?: string (wajib saat revisi rencana)", level: "safe" },
     ToolDef { name: "write_file", params: "path: string, content: string", level: "mutating" },
     ToolDef { name: "edit_file", params: "path: string, old: string, new: string", level: "mutating" },
     ToolDef { name: "delete_file", params: "path: string", level: "mutating" },

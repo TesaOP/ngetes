@@ -76,6 +76,13 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/assistant/ask", axum::routing::post(post_assistant_ask))
         .route("/api/assistant/ask-stream", axum::routing::post(post_assistant_ask_stream))
         .route("/api/assistant/approve", axum::routing::post(post_assistant_approve))
+        .route("/api/assistant/approve-stream", axum::routing::post(post_assistant_approve_stream))
+        .route("/api/assistant/history", get(get_assistant_history))
+        .route("/api/assistant/reset", axum::routing::post(post_assistant_reset))
+        .route("/api/assistant/cancel", axum::routing::post(post_assistant_cancel))
+        .route("/api/assistant/events", get(get_assistant_events))
+        .route("/api/assistant/undo", get(get_assistant_undo))
+        .route("/api/assistant/revert", axum::routing::post(post_assistant_revert))
         .route("/api/assistant/memory", get(get_memory))
         .route("/api/assistant/memory/forget", axum::routing::post(post_memory_forget))
         .route("/api/assistant/sessions", get(get_sessions))
@@ -243,6 +250,75 @@ async fn post_assistant_approve(State(paths): State<AppPaths>, body: axum::body:
         json_status(StatusCode::OK, json!({ "reply": r.reply, "paused": r.paused }))
     } else {
         json_status(StatusCode::BAD_REQUEST, json!({ "error": r.error.unwrap_or_default() }))
+    }
+}
+
+/// POST /api/assistant/approve-stream — SSE. Mirror ask-stream: resume loop
+/// setelah izin, emit `data:{delta}` lalu `data:{done,reply,paused}`.
+async fn post_assistant_approve_stream(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use axum::response::IntoResponse;
+    use futures_util::StreamExt;
+    use tokio_stream::wrappers::UnboundedReceiverStream;
+
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let approve_it = v.get("approve").and_then(|x| x.as_bool()).unwrap_or(false);
+    let cfg = paths.data_dir.join("config.json");
+    let root = paths.root.clone();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    tokio::spawn(async move {
+        let r = agent::assistant::approve(&cfg, &root, &id, approve_it).await;
+        if r.ok {
+            if !r.reply.is_empty() {
+                let _ = tx.send(json!({ "delta": r.reply }).to_string());
+            }
+            let _ = tx.send(json!({ "done": true, "reply": r.reply, "paused": r.paused }).to_string());
+        } else {
+            let _ = tx.send(json!({ "done": true, "error": r.error.unwrap_or_default() }).to_string());
+        }
+    });
+    let stream = UnboundedReceiverStream::new(rx).map(|d| Ok::<_, std::convert::Infallible>(Event::default().data(d)));
+    Sse::new(stream).keep_alive(KeepAlive::default()).into_response()
+}
+
+/// GET /api/assistant/history.
+async fn get_assistant_history() -> Json<serde_json::Value> {
+    Json(agent::assistant::history().await)
+}
+
+/// POST /api/assistant/reset — kosongkan riwayat (ditolak saat busy).
+async fn post_assistant_reset() -> Response {
+    json_status(StatusCode::OK, agent::assistant::reset().await)
+}
+
+/// POST /api/assistant/cancel — batal kooperatif.
+async fn post_assistant_cancel() -> Response {
+    json_status(StatusCode::OK, agent::assistant::cancel().await)
+}
+
+/// GET /api/assistant/events?since=N — bus aktivitas agent.
+async fn get_assistant_events(uri: Uri) -> Json<serde_json::Value> {
+    let since = uri
+        .query()
+        .and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("since=")))
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+    Json(agent::assistant::events(since).await)
+}
+
+/// GET /api/assistant/undo — daftar snapshot mutasi.
+async fn get_assistant_undo() -> Json<serde_json::Value> {
+    Json(json!({ "entries": agent::assistant::undo_list().await }))
+}
+
+/// POST /api/assistant/revert {id} — kembalikan file ke snapshot.
+async fn post_assistant_revert(body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
+    match agent::assistant::revert(id).await {
+        Ok(msg) => json_status(StatusCode::OK, json!({ "ok": true, "message": msg })),
+        Err(e) => json_status(StatusCode::NOT_FOUND, json!({ "ok": false, "error": e })),
     }
 }
 

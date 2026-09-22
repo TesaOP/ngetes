@@ -64,6 +64,39 @@ sudah selaras dengan arsitektur ini.
    (user bilang hapus manual saat sudah stabil) + blocker Core di SHA lama
    GitHub (risiko sudah diterima user — jangan dibuka lagi).
 
+## UPDATE 2026-09-22 (68) — Stage 3d-6a: agent bus + plan + undo + cancel + sisa endpoint
+
+Melanjutkan migrasi agent ke Rust (menutup permukaan Bun). Ditambahkan ke
+`core/src/agent/`:
+- `bus.rs` — event bus ber-seq (ring 120), `emit`/`read`/`last_event`/`reset`.
+  Loop emit `thinking_start`/`tool_call_start`/`tool_call_end`/`permission_request`/
+  `permission_resolved`/`final_answer`/`error` di titik kanonik.
+- `plan.rs` — `sanitize_plan`/`apply_plan`/`plan_label`. Tool `update_plan`
+  (level safe) di-intercept di run_loop (state `rt.plan` terpisah dari teks);
+  revisi tanpa `reason` ditolak; tiap perubahan emit `plan_updated`/`plan_revised`.
+- `assistant.rs` — Runtime tambah `plan`/`notes_files`/`undo`/`cancel`.
+  **Undo**: snapshot isi file SEBELUM tool mutasi (write/edit/delete) di
+  `approve()`, `undo_list()` + `revert()` (tulis balik / hapus bila file baru;
+  emit `verification_result`). **Cancel** kooperatif: flag dicek di awal tiap
+  turn run_loop (loop lepas lock saat await LLM). `history()`, `reset()` (tolak
+  saat busy), `events()`, status diperkaya (`plan`/`notes.filesTouched`/
+  `lastEvent`; `activeTask`/`parkedTasks` masih stub).
+- `lib.rs` — 7 rute baru: `history`, `reset`, `cancel`, `events`, `undo`,
+  `revert`, `approve-stream` (SSE mirror ask-stream). Shape respons identik Bun.
+
+**Verifikasi:** `cargo test` → **65 passed** (+4: bus 1, plan 3), guard JS
+**416 passed**, `tsc` bersih. Smoke HTTP (PORT 8363): start→ask(mock)→status
+memuat lastEvent=`final_answer` + tools termasuk `update_plan`; events berisi
+`thinking_start`+`final_answer`; history/undo/revert(bad id 404)/cancel/reset
+semua sesuai kontrak; tanpa panic.
+
+**Belum diport (batch 3d-6b + sesudahnya):** `/api/assistant/modify` (task
+identity Worker: antrean parked, activeTask/parkedTasks nyata) & `/api/assistant/quip`
+(butuh persona/narrator) — belum ada rutenya di core (panel degrade anggun);
+tool `spawn_subagent` + `browser_*` masih stub "belum diport"; true token-stream
+SSE. Lalu: browser CDP (Stage 4), pet (Stage 4), motions generate/write +
+taxonomy, TTS options/test/translate, Stage 5 (embed frontend + buang exe Bun).
+
 ## UPDATE 2026-09-22 (67) — Stage 3e: runtime VTuber (scheduler + 3 provider) diport ke Rust
 
 Melanjutkan migrasi runtime JS→Rust (branch `migration/pixi8-cubism`). Runtime
