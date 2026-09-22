@@ -64,6 +64,32 @@ sudah selaras dengan arsitektur ini.
    (user bilang hapus manual saat sudah stabil) + blocker Core di SHA lama
    GitHub (risiko sudah diterima user — jangan dibuka lagi).
 
+## UPDATE 2026-09-22 (69) — TTS extras (translate/options/test) diport ke Rust
+
+Menutup 3 rute TTS pendukung di core:
+- `core/src/speech_lang.rs` (port `persona/speech-lang.ts`) — `translate_for_speech`
+  via LLM role "chat": teks yang SUDAH berbahasa target tak diterjemahkan
+  (deteksi skrip + heuristik kata Indonesia, cermin `detectTextLang` app.js);
+  gagal = teks asli. `tts_lang_is_fixed`/`speech_lang_of`/`detect_speech_lang_base`.
+  Cache LRU TS dihilangkan (optimisasi, bukan kontrak).
+- `lib.rs` rute: `/api/tts/translate` (LLM chat), `/api/tts/options` (native:
+  voice dari `media::tts_voices` + fallback F1..M5; cloud gemini/openai →
+  katalog kosong + note, karena core TTS = SuperTonic in-process saja),
+  `/api/tts/test` (sintesis "Tes suara. Halo!" native → {ok, contentType}).
+
+**Verifikasi:** `cargo test` → **68 passed** (+3 speech_lang), guard JS **416**,
+`tsc` bersih. Smoke (PORT 8364): options native memuat F1..M5 + supertonic-3;
+options gemini balas kosong+note; translate teks-id/passthrough/kosong sesuai
+kontrak; tanpa panic.
+
+**CATATAN penting — motions generate/write/taxonomy TIDAK diport (terkunci
+invarian):** ketiganya memakai `sanitizeMotionAsset` dari
+`src/client/animation/motion-dsl.ts` — dan aturan repo (AGENTS.md #3) mengunci
+**motion-dsl sebagai SATU-SATUNYA sanitize**. Porting ke Rust akan
+menduplikasi sanitize → dilarang. Perlu keputusan arsitektur (mis. sanitize
+tetap di klien, server hanya persist) sebelum bisa lepas dari Bun. Sampai itu
+diputuskan, 3 rute motion ini tetap butuh Bun.
+
 ## UPDATE 2026-09-22 (68) — Stage 3d-6a: agent bus + plan + undo + cancel + sisa endpoint
 
 Melanjutkan migrasi agent ke Rust (menutup permukaan Bun). Ditambahkan ke

@@ -25,6 +25,7 @@ pub mod paths;
 pub mod rescue;
 pub mod sheet;
 pub mod sheet_ai;
+pub mod speech_lang;
 pub mod static_serve;
 pub mod vtuber;
 pub mod vtuber_scheduler;
@@ -60,6 +61,9 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/chat", axum::routing::post(post_chat))
         .route("/api/chat-stream", axum::routing::post(post_chat_stream))
         .route("/api/tts", axum::routing::post(post_tts))
+        .route("/api/tts/options", get(get_tts_options))
+        .route("/api/tts/test", axum::routing::post(post_tts_test))
+        .route("/api/tts/translate", axum::routing::post(post_tts_translate))
         .route("/api/stt", axum::routing::post(post_stt))
         .route("/api/mode", get(get_mode).post(post_mode))
         .route("/api/vtuber/start", axum::routing::post(post_vtuber_start))
@@ -178,6 +182,64 @@ async fn post_tts(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Res
             .unwrap(),
         Err(e) => json_status(StatusCode::BAD_GATEWAY, json!({ "error": format!("TTS error: {e}") })),
     }
+}
+
+/// GET /api/tts/options?provider=… — katalog voice/model untuk dropdown UI.
+/// Core = TTS SuperTonic in-process; provider native/supertonic diisi dari
+/// engine (voice_styles). Provider cloud (gemini/openai) tak didukung core →
+/// balas kosong (UI degrade anggun; core memang tak melakukan TTS cloud).
+async fn get_tts_options(State(paths): State<AppPaths>, uri: Uri) -> Response {
+    let provider = uri
+        .query()
+        .and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("provider=")))
+        .unwrap_or("")
+        .to_lowercase();
+    if provider == "supertonic" || provider == "native" || provider.is_empty() {
+        let mut voices = media::tts_voices(&paths);
+        if voices.is_empty() {
+            voices = ["F1", "F2", "F3", "F4", "F5", "M1", "M2", "M3", "M4", "M5"].iter().map(|s| s.to_string()).collect();
+        }
+        let vlist: Vec<serde_json::Value> = voices.iter().map(|v| json!({ "id": v, "name": v })).collect();
+        json_status(StatusCode::OK, json!({
+            "voices": vlist,
+            "models": [{ "id": "supertonic-3", "name": "SuperTonic 3 (native)" }],
+            "styles": [],
+        }))
+    } else {
+        // Cloud TTS belum diport ke core — katalog kosong (bukan error).
+        json_status(StatusCode::OK, json!({ "voices": [], "models": [], "styles": [], "note": format!("provider '{provider}' TTS belum diport ke core") }))
+    }
+}
+
+/// POST /api/tts/test — sintesis kalimat uji (native). Return {ok, contentType}.
+async fn post_tts_test(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    // Voice/lang: dari body.tts bila ada, else config.tts.
+    let tts = v.get("tts").cloned().unwrap_or(json!({}));
+    let voice = tts.get("voice").and_then(|s| s.as_str()).filter(|s| !s.is_empty()).map(String::from);
+    let lang = tts.get("lang").and_then(|s| s.as_str()).filter(|s| !s.is_empty()).map(String::from);
+    let (dv, dl) = media::tts_voice_lang(&paths.data_dir.join("config.json"));
+    let voice = voice.unwrap_or(dv);
+    let lang = lang.unwrap_or(dl);
+    match media::synth_tts(&paths, "Tes suara. Halo!", &voice, &lang).await {
+        Ok((_buf, mime)) => json_status(StatusCode::OK, json!({ "ok": true, "contentType": mime })),
+        Err(e) => json_status(StatusCode::BAD_GATEWAY, json!({ "ok": false, "error": e })),
+    }
+}
+
+/// POST /api/tts/translate {text, ttsLang} — terjemahan teks-bicara (LLM chat).
+async fn post_tts_translate(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let text: String = v.get("text").and_then(|s| s.as_str()).unwrap_or("").chars().take(2000).collect();
+    let tts_lang = v.get("ttsLang").and_then(|s| s.as_str()).unwrap_or("");
+    if text.trim().is_empty() {
+        return json_status(StatusCode::OK, json!({ "text": "" }));
+    }
+    if !speech_lang::tts_lang_is_fixed(tts_lang) {
+        return json_status(StatusCode::OK, json!({ "text": text }));
+    }
+    let out = speech_lang::translate_for_speech(&paths.data_dir.join("config.json"), &text, tts_lang).await;
+    json_status(StatusCode::OK, json!({ "text": out }))
 }
 
 /// POST /api/assistant/start {workDir?, persona?}.
