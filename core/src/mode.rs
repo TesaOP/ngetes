@@ -16,16 +16,38 @@ fn active() -> &'static Mutex<String> {
 
 const VALID: &[&str] = &["stage", "vtuber", "assistant", "pet"];
 
-/// Status mode (kunci "active" wajib ada — dipakai probe shell).
+/// Status mode (kunci "active" wajib ada — dipakai probe shell). Sub-status
+/// vtuber SUDAH nyata (runtime diport); assistant/pet masih stub sampai diport.
 pub fn status() -> Value {
     let cur = active().lock().map(|g| g.clone()).unwrap_or_else(|_| "stage".into());
     json!({
         "active": cur,
-        "vtuber": { "running": false, "provider": null, "channel": null, "respond": false, "eventCount": 0 },
+        "vtuber": crate::vtuber::status(),
         "assistant": { "running": false, "busy": false, "workDir": null, "historyCount": 0, "pendingApprovals": [], "plan": [], "tools": [] },
         "pet": { "running": false, "clickThrough": false, "shell": null },
-        "note": "core: runtime mode (vtuber/assistant/pet) belum diport — sub-status stub"
+        "note": "core: runtime assistant/pet belum diport — sub-status stub"
     })
+}
+
+/// Teardown runtime mode lama (padanan teardownMode TS). Saat ini hanya VTuber
+/// yang benar-benar satu-aktif; assistant/pet layanan mandiri.
+fn teardown(mode: &str) {
+    if mode == "vtuber" {
+        crate::vtuber::stop();
+    }
+}
+
+/// Set mode aktif in-memory + teardown mode lama bila berganti. Dipakai
+/// post_mode dan post_vtuber_start (yang mengunci "vtuber").
+pub fn set_active(mode: &str) {
+    let prev = active().lock().map(|g| g.clone()).unwrap_or_else(|_| "stage".into());
+    if prev == mode {
+        return;
+    }
+    teardown(&prev);
+    if let Ok(mut g) = active().lock() {
+        *g = mode.to_string();
+    }
 }
 
 /// POST /api/mode {mode} — set mode aktif (in-memory). Return status.
@@ -34,9 +56,7 @@ pub fn set_mode(body: &Value) -> (u16, Value) {
     if !VALID.contains(&mode) {
         return (400, json!({ "error": format!("mode tidak dikenal: {mode}") }));
     }
-    if let Ok(mut g) = active().lock() {
-        *g = mode.to_string();
-    }
+    set_active(mode);
     (200, status())
 }
 

@@ -26,6 +26,8 @@ pub mod rescue;
 pub mod sheet;
 pub mod sheet_ai;
 pub mod static_serve;
+pub mod vtuber;
+pub mod vtuber_scheduler;
 
 use axum::{
     body::Body,
@@ -60,6 +62,14 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/tts", axum::routing::post(post_tts))
         .route("/api/stt", axum::routing::post(post_stt))
         .route("/api/mode", get(get_mode).post(post_mode))
+        .route("/api/vtuber/start", axum::routing::post(post_vtuber_start))
+        .route("/api/vtuber/stop", axum::routing::post(post_vtuber_stop))
+        .route("/api/vtuber/overlay", axum::routing::post(post_vtuber_overlay))
+        .route("/api/vtuber/events", get(get_vtuber_events))
+        .route("/api/vtuber/mock-event", axum::routing::post(post_vtuber_mock_event))
+        .route("/api/vtuber/conn", get(get_vtuber_conn))
+        .route("/api/vtuber/config", axum::routing::post(post_vtuber_config))
+        .route("/api/vtuber/operator", axum::routing::post(post_vtuber_operator))
         .route("/api/assistant/start", axum::routing::post(post_assistant_start))
         .route("/api/assistant/status", get(get_assistant_status))
         .route("/api/assistant/stop", axum::routing::post(post_assistant_stop))
@@ -294,6 +304,88 @@ async fn post_mode(body: axum::body::Bytes) -> Response {
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
     let (status, out) = mode::set_mode(&v);
     json_status(StatusCode::from_u16(status).unwrap_or(StatusCode::OK), out)
+}
+
+// ── VTuber runtime ──────────────────────────────────────────────────────────
+
+/// POST /api/vtuber/start — mulai runtime (kunci mode "vtuber"). apiKey masked/
+/// kosong dari UI → pakai key asli tersimpan (padanan handleVtuberStart TS).
+async fn post_vtuber_start(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let mut v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    mode::set_active("vtuber");
+    let cfg_path = paths.data_dir.join("config.json");
+    // Isi apiKey asli bila datang termask/kosong (form prefill placeholder saja).
+    let incoming = v.get("apiKey").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    if incoming.is_empty() || incoming.contains("••••") {
+        let saved = config::load(&cfg_path);
+        if let Some(key) = saved.get("vtuber").and_then(|vt| vt.get("apiKey")).and_then(|k| k.as_str()) {
+            v["apiKey"] = json!(key);
+        }
+    }
+    let (ok, err) = vtuber::start(v.clone(), cfg_path.clone());
+    if ok {
+        // Persist koneksi stream (apiKey masked/kosong ditolak save_vtuber_conn).
+        let _ = config::save_vtuber_conn(&cfg_path, &v);
+        json_status(StatusCode::OK, json!({ "ok": true }))
+    } else {
+        json_status(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": err }))
+    }
+}
+
+/// POST /api/vtuber/stop.
+async fn post_vtuber_stop() -> Response {
+    json_status(StatusCode::OK, vtuber::stop())
+}
+
+/// POST /api/vtuber/overlay — heartbeat Browser Source OBS.
+async fn post_vtuber_overlay() -> Response {
+    json_status(StatusCode::OK, vtuber::overlay_ping())
+}
+
+/// GET /api/vtuber/events?since=N — feed sejak cursor + flag overlay.
+async fn get_vtuber_events(uri: Uri) -> Response {
+    let since = uri
+        .query()
+        .and_then(|q| q.split('&').find_map(|kv| kv.strip_prefix("since=")))
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(0);
+    let mut out = vtuber::events(since);
+    out["overlay"] = json!(vtuber::overlay_active());
+    json_status(StatusCode::OK, out)
+}
+
+/// POST /api/vtuber/mock-event — injeksi chat/donasi/agent manual.
+async fn post_vtuber_mock_event(body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    match vtuber::inject_event(&v) {
+        Some(ev) => json_status(StatusCode::OK, ev),
+        None => json_status(StatusCode::BAD_REQUEST, json!({ "error": "runtime tidak aktif" })),
+    }
+}
+
+/// GET /api/vtuber/conn — koneksi stream tersimpan (apiKey TERMASK).
+async fn get_vtuber_conn(State(paths): State<AppPaths>) -> Response {
+    json_status(StatusCode::OK, config::vtuber_conn_masked(&paths.data_dir.join("config.json")))
+}
+
+/// POST /api/vtuber/config — ubah behavior JALAN + persist.
+async fn post_vtuber_config(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let r = vtuber::set_config(&v);
+    let _ = config::save_vtuber_conn(&paths.data_dir.join("config.json"), &v);
+    json_status(StatusCode::OK, r)
+}
+
+/// POST /api/vtuber/operator — instruksi operator (§7).
+async fn post_vtuber_operator(body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("");
+    let (ok, err) = vtuber::operator_say(text);
+    if ok {
+        json_status(StatusCode::OK, json!({ "ok": true }))
+    } else {
+        json_status(StatusCode::BAD_REQUEST, json!({ "ok": false, "error": err }))
+    }
 }
 
 /// POST /api/stt — transkripsi audio WAV. Provider "local" = whisper in-process

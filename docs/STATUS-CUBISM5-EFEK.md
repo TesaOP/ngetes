@@ -64,6 +64,44 @@ sudah selaras dengan arsitektur ini.
    (user bilang hapus manual saat sudah stabil) + blocker Core di SHA lama
    GitHub (risiko sudah diterima user — jangan dibuka lagi).
 
+## UPDATE 2026-09-22 (67) — Stage 3e: runtime VTuber (scheduler + mock) diport ke Rust
+
+Melanjutkan migrasi runtime JS→Rust (branch `migration/pixi8-cubism`). Runtime
+mode VTuber kini jalan **tanpa Bun** untuk provider **mock** — jalur verifikasi
+headless sesuai pola batch sebelumnya.
+
+**Yang diport:**
+- `core/src/vtuber_scheduler.rs` — otak behavior §7 (port `vtuber-scheduler.ts`).
+  Keputusan DIPISAH dari eksekusi: logika murni (dedup → cooldown → drop
+  audience; antrean donation/operator FIFO-20 dgn tolak-baru eksplisit +
+  feedback sistem; precedence donation>operator terkunci; slot aktif tak bisa
+  dipreempt) sinkron & di-unit-test (`set_now` untuk jam deterministik).
+  Eksekusi LLM + tahan-slot (estimasi bicara) didorong runtime. `estimate_speech_ms`
+  padanan `shared/speech-timing.ts`.
+- `core/src/vtuber.rs` — runtime single-active (epoch bump → task lama mati
+  sendiri). Feed 500-event; `push_feed`/`ingest_feed`; task mock (tokio interval,
+  butuh fitur tokio `time`); `spawn_run` (LLM role "chat" → emit agent → sleep
+  speak_ms → finish → drain berikut). Overlay heartbeat (8 dtk). API:
+  status/events/inject/agent_say/operator_say/set_config/start/stop.
+- `config.rs`: `save_vtuber_conn` (merge per-field, apiKey masked/kosong
+  dipertahankan) + `vtuber_conn_masked` (prefill form, nilai asli tak balik HTTP).
+- `mode.rs`: `set_active` + teardown (pindah dari vtuber → `vtuber::stop()`);
+  `status()` kini memuat `vtuber::status()` nyata (assistant/pet masih stub).
+- `lib.rs`: 8 rute `/api/vtuber/*` (start/stop/overlay/events/mock-event/conn/
+  config/operator) — kontrak identik server Bun.
+
+**Verifikasi:** `cargo test -p live2d-core` → **61 passed** (+11 baru), guard JS
+**416 passed**, `tsc --noEmit` bersih, `cargo check` bersih. Smoke HTTP (PORT
+8361): start mock→ok, `/api/mode` active=vtuber + sub-status vtuber nyata,
+inject chat/operator masuk feed, config persist (conn masked), provider twitch
+ditolak eksplisit, stop→ok. Tanpa panic.
+
+**Belum diport (menyusul):** provider **twitch** (IRC WebSocket — butuh WS
+client dep) & **youtube** (poll liveChatMessages — butuh kunci live), keduanya
+`start` menolak dgn pesan eksplisit "pakai mock". Balasan LLM VTuber lewat model
+sungguhan (mock tak emit balasan bermakna) belum diuji interaktif — sama batas
+dgn jalur tool assistant.
+
 ## UPDATE 2026-09-22 (66) — Stage 2 mulai: penyajian statis Rust (fondasi single-exe)
 
 Arah dikunci (dari syarat user "satu exe"): backend disajikan **Rust

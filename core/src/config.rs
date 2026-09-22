@@ -265,6 +265,48 @@ pub fn save_i18n(path: &Path, i18n: &Value) -> std::io::Result<Value> {
     Ok(merged)
 }
 
+/// Field koneksi stream VTuber yang dipersist (merge per-field). apiKey masked/
+/// placeholder/kosong dari UI = pertahankan yang tersimpan (padanan
+/// saveVtuberConn di config.ts).
+const VTUBER_KEYS: &[&str] = &[
+    "provider", "channel", "videoId", "apiKey", "persona", "cooldownMs", "respondChat", "respondDonation",
+];
+
+/// Simpan koneksi stream VTuber (merge per-field, apiKey aman). Return vtuber.
+pub fn save_vtuber_conn(path: &Path, conn: &Value) -> std::io::Result<Value> {
+    let prev = read_raw(path);
+    let mut next = prev.get("vtuber").and_then(|v| v.as_object()).cloned().unwrap_or_default();
+    if let Some(obj) = conn.as_object() {
+        for k in VTUBER_KEYS {
+            let Some(v) = obj.get(*k) else { continue };
+            if *k == "apiKey" {
+                let s = v.as_str().unwrap_or("").trim();
+                // Masked / placeholder / kosong = pertahankan yang tersimpan.
+                if s.is_empty() || s.contains("••••") || s.starts_with("MASUKKAN") {
+                    continue;
+                }
+            }
+            next.insert((*k).to_string(), v.clone());
+        }
+    }
+    let vt = Value::Object(next);
+    let data = merge_obj(&prev, &json!({ "vtuber": vt.clone() }));
+    crate::sheet::write_json_atomic(path, &data)?;
+    Ok(vt)
+}
+
+/// Koneksi stream tersimpan dengan apiKey TERMASK (prefill form, tak pernah
+/// balik nilai asli lewat HTTP — pola sama dgn /api/config).
+pub fn vtuber_conn_masked(path: &Path) -> Value {
+    let prev = read_raw(path);
+    let mut vt = prev.get("vtuber").and_then(|v| v.as_object()).cloned().unwrap_or_default();
+    if let Some(k) = vt.get("apiKey").and_then(|v| v.as_str()) {
+        let masked = mask_key(k);
+        vt.insert("apiKey".into(), json!(masked));
+    }
+    Value::Object(vt)
+}
+
 /// POST /api/config — dispatcher action (padanan handleConfigPost). Return
 /// (status, body JSON string).
 pub fn handle_config_post(path: &Path, body: &Value) -> (u16, String) {
