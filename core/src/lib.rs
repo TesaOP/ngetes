@@ -11,6 +11,7 @@
 //! Stage 2: static serving + /api/version. Rute Bun lain diport bertahap.
 
 pub mod config;
+pub mod director;
 pub mod expressions;
 pub mod jsonx;
 pub mod llm;
@@ -50,6 +51,7 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/version", get(version))
         .route("/api/config", get(get_config).post(post_config))
         .route("/api/chat", axum::routing::post(post_chat))
+        .route("/api/animate-text", axum::routing::post(post_animate_text))
         .route("/api/models", get(get_models))
         .route("/api/model/path", get(get_model_path))
         .route("/api/sheet", get(get_sheet_h).post(post_sheet_h))
@@ -115,6 +117,16 @@ async fn post_chat(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Re
             json!({ "error": msg }),
         ),
     }
+}
+
+/// POST /api/animate-text — director emosi/gesture per segment (role "motion").
+async fn post_animate_text(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = match serde_json::from_slice(&body).ok() {
+        Some(v) => v,
+        None => return json_status(StatusCode::BAD_REQUEST, json!({ "error": "body JSON rusak" })),
+    };
+    let out = director::handle_animate_text(&paths.data_dir.join("config.json"), &v).await;
+    json_status(StatusCode::OK, out)
 }
 
 /// GET /api/models — daftar folder model yang punya `.model3.json` (terurut).

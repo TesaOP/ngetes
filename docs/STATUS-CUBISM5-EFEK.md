@@ -170,6 +170,12 @@ auto-rescue, delete, upload, import-zip) — semua paritas/uji vs Bun, 24 test.
   pembungkus), extractJSONObjectLoose. 33 test cargo hijau (5 jsonx). Fondasi
   endpoint LLM-role JSON (animate-text/classify-params/analyze-sheet/motions)
   yang menyusul.
+- **batch 3b-lanjut**: `core/src/director.rs` — port handleAnimateText
+  (/api/animate-text, role "motion"): format_param_notes, sanitize_persona_text,
+  build prompt director, parse via extract_json_array_loose + validasi ketat
+  (emosi/gesture/motion hanya dari daftar model — Model-Agnostic), fallback aman.
+  35 test cargo hijau; smoke mock → fallback 1 segment {emotion:normal,...}.
+  Sisa endpoint LLM-role: classify-params, analyze-sheet, motions analyze/generate.
 
 BELUM diport (coupling ke kode lain): mode manager (runtime modes), POST/PUT
 motions + motion-taxonomy (client motion-dsl/classifier), LLM/agent/vtuber/media/
