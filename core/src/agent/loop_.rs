@@ -31,7 +31,21 @@ pub const TOOLS: &[ToolDef] = &[
     ToolDef { name: "remember", params: "key: string, value: string", level: "safe" },
     ToolDef { name: "recall", params: "key: string opsional", level: "safe" },
     ToolDef { name: "spawn_subagent", params: "tasks: [{task: deskripsi goal}] — delegasi riset/analisa INDEPENDEN ke subagent read-only paralel (maks 4)", level: "safe" },
+    ToolDef { name: "browser_status", params: "", level: "safe" },
+    ToolDef { name: "browser_open", params: "url: string opsional (default https://example.com) — buka browser terisolasi", level: "mutating" },
+    ToolDef { name: "browser_navigate", params: "url: string", level: "mutating" },
+    ToolDef { name: "browser_inspect", params: "cursor: number opsional, maxChars: number opsional (maks 3500), snapshotId: string opsional", level: "safe" },
+    ToolDef { name: "browser_click", params: "snapshotId: string, ref: string (dari inspect terakhir)", level: "mutating" },
+    ToolDef { name: "browser_type", params: "snapshotId: string, ref: string, text: string, submit: boolean opsional", level: "mutating" },
+    ToolDef { name: "browser_history", params: "action: back|forward|reload", level: "mutating" },
+    ToolDef { name: "browser_close", params: "", level: "mutating" },
+    ToolDef { name: "browser_grant_private", params: "origin: http/https tanpa path (izinkan localhost/LAN sesi ini)", level: "mutating" },
 ];
+
+/// True bila tool dijalankan lewat jalur async browser manager (bukan exec_tool sinkron).
+pub fn is_browser_tool(name: &str) -> bool {
+    name.starts_with("browser_")
+}
 
 pub fn tool_level(name: &str) -> Option<&'static str> {
     TOOLS.iter().find(|t| t.name == name).map(|t| t.level)
@@ -212,8 +226,9 @@ pub fn exec_tool(root: &Path, work_dir: &Path, name: &str, args: &Value) -> Stri
 
 /// Argumen tool yang aman ditampilkan ke UI (redaksi ringan). Padanan publicToolArgs.
 pub fn public_tool_args(name: &str, args: &Value) -> Value {
-    // browser_type meredaksi teks; di core belum ada browser, jadi passthrough.
-    let _ = name;
+    if is_browser_tool(name) {
+        return crate::browser::public_args(name, args);
+    }
     args.clone()
 }
 

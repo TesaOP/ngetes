@@ -546,3 +546,74 @@ pub async fn close() {
     m.reset(None);
     m.grants.revoke_all();
 }
+
+// ── Jalur tool agent (dipanggil loop assistant) ─────────────────────────────
+const DEFAULT_URL: &str = "https://example.com";
+const MAX_INSPECT_CHARS: usize = 3500;
+
+/// Eksekusi tool browser_* dari loop agent. Return JSON string (atau ERROR: …).
+pub async fn agent_exec(root: &Path, name: &str, args: &Value) -> String {
+    let sreq = |k: &str| -> Result<String, String> {
+        let v = args.get(k).and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+        if v.is_empty() { Err(format!("{k} wajib diisi")) } else { Ok(v) }
+    };
+    let out: Result<String, String> = match name {
+        "browser_status" => Ok(status().await.to_string()),
+        "browser_open" => {
+            let url = args.get("url").and_then(|v| v.as_str()).map(|s| s.trim()).filter(|s| !s.is_empty()).unwrap_or(DEFAULT_URL);
+            open(root, url, false).await.map(|v| v.to_string())
+        }
+        "browser_navigate" => match sreq("url") {
+            Ok(u) => navigate(&u).await.map(|v| v.to_string()),
+            Err(e) => Err(e),
+        },
+        "browser_inspect" => {
+            let cursor = args.get("cursor").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+            let max = args.get("maxChars").and_then(|v| v.as_u64()).map(|n| (n as usize).clamp(1, MAX_INSPECT_CHARS)).unwrap_or(MAX_INSPECT_CHARS);
+            let sid = args.get("snapshotId").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+            inspect(cursor, max, sid).await.map(|v| v.to_string())
+        }
+        "browser_click" => match (sreq("snapshotId"), sreq("ref")) {
+            (Ok(s), Ok(r)) => click(&s, &r).await.map(|_| json!({ "ok": true, "snapshotId": s, "ref": r }).to_string()),
+            (Err(e), _) | (_, Err(e)) => Err(e),
+        },
+        "browser_type" => match (sreq("snapshotId"), sreq("ref")) {
+            (Ok(s), Ok(r)) => {
+                let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                let submit = args.get("submit").and_then(|v| v.as_bool()).unwrap_or(false);
+                type_text(&s, &r, text, submit).await.map(|_| json!({ "ok": true, "snapshotId": s, "ref": r, "chars": text.chars().count(), "submit": submit }).to_string())
+            }
+            (Err(e), _) | (_, Err(e)) => Err(e),
+        },
+        "browser_history" => match sreq("action") {
+            Ok(a) => history(&a).await.map(|_| json!({ "ok": true, "action": a }).to_string()),
+            Err(e) => Err(e),
+        },
+        "browser_close" => {
+            close().await;
+            Ok(json!({ "ok": true }).to_string())
+        }
+        "browser_grant_private" => match sreq("origin") {
+            Ok(o) => grant_private_origin(&o).await.map(|origin| json!({ "ok": true, "origin": origin }).to_string()),
+            Err(e) => Err(e),
+        },
+        other => Err(format!("tool browser tidak dikenal: {other}")),
+    };
+    match out {
+        Ok(s) => s,
+        Err(e) => if e.starts_with("ERROR") { e } else { format!("ERROR: {e}") },
+    }
+}
+
+/// Redaksi arg publik untuk browser_type (jangan bocorkan teks ketikan).
+pub fn public_args(name: &str, args: &Value) -> Value {
+    if name == "browser_type" {
+        return json!({
+            "snapshotId": args.get("snapshotId").and_then(|v| v.as_str()).unwrap_or(""),
+            "ref": args.get("ref").and_then(|v| v.as_str()).unwrap_or(""),
+            "chars": args.get("text").and_then(|v| v.as_str()).map(|s| s.chars().count()).unwrap_or(0),
+            "submit": args.get("submit").and_then(|v| v.as_bool()).unwrap_or(false),
+        });
+    }
+    args.clone()
+}

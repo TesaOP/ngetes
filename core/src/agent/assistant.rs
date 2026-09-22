@@ -385,9 +385,13 @@ async fn run_loop(config_path: &Path, root: &Path) -> AskResult {
             continue;
         }
 
-        // tool safe → eksekusi langsung.
+        // tool safe → eksekusi langsung (browser_* lewat jalur async manager).
         bus::emit("tool_call_start", &name);
-        let result = loop_::exec_tool(root, &wd, &name, &args);
+        let result = if loop_::is_browser_tool(&name) {
+            crate::browser::agent_exec(root, &name, &args).await
+        } else {
+            loop_::exec_tool(root, &wd, &name, &args)
+        };
         bus::emit("tool_call_end", &name);
         let mut r = rt().lock().await;
         push_msg(&mut r, "assistant", &strip_tool_directive(&reply));
@@ -538,7 +542,11 @@ pub async fn approve(config_path: &Path, root: &Path, id: &str, approve_it: bool
         // Snapshot undo SEBELUM tool mutasi file (write/edit/delete) dieksekusi.
         let snap = snapshot_before(&wd, &name, &args);
         bus::emit("tool_call_start", &name);
-        let result = loop_::exec_tool(root, &wd, &name, &args);
+        let result = if loop_::is_browser_tool(&name) {
+            crate::browser::agent_exec(root, &name, &args).await
+        } else {
+            loop_::exec_tool(root, &wd, &name, &args)
+        };
         bus::emit("tool_call_end", &name);
         let ok = !result.starts_with("ERROR");
         let mut r = rt().lock().await;
