@@ -2,16 +2,20 @@
  * dist.ts — Rakit folder release PORTABLE Live2D Agent.
  *
  * Hasil: dist/Live2D-Agent/ yang bisa di-zip dan dibagikan — user cukup
- * dobel-klik live2d-shell.exe (atau live2d-agent.exe), TANPA Bun, tanpa
- * build, tanpa Rust. Isi folder:
+ * dobel-klik live2d-shell.exe, TANPA Bun runtime. Isi folder:
  *
- *   live2d-agent.exe    server Bun hasil `bun build --compile` (runtime
- *                       Bun ter-embed; dependensi npm ikut di-bundle)
+ *   live2d-core.exe     server Rust in-process (axum) — SATU-SATUNYA runtime
+ *                       server (runtime Bun sudah dilepas; seluruh /api/*
+ *                       diport ke Rust). TTS in-process; STT butuh build
+ *                       --features engine-stt.
  *   live2d-shell.exe    cangkang Tauri (WebView2) — sidecar: menyalakan
- *                       server sendiri bila belum jalan
+ *                       live2d-core.exe bila belum jalan
  *   static/             frontend (index.html, app.js, bundle.js, dll.)
  *   data/               DIBUAT saat first-run — sengaja tidak disertakan
  *                       agar konfigurasi/API key user tidak ikut paket
+ *
+ * Bun HANYA dipakai sebagai driver build (bundle frontend + skrip ini) — tidak
+ * ikut ke folder release dan tidak dijalankan saat runtime.
  *
  * Bila Inno Setup 6 (ISCC) terpasang, langkah terakhir juga membungkus folder
  * ini menjadi SATU file: dist/Live2D-Agent-Setup.exe — installer per-user
@@ -19,14 +23,12 @@
  *
  * Pemakaian:
  *   bun run src/dist.ts                 # target = OS host (Windows ini)
- *   bun run src/dist.ts -- bun-linux-x64  # cross-compile target lain (server saja)
  *
- * Catatan lintas-OS: server bisa di-cross-compile dari mana saja, tapi exe
- * shell Tauri per-OS harus dibangun di OS-nya masing-masing (macOS/Windows
- * toolchain tidak saling bisa) — biasanya lewat CI runner.
+ * Catatan lintas-OS: live2d-core (Rust) & shell Tauri per-OS dibangun di OS-nya
+ * masing-masing (biasanya lewat CI runner).
  */
 import { spawnSync } from "child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, readdirSync } from "fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, readdirSync } from "fs";
 import { join } from "path";
 
 const REPO = join(import.meta.dir, ".."); // src/ → repo root
@@ -38,29 +40,22 @@ const ENGINE_EXE = join(REPO, "engine", "target", "release", "live2d-engine.exe"
 // mengutamakannya (sibling_server), menggantikan live2d-agent.exe (Bun).
 const CORE_EXE = join(REPO, "target", "release", "live2d-core.exe");
 
-const BUN = process.execPath; // bun.exe saat dev — dipakai lagi sebagai driver build
+const BUN = process.execPath; // bun.exe saat dev — HANYA driver build (bundle frontend)
 
 function fail(msg: string): never {
   console.error(`  [!] ${msg}`);
   process.exit(1);
 }
 
-// Argumen: -- <bun-target> (mis. bun-linux-x64, bun-darwin-arm64)
-const sepIdx = process.argv.indexOf("--");
-const bunTarget = sepIdx !== -1 ? process.argv[sepIdx + 1] : null;
-const isWindowsTarget = bunTarget
-  ? bunTarget.includes("windows")
-  : process.platform === "win32";
-const serverExeName = isWindowsTarget ? "live2d-agent.exe" : "live2d-agent";
-
 console.log(`╔══════════════════════════════════════════════╗`);
 console.log(`║  Live2D Agent — rakit release portable       ║`);
 console.log(`╚══════════════════════════════════════════════╝`);
-console.log(`  Target : ${bunTarget ?? "host (" + process.platform + ")"}`);
+console.log(`  Target : host (${process.platform})`);
 console.log(`  Output : dist/${OUT_DIR_NAME}/`);
 console.log("");
 
-// 1) Client bundle (bundle.js wajib ada — server menampilkan halaman mati tanpanya)
+// 1) Client bundle (bundle.js wajib ada — server menampilkan halaman mati tanpanya).
+//    Bun di sini = alat bundling build-time saja, tidak ikut ke release.
 console.log("  [1/5] Bundle client → static/js/bundle.js");
 const build = spawnSync(BUN, ["run", join(REPO, "src", "build.ts")], {
   cwd: REPO,
@@ -68,25 +63,23 @@ const build = spawnSync(BUN, ["run", join(REPO, "src", "build.ts")], {
 });
 if (build.status !== 0) fail("build client gagal");
 
-// 2) Compile server → exe mandiri
-console.log("  [2/5] Compile server → live2d-agent(.exe)");
-const compileArgs = [
-  "build", "--compile", "src/server/index.ts",
-  "--outfile", join("dist", OUT_DIR_NAME, serverExeName),
-  ...(bunTarget ? ["--target", bunTarget] : []),
-];
-const compile = spawnSync(BUN, compileArgs, { cwd: REPO, stdio: "inherit" });
-if (compile.status !== 0) fail("compile server gagal");
+// 2) Build server Rust → live2d-core.exe (SATU-SATUNYA runtime server; Bun lepas).
+console.log("  [2/5] Build server Rust → live2d-core.exe (cargo --release)");
+const cargo = spawnSync("cargo", ["build", "--release", "-p", "live2d-core"], { cwd: REPO, stdio: "inherit" });
+if (cargo.status !== 0) fail("build live2d-core gagal (pasang Rust toolchain / cek error di atas)");
+if (!existsSync(CORE_EXE)) fail(`live2d-core.exe tidak ditemukan di ${CORE_EXE}`);
 
-// 3) Frontend statik — exe hasil langkah 2 diselamatkan dulu (folder dibersihkan)
-console.log("  [3/5] Salin static/");
-const tmpExe = join(OUT, serverExeName);
-const keptExe = join(REPO, "dist", `.${serverExeName}.keep`);
-if (existsSync(tmpExe)) renameSync(tmpExe, keptExe);
+// 3) Frontend statik (folder dibersihkan lalu diisi ulang) + server core.
+console.log("  [3/5] Salin static/ + live2d-core.exe");
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 cpSync(join(REPO, "static"), join(OUT, "static"), { recursive: true });
-if (existsSync(keptExe)) renameSync(keptExe, tmpExe);
+{
+  const dst = join(OUT, "live2d-core.exe");
+  cpSync(CORE_EXE, dst);
+  const coreMb = (statSync(dst).size / 1024 / 1024).toFixed(1);
+  console.log(`        [OK] live2d-core.exe (${coreMb} MB) — server Rust in-process (tanpa Bun)`);
+}
 
 // 4) Shell Tauri bila sudah dibangun (bun run build:pet)
 console.log("  [4/5] Shell Tauri");
@@ -115,21 +108,6 @@ if (existsSync(ENGINE_EXE)) {
   console.log("            (tanpa ini, TTS/STT native nonaktif; provider cloud tetap jalan)");
 }
 
-// 4c) Server Rust in-process (live2d-core.exe) — tujuan lepas runtime JS.
-// Bila sudah dibangun (cargo build --release -p live2d-core), disalin & shell
-// mengutamakannya. TTS in-process; STT butuh build --features engine-stt.
-if (existsSync(CORE_EXE)) {
-  const dst = join(OUT, "live2d-core.exe");
-  cpSync(CORE_EXE, dst);
-  const mb = (statSync(dst).size / 1024 / 1024).toFixed(1);
-  console.log(`        [OK] live2d-core.exe (${mb} MB) — server Rust in-process (shell mengutamakannya)`);
-} else {
-  console.log("        [i] live2d-core.exe belum dibangun — jalankan:");
-  console.log("            cargo build --release -p live2d-core   (TTS in-process)");
-  console.log("            cargo build --release -p live2d-core --features engine-stt   (+STT)");
-  console.log("            Tanpa ini, shell pakai live2d-agent.exe (Bun) untuk semua mode.");
-}
-
 writeFileSync(
   join(OUT, "BACA-SAYA.txt"),
   [
@@ -137,8 +115,8 @@ writeFileSync(
     "=============================",
     "",
     "Cara pakai:",
-    "  1. Dobel-klik live2d-shell.exe  (server menyala otomatis, jendela app terbuka)",
-    "     - atau jalankan live2d-agent.exe lalu buka http://127.0.0.1:8310 di browser",
+    "  1. Dobel-klik live2d-shell.exe  (server live2d-core menyala otomatis, jendela app terbuka)",
+    "     - atau jalankan live2d-core.exe lalu buka http://127.0.0.1:8310 di browser",
     "  2. Impor model Live2D (folder .model3.json atau .zip) lewat tombol impor di app.",
     "  3. Isi API key LLM (pengaturan koneksi) & TTS lewat UI — tersimpan di data/config.json.",
     "",
