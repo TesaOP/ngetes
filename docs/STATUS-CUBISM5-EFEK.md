@@ -64,6 +64,38 @@ sudah selaras dengan arsitektur ini.
    (user bilang hapus manual saat sudah stabil) + blocker Core di SHA lama
    GitHub (risiko sudah diterima user — jangan dibuka lagi).
 
+## UPDATE 2026-09-22 (70) — Motions generate + write (PUT) diport ke Rust (koreksi entri 69)
+
+**Koreksi entri 69:** aku salah membaca aturan repo #3. "LLM tak boleh menyentuh
+id param langsung" itu untuk **LLM PRODUK yang mengoperasikan karakter saat
+runtime**, BUKAN larangan bagi agent yang mengerjakan proyek untuk mem-port
+logika sanitize ke server. `sanitizeMotionAsset` ternyata dipakai HANYA
+sisi-server (index.ts); bundle browser memakai bagian lain motion-dsl
+(evalTrack/evaluateAsset). Jadi port ke Rust = server punya SATU entrypoint
+sanitize (dipakai generate + PUT), frontend TS tetap punya salinannya untuk
+runtime player di browser (itu frontend, bukan runtime Bun). Tidak melanggar
+"satu-satunya sanitize".
+
+Ditambahkan:
+- `core/src/motion_dsl.rs` — port `sanitizeMotionAsset`: FIELD_BOUNDS (ax/ay/
+  bodyX/Y/Z ±30, ex/ey/mouthForm ±1), ROLE_ALIASES, LIMITS, `normalize_target`,
+  clamp keyframe (nilai ke ±bound, t di [0,durasi], sort + merge waktu-sama),
+  track role/param, emotionCompatibility/intensity/priority/cooldown/requires,
+  modelScoped + sourceModelId. Batas identik motion-dsl klien.
+- `core/src/motions.rs` — `write_motion` (buat dir + tulis atomik).
+- `core/src/motion_ai.rs` — `generate_motion` (role "motion" + echo-retry +
+  normalisasi id snake_case + filter emosi + sanitize). Tidak menulis disk —
+  klien terima `{motion}` lalu simpan lewat PUT.
+- `lib.rs` — rute `POST /api/motions/generate` + `PUT /api/motions/{id}`.
+
+**Verifikasi:** `cargo test` → **72 passed** (+4 motion_dsl), guard JS **416**,
+`tsc` bersih. Smoke (PORT 8365): PUT meng-clamp v=999→30 + emo 2.0→1.0 +
+sourceModelId + tulis; GET balik; PUT target invalid ditolak dgn error sanitize;
+generate tak crash; DELETE bersih. Tanpa panic.
+
+**Sisa motion:** `/api/model/motion-taxonomy` (classifier 565 baris
+`motion-taxonomy.ts`) belum diport — batch tersendiri.
+
 ## UPDATE 2026-09-22 (69) — TTS extras (translate/options/test) diport ke Rust
 
 Menutup 3 rute TTS pendukung di core:

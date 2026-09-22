@@ -153,6 +153,114 @@ KEMBALIKAN HANYA JSON. MULAI dengan {{ dan AKHIRI dengan }}. JANGAN mengulang in
     (200, json!({ "description": description, "tags": tags, "emotionCompatibility": emo, "source": "ai" }).to_string())
 }
 
+/// POST /api/motions/generate — buat motion dari deskripsi user (role "motion")
+/// + echo-retry + sanitize (motion_dsl). Return (status, body JSON). Tidak
+/// menulis ke disk — klien menerima {motion} lalu menyimpan lewat PUT.
+pub async fn generate_motion(config_path: &Path, body: &Value) -> (u16, String) {
+    let desc: String = body.get("prompt").and_then(|v| v.as_str()).unwrap_or("").trim().chars().take(300).collect();
+    if desc.is_empty() {
+        return (400, json!({ "error": "prompt kosong" }).to_string());
+    }
+    let emotions: Vec<String> = body
+        .get("emotions")
+        .and_then(|v| v.as_array())
+        .filter(|a| !a.is_empty())
+        .map(|a| a.iter().take(12).map(|x| x.as_str().unwrap_or("").to_string()).collect())
+        .unwrap_or_else(|| DEFAULT_EMOTIONS.iter().map(|s| s.to_string()).collect());
+
+    let prompt = format!(
+        "Kamu membuat gerakan (motion) untuk karakter Live2D dari deskripsi user.\n\
+Permintaan user: \"{desc}\"\n\n\
+Kamu HANYA boleh memakai nama track berikut. Ini nama PERAN, bukan nama parameter\n\
+model — klien yang akan menerjemahkannya ke parameter rig yang sesuai:\n\
+ax    = kepala kiri(-)/kanan(+), derajat, batas ±30\n\
+ay    = kepala atas(-)/bawah(+), derajat, batas ±30\n\
+bodyZ = badan miring, derajat, batas ±30\n\
+bodyX = badan geser kiri/kanan, derajat, batas ±30\n\
+bodyY = badan naik/turun, derajat, batas ±30\n\
+ex    = bola mata kiri(-)/kanan(+), −1..1\n\
+ey    = bola mata atas(-)/bawah(+), −1..1\n\
+mouthForm = bentuk mulut, −1..1\n\n\
+JANGAN menyebut nama parameter model seperti ParamAngleX atau ParamHairFront —\n\
+kamu tidak tahu nama parameter rig ini dan menebaknya akan ditolak.\n\n\
+Aturan:\n\
+- Maksimal 4 track, maksimal 6 keyframe per track.\n\
+- t dalam detik, mulai 0, tidak melebihi durasi.\n\
+- Durasi 0.6 sampai 3 detik.\n\
+- Gerakan yang bagus PULANG ke 0 di keyframe terakhir supaya tidak nyangkut.\n\
+- Nilai realistis: ±5..15 derajat untuk kepala, ±0.2..0.6 untuk mata.\n\n\
+Balas JSON persis format ini:\n\
+{{\n  \"id\": \"nama_id_snake_case\",\n  \"name\": \"Nama Singkat\",\n  \"description\": \"satu kalimat bahasa Indonesia\",\n  \"tags\": [\"dua-empat tag\"],\n  \"duration\": 1.4,\n  \"emotionCompatibility\": {{ \"<emosi>\": 0.0-1.0 }},\n  \"tracks\": [\n    {{ \"target\": \"ay\", \"keys\": [{{ \"t\": 0, \"v\": 0 }}, {{ \"t\": 0.4, \"v\": 8 }}, {{ \"t\": 1.4, \"v\": 0 }}] }}\n  ]\n}}\n\
+Emosi yang boleh dipakai HANYA: [{emo}]\n\
+KEMBALIKAN HANYA JSON. MULAI balasanmu langsung dengan {{ dan AKHIRI dengan }} — JANGAN mengulang instruksi ini.",
+        emo = emotions.join(", "),
+    );
+
+    let echoed = |clean: &str| -> bool {
+        let low = clean.to_lowercase();
+        low.contains("balas json") || low.contains("permintaan user")
+    };
+
+    let msgs1 = vec![llm::ChatMessage { role: "user".into(), content: prompt.clone() }];
+    let reply = match llm::llm_for_role(config_path, "motion", &msgs1, "").await {
+        Ok(ok) => ok.reply,
+        Err((_, msg)) => return (200, json!({ "error": msg }).to_string()),
+    };
+    let mut clean = strip_fences(&reply);
+    let mut parsed = jsonx::extract_json_object_loose(&reply);
+
+    if parsed.is_none() || echoed(&clean) {
+        let msgs2 = vec![
+            llm::ChatMessage { role: "user".into(), content: prompt.clone() },
+            llm::ChatMessage { role: "assistant".into(), content: clean.chars().take(2000).collect() },
+            llm::ChatMessage {
+                role: "user".into(),
+                content: "Balasanmu tadi salah: kamu mengulang instruksi. Balas HANYA objek JSON motion (id, name, duration, tracks, emotionCompatibility) — mulai dengan karakter { langsung, tanpa mengulang instruksi.".into(),
+            },
+        ];
+        if let Ok(ok2) = llm::llm_for_role(config_path, "motion", &msgs2, "").await {
+            let p2 = jsonx::extract_json_object_loose(&ok2.reply);
+            clean = strip_fences(&ok2.reply);
+            if p2.is_some() {
+                parsed = p2;
+            } else if echoed(&clean) {
+                parsed = None;
+            }
+        }
+    }
+
+    let mut parsed = match parsed {
+        Some(p) if p.is_object() => p,
+        _ => {
+            let extra = if echoed(&clean) { " (model mengulang instruksi dua kali — coba lagi / pakai model lain)" } else { "" };
+            return (200, json!({ "error": format!("AI tidak mengembalikan JSON valid{extra}") }).to_string());
+        }
+    };
+
+    // Buang emosi di luar daftar; normalisasi id snake_case.
+    let ok_emo: std::collections::HashSet<&str> = emotions.iter().map(String::as_str).collect();
+    if let Some(ec) = parsed.get_mut("emotionCompatibility").and_then(|v| v.as_object_mut()) {
+        ec.retain(|k, _| ok_emo.contains(k.as_str()));
+    }
+    let id_src = parsed.get("id").and_then(|v| v.as_str()).map(String::from).unwrap_or_else(|| desc.clone());
+    let mut id: String = id_src
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    while id.contains("__") {
+        id = id.replace("__", "_");
+    }
+    let id: String = id.trim_matches('_').chars().take(60).collect();
+    let id = if id.is_empty() { "gerakan_ai".to_string() } else { id };
+    parsed["id"] = json!(id);
+
+    match crate::motion_dsl::sanitize_motion_asset(&parsed, &crate::motion_dsl::SanitizeOpts { require_tracks: true, source: Some("user".into()), ..Default::default() }) {
+        Ok(asset) => (200, json!({ "motion": asset, "source": "ai" }).to_string()),
+        Err(errs) => (200, json!({ "error": format!("hasil AI tidak valid: {}", errs.join("; ")) }).to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

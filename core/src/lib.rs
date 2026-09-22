@@ -20,6 +20,7 @@ pub mod media;
 pub mod mode;
 pub mod model;
 pub mod motion_ai;
+pub mod motion_dsl;
 pub mod motions;
 pub mod paths;
 pub mod rescue;
@@ -97,6 +98,7 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/model/classify-params", axum::routing::post(post_classify_params))
         .route("/api/model/analyze-sheet", axum::routing::post(post_analyze_sheet))
         .route("/api/motions/analyze", axum::routing::post(post_motions_analyze))
+        .route("/api/motions/generate", axum::routing::post(post_motions_generate))
         .route("/api/models", get(get_models))
         .route("/api/model/path", get(get_model_path))
         .route("/api/sheet", get(get_sheet_h).post(post_sheet_h))
@@ -111,7 +113,7 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/model/import-zip", axum::routing::post(post_import_zip))
         .route("/api/model/{name}", axum::routing::delete(delete_model_h))
         .route("/api/motions", get(get_motions_list))
-        .route("/api/motions/{id}", get(get_motion_h).delete(del_motion_h))
+        .route("/api/motions/{id}", get(get_motion_h).put(put_motion_h).delete(del_motion_h))
         .fallback(static_handler)
         .with_state(paths)
 }
@@ -842,6 +844,36 @@ async fn del_motion_h(
     let model = q.get("model").map(String::as_str).unwrap_or("default");
     let (status, body) = motions::delete_motion(&paths.motions_dir, model, &id);
     json_raw(status, body)
+}
+
+/// PUT /api/motions/:id — sanitasi (motion_dsl) lalu tulis. Body {model?, motion?}.
+async fn put_motion_h(
+    State(paths): State<AppPaths>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    body: axum::body::Bytes,
+) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let model_key = v.get("model").and_then(|x| x.as_str()).filter(|s| !s.is_empty()).unwrap_or("default").to_string();
+    // raw = body.motion || body (id di-override dari URL).
+    let mut raw = v.get("motion").cloned().unwrap_or_else(|| v.clone());
+    if let Some(o) = raw.as_object_mut() {
+        o.insert("id".into(), json!(id));
+    }
+    let src_model = raw.get("sourceModelId").and_then(|x| x.as_str()).map(String::from).unwrap_or_else(|| model_key.clone());
+    match motion_dsl::sanitize_motion_asset(&raw, &motion_dsl::SanitizeOpts { require_tracks: true, source: Some("user".into()), source_model_id: Some(src_model) }) {
+        Ok(asset) => {
+            let (status, out) = motions::write_motion(&paths.motions_dir, &model_key, &id, &asset);
+            json_raw(status, out)
+        }
+        Err(errs) => json_status(StatusCode::BAD_REQUEST, json!({ "error": format!("motion invalid: {}", errs.join("; ")) })),
+    }
+}
+
+/// POST /api/motions/generate — buat motion dari deskripsi (role "motion").
+async fn post_motions_generate(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let (status, out) = motion_ai::generate_motion(&paths.data_dir.join("config.json"), &v).await;
+    json_raw(status, out)
 }
 
 /// Bangun Response JSON dari status u16 + body string (untuk handler yang sudah

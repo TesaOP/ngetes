@@ -76,6 +76,24 @@ pub fn get_motion(motions_root: &Path, model_key: &str, id: &str) -> (u16, Strin
     }
 }
 
+/// PUT /api/motions/:id?model=X — tulis asset (sudah disanitasi pemanggil).
+/// Buat dir bila perlu. Return (status, body).
+pub fn write_motion(motions_root: &Path, model_key: &str, id: &str, asset: &Value) -> (u16, String) {
+    let file = match motion_file_for(motions_root, model_key, id) {
+        Some(f) => f,
+        None => return (400, json!({ "error": "motion id tidak valid" }).to_string()),
+    };
+    if let Some(dir) = file.parent() {
+        if std::fs::create_dir_all(dir).is_err() {
+            return (400, json!({ "error": "gagal membuat folder motion" }).to_string());
+        }
+    }
+    match crate::sheet::write_json_atomic(&file, asset) {
+        Ok(()) => (200, json!({ "ok": true, "motion": asset }).to_string()),
+        Err(e) => (400, json!({ "error": e.to_string() }).to_string()),
+    }
+}
+
 /// DELETE /api/motions/:id?model=X → (status, body).
 pub fn delete_motion(motions_root: &Path, model_key: &str, id: &str) -> (u16, String) {
     let file = match motion_file_for(motions_root, model_key, id) {
