@@ -164,6 +164,12 @@ auto-rescue, delete, upload, import-zip) — semua paritas/uji vs Bun, 24 test.
   (rateLimitedUntil ISO8601 via chrono, byte-compat). Route POST /api/chat.
   Deps: reqwest(rustls), chrono. 28 test cargo hijau; smoke /api/chat mock →
   {reply,used} end-to-end. BELUM: streaming SSE (assistant), agent loop+tools.
+- **batch 3b (helper)**: `core/src/jsonx.rs` — port extractJSON (SSE-merge +
+  iris objek seimbang string-aware), salvageJSONArrayOfObjects (array terpotong),
+  extractJSONArrayLoose (tahan echo model kecil: ambil blok TERAKHIR + objek
+  pembungkus), extractJSONObjectLoose. 33 test cargo hijau (5 jsonx). Fondasi
+  endpoint LLM-role JSON (animate-text/classify-params/analyze-sheet/motions)
+  yang menyusul.
 
 BELUM diport (coupling ke kode lain): mode manager (runtime modes), POST/PUT
 motions + motion-taxonomy (client motion-dsl/classifier), LLM/agent/vtuber/media/

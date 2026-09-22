@@ -12,6 +12,7 @@
 
 pub mod config;
 pub mod expressions;
+pub mod jsonx;
 pub mod llm;
 pub mod model;
 pub mod motions;
