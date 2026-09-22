@@ -16,7 +16,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
+use tokio_tungstenite::tungstenite::Message;
 
 use crate::llm::{self, ChatMessage};
 use crate::vtuber_scheduler::{
@@ -189,6 +191,41 @@ fn spawn_run(epoch: u64, item: QueueItem) {
     });
 }
 
+/// True selama runtime dgn epoch ini masih aktif (belum diganti/dihentikan).
+fn epoch_current(epoch: u64) -> bool {
+    let g = rt().lock().unwrap();
+    matches!(g.as_ref(), Some(r) if r.epoch == epoch)
+}
+
+/// Masukkan event penonton/donasi (dari provider apa pun) → feed + scheduler →
+/// jalankan item bila diterima. No-op bila runtime sudah diganti.
+fn feed_incoming(epoch: u64, kind: &str, user: &str, text: &str, amount: Option<String>) {
+    let run_now = {
+        let mut g = rt().lock().unwrap();
+        match g.as_mut() {
+            Some(r) if r.epoch == epoch => ingest_feed(r, kind, user, text, amount).1,
+            _ => None,
+        }
+    };
+    if let Some(item) = run_now {
+        spawn_run(epoch, item);
+    }
+}
+
+/// Event sistem/feedback ke feed. No-op bila runtime sudah diganti.
+fn feed_system(epoch: u64, text: &str) {
+    let mut g = rt().lock().unwrap();
+    if let Some(r) = g.as_mut() {
+        if r.epoch == epoch {
+            push_feed(r, "system", "system", text, None);
+        }
+    }
+}
+
+async fn sleep_ms(ms: u64) {
+    tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+}
+
 /// Loop simulator penonton (provider mock). Berhenti saat epoch berubah.
 fn spawn_mock(epoch: u64, interval_ms: u64) {
     tokio::spawn(async move {
@@ -202,32 +239,256 @@ fn spawn_mock(epoch: u64, interval_ms: u64) {
         const AMOUNTS: &[&str] = &["Rp 10.000", "Rp 25.000", "Rp 50.000", "Rp 100.000"];
         let mut tick: u64 = 0;
         loop {
-            tokio::time::sleep(std::time::Duration::from_millis(interval_ms)).await;
-            tick += 1;
-            let run_now;
-            {
-                let mut g = rt().lock().unwrap();
-                let Some(r) = g.as_mut() else { return };
-                if r.epoch != epoch {
-                    return; // runtime diganti/berhenti
-                }
-                if tick % 5 == 0 {
-                    let user = DONORS[pseudo_rand(tick) % DONORS.len()];
-                    let amount = AMOUNTS[pseudo_rand(tick.wrapping_mul(7)) % AMOUNTS.len()];
-                    let (_o, item) = ingest_feed(r, "donation", user, "Dukung terus streamnya!", Some(amount.to_string()));
-                    run_now = item;
-                } else {
-                    let user = NAMES[pseudo_rand(tick.wrapping_mul(3)) % NAMES.len()];
-                    let text = CHATS[pseudo_rand(tick.wrapping_mul(11)) % CHATS.len()];
-                    let (_o, item) = ingest_feed(r, "chat", user, text, None);
-                    run_now = item;
-                }
+            sleep_ms(interval_ms).await;
+            if !epoch_current(epoch) {
+                return;
             }
-            if let Some(item) = run_now {
-                spawn_run(epoch, item);
+            tick += 1;
+            if tick % 5 == 0 {
+                let user = DONORS[pseudo_rand(tick) % DONORS.len()];
+                let amount = AMOUNTS[pseudo_rand(tick.wrapping_mul(7)) % AMOUNTS.len()];
+                feed_incoming(epoch, "donation", user, "Dukung terus streamnya!", Some(amount.to_string()));
+            } else {
+                let user = NAMES[pseudo_rand(tick.wrapping_mul(3)) % NAMES.len()];
+                let text = CHATS[pseudo_rand(tick.wrapping_mul(11)) % CHATS.len()];
+                feed_incoming(epoch, "chat", user, text, None);
             }
         }
     });
+}
+
+/// Provider Twitch: baca live chat via IRC WebSocket (wss). Tanpa token =
+/// anonim read-only (justinfan). Reconnect 5 dtk saat koneksi tertutup, selama
+/// runtime dgn epoch ini masih aktif. Port dari cabang "twitch" vtuber.ts.
+fn spawn_twitch(epoch: u64, channel: String, token: String, nick: String) {
+    tokio::spawn(async move {
+        loop {
+            if !epoch_current(epoch) {
+                return;
+            }
+            match tokio_tungstenite::connect_async("wss://irc-ws.chat.twitch.tv:443").await {
+                Err(_) => {
+                    feed_system(epoch, "Gagal terhubung ke Twitch IRC.");
+                }
+                Ok((mut ws, _)) => {
+                    let _ = ws.send(Message::Text("CAP REQ :twitch.tv/tags".into())).await;
+                    if !token.is_empty() {
+                        let bare = token.trim_start_matches("oauth:").trim_start_matches("OAUTH:");
+                        let _ = ws.send(Message::Text(format!("PASS oauth:{bare}").into())).await;
+                    }
+                    let _ = ws.send(Message::Text(format!("NICK {nick}").into())).await;
+                    let _ = ws.send(Message::Text(format!("JOIN #{channel}").into())).await;
+                    feed_system(
+                        epoch,
+                        &format!("Terhubung ke Twitch #{channel}{}", if token.is_empty() { " (anonim)" } else { " (auth)" }),
+                    );
+                    while let Some(msg) = ws.next().await {
+                        if !epoch_current(epoch) {
+                            let _ = ws.close(None).await;
+                            return;
+                        }
+                        let raw = match msg {
+                            Ok(Message::Text(t)) => t.as_str().to_string(),
+                            Ok(Message::Ping(p)) => {
+                                let _ = ws.send(Message::Pong(p)).await;
+                                continue;
+                            }
+                            Ok(Message::Close(_)) | Err(_) => break,
+                            _ => continue,
+                        };
+                        for line in raw.split("\r\n") {
+                            if line.is_empty() {
+                                continue;
+                            }
+                            if line.starts_with("PING") {
+                                let _ = ws.send(Message::Text("PONG :tmi.twitch.tv".into())).await;
+                                continue;
+                            }
+                            if line.contains(" PRIVMSG ") {
+                                if let Some((user, text)) = parse_privmsg(line) {
+                                    let t: String = text.chars().take(400).collect();
+                                    feed_incoming(epoch, "chat", &user, &t, None);
+                                }
+                            } else if line.contains("Login authentication failed") || line.contains("Improperly formatted auth") {
+                                feed_system(epoch, "Auth Twitch gagal — cek token/nick. Coba tanpa token (anonim).");
+                            }
+                        }
+                    }
+                }
+            }
+            if !epoch_current(epoch) {
+                return;
+            }
+            feed_system(epoch, "Koneksi Twitch tertutup. Mencoba ulang 5 dtk…");
+            sleep_ms(5000).await;
+        }
+    });
+}
+
+/// Parse baris IRC PRIVMSG → (user, text). Format:
+/// `@tags :nick!nick@nick.tmi.twitch.tv PRIVMSG #chan :pesan`. display-name
+/// dari tags dipakai bila ada.
+fn parse_privmsg(line: &str) -> Option<(String, String)> {
+    // Ambil display-name dari tags (bila ada) sebagai user preferensi.
+    let mut display: Option<String> = None;
+    if line.starts_with('@') {
+        if let Some(seg) = line.split(' ').next() {
+            for kv in seg.trim_start_matches('@').split(';') {
+                if let Some(v) = kv.strip_prefix("display-name=") {
+                    if !v.is_empty() {
+                        display = Some(v.to_string());
+                    }
+                }
+            }
+        }
+    }
+    // Buang tags → mulai dari ":nick!..."
+    let rest = if line.starts_with('@') {
+        match line.find(' ') {
+            Some(i) => &line[i + 1..],
+            None => line,
+        }
+    } else {
+        line
+    };
+    // :nick!user@host PRIVMSG #chan :text
+    let rest = rest.strip_prefix(':')?;
+    let bang = rest.find('!')?;
+    let nick = &rest[..bang];
+    let privmsg_at = rest.find(" PRIVMSG ")?;
+    let after = &rest[privmsg_at + " PRIVMSG ".len()..];
+    let colon = after.find(" :")?;
+    let text = &after[colon + 2..];
+    let user = display.unwrap_or_else(|| nick.to_string());
+    if user.is_empty() || text.is_empty() {
+        return None;
+    }
+    Some((user, text.to_string()))
+}
+
+/// Provider YouTube: poll liveChatMessages.list (butuh API key + videoId live).
+/// superChat/superSticker → donasi. Port dari cabang "youtube" vtuber.ts.
+fn spawn_youtube(epoch: u64, video_id: String, key: String) {
+    tokio::spawn(async move {
+        const BASE: &str = "https://www.googleapis.com/youtube/v3";
+        let client = reqwest::Client::new();
+
+        // 1) activeLiveChatId dari videos.list
+        let live_chat_id = match client
+            .get(format!("{BASE}/videos"))
+            .query(&[("part", "liveStreamingDetails"), ("id", video_id.as_str()), ("key", key.as_str())])
+            .send()
+            .await
+        {
+            Ok(r) => r
+                .json::<Value>()
+                .await
+                .ok()
+                .and_then(|j| {
+                    j.get("items")
+                        .and_then(|i| i.as_array())
+                        .and_then(|a| a.first())
+                        .and_then(|it| it.get("liveStreamingDetails"))
+                        .and_then(|d| d.get("activeLiveChatId"))
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                })
+                .unwrap_or_default(),
+            Err(e) => {
+                feed_system(epoch, &format!("Gagal ambil liveChatId: {e}"));
+                return;
+            }
+        };
+        if live_chat_id.is_empty() {
+            feed_system(epoch, "liveChatId tidak ditemukan — pastikan video sedang live dan chat aktif.");
+            return;
+        }
+        feed_system(epoch, "Terhubung ke live chat YouTube.");
+
+        let mut page_token = String::new();
+        loop {
+            if !epoch_current(epoch) {
+                return;
+            }
+            let wait: u64;
+            match client
+                .get(format!("{BASE}/liveChat/messages"))
+                .query(&[
+                    ("liveChatId", live_chat_id.as_str()),
+                    ("part", "snippet,authorDetails"),
+                    ("pageToken", page_token.as_str()),
+                    ("key", key.as_str()),
+                ])
+                .send()
+                .await
+            {
+                Ok(resp) => {
+                    let j = resp.json::<Value>().await.unwrap_or_else(|_| json!({}));
+                    if let Some(err) = j.get("error") {
+                        let msg = err.get("message").and_then(|m| m.as_str()).unwrap_or("error");
+                        feed_system(epoch, &format!("YouTube API: {msg}"));
+                        break;
+                    }
+                    if let Some(items) = j.get("items").and_then(|i| i.as_array()) {
+                        for it in items {
+                            parse_youtube_item(epoch, it);
+                        }
+                    }
+                    if let Some(tok) = j.get("nextPageToken").and_then(|v| v.as_str()) {
+                        page_token = tok.to_string();
+                    }
+                    wait = j.get("pollingIntervalMillis").and_then(|v| v.as_u64()).unwrap_or(5000).max(5000);
+                }
+                Err(e) => {
+                    feed_system(epoch, &format!("Poll YouTube gagal: {e}"));
+                    wait = 10000;
+                }
+            }
+            sleep_ms(wait).await;
+        }
+    });
+}
+
+/// Satu item liveChatMessages → feed (chat/donation). Amount superchat =
+/// amountMicros/1e6 + currency.
+fn parse_youtube_item(epoch: u64, it: &Value) {
+    let sn = it.get("snippet").cloned().unwrap_or_else(|| json!({}));
+    let user = it
+        .get("authorDetails")
+        .and_then(|a| a.get("displayName"))
+        .and_then(|v| v.as_str())
+        .or_else(|| sn.get("authorChannelId").and_then(|v| v.as_str()))
+        .unwrap_or("?")
+        .to_string();
+    let kind = sn.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    match kind {
+        "superChatEvent" => {
+            if let Some(d) = sn.get("superChatDetails") {
+                let amt = money(d);
+                let text = d.get("userComment").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                feed_incoming(epoch, "donation", &user, &text, Some(amt));
+            }
+        }
+        "superStickerEvent" => {
+            if let Some(d) = sn.get("superStickerDetails") {
+                feed_incoming(epoch, "donation", &user, "[super sticker]", Some(money(d)));
+            }
+        }
+        "textMessageEvent" => {
+            if let Some(t) = sn.get("textMessageDetails").and_then(|d| d.get("messageText")).and_then(|v| v.as_str()) {
+                let t: String = t.chars().take(400).collect();
+                feed_incoming(epoch, "chat", &user, &t, None);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// amountMicros/1e6 (bulat) + " " + currency.
+fn money(d: &Value) -> String {
+    let micros = d.get("amountMicros").and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))).unwrap_or(0.0);
+    let cur = d.get("currency").and_then(|v| v.as_str()).unwrap_or("");
+    format!("{} {}", (micros / 1e6).round() as i64, cur).trim().to_string()
 }
 
 /// PRNG murah (tanpa dep rand): xorshift dari tick + nanos.
@@ -395,9 +656,24 @@ pub fn start(cfg: Value, config_path: PathBuf) -> (bool, Option<String>) {
     stop();
     let provider = cfg.get("provider").and_then(|v| v.as_str()).unwrap_or("mock").to_string();
 
-    if provider != "mock" {
-        // twitch (IRC WS) & youtube (poll) belum diport ke core.
-        return (false, Some(format!("provider '{provider}' belum diport ke core — pakai 'mock' (twitch/youtube menyusul)")));
+    // Validasi param wajib per provider SEBELUM menyalakan runtime (padanan
+    // vtuber.ts: kembalikan error, jangan menyisakan runtime setengah jalan).
+    let str_of = |k: &str| cfg.get(k).and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    match provider.as_str() {
+        "mock" => {}
+        "twitch" => {
+            let channel = str_of("channel").to_lowercase();
+            let channel = channel.trim_start_matches('#').to_string();
+            if channel.is_empty() {
+                return (false, Some("nama channel Twitch wajib diisi".into()));
+            }
+        }
+        "youtube" => {
+            if str_of("videoId").is_empty() || str_of("apiKey").is_empty() {
+                return (false, Some("videoId live + API key YouTube wajib diisi".into()));
+            }
+        }
+        other => return (false, Some(format!("provider tidak dikenal: {other}"))),
     }
 
     let epoch = epoch_counter().fetch_add(1, Ordering::SeqCst) + 1;
@@ -411,6 +687,18 @@ pub fn start(cfg: Value, config_path: PathBuf) -> (bool, Option<String>) {
 
     let interval_ms = cfg.get("mockIntervalMs").and_then(|v| v.as_u64()).unwrap_or(6000).max(3000);
 
+    // Param provider dihitung sebelum menyimpan runtime (cfg dipindah masuk).
+    let channel = str_of("channel").to_lowercase().trim_start_matches('#').to_string();
+    let token = str_of("apiKey");
+    let nick = if token.is_empty() {
+        format!("justinfan{}", 10000 + (pseudo_rand(epoch) % 89999))
+    } else {
+        let n = str_of("nick");
+        if n.is_empty() { "justinfan12345".to_string() } else { n.to_lowercase() }
+    };
+    let video_id = str_of("videoId");
+    let api_key = token.clone();
+
     {
         let mut g = rt().lock().unwrap();
         let mut r = VtRuntime {
@@ -422,10 +710,18 @@ pub fn start(cfg: Value, config_path: PathBuf) -> (bool, Option<String>) {
             scheduler,
             config_path,
         };
-        push_feed(&mut r, "system", "system", "Mode mock aktif — penonton simulasi (tanpa API key).", None);
+        if provider == "mock" {
+            push_feed(&mut r, "system", "system", "Mode mock aktif — penonton simulasi (tanpa API key).", None);
+        }
         *g = Some(r);
     }
-    spawn_mock(epoch, interval_ms);
+
+    match provider.as_str() {
+        "mock" => spawn_mock(epoch, interval_ms),
+        "twitch" => spawn_twitch(epoch, channel, token, nick),
+        "youtube" => spawn_youtube(epoch, video_id, api_key),
+        _ => {}
+    }
     (true, None)
 }
 
@@ -462,10 +758,16 @@ mod tests {
     async fn start_stop_mock_status() {
         let dir = std::env::temp_dir().join(format!("l2dvt-{}-{}", std::process::id(), now_ms()));
         let cfg_path = fresh_config(&dir);
-        // provider selain mock ditolak
-        let (ok, err) = start(json!({ "provider": "twitch", "channel": "x" }), cfg_path.clone());
+        // validasi param wajib per provider (tanpa menyalakan koneksi nyata)
+        let (ok, err) = start(json!({ "provider": "twitch" }), cfg_path.clone());
         assert!(!ok);
-        assert!(err.unwrap().contains("belum diport"));
+        assert!(err.unwrap().contains("channel Twitch"));
+        let (ok, err) = start(json!({ "provider": "youtube", "videoId": "v" }), cfg_path.clone());
+        assert!(!ok);
+        assert!(err.unwrap().contains("YouTube"));
+        let (ok, err) = start(json!({ "provider": "bogus" }), cfg_path.clone());
+        assert!(!ok);
+        assert!(err.unwrap().contains("tidak dikenal"));
 
         // mock start → running + event system pembuka
         let (ok, _) = start(json!({ "provider": "mock", "mockIntervalMs": 3000 }), cfg_path);

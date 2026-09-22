@@ -64,11 +64,12 @@ sudah selaras dengan arsitektur ini.
    (user bilang hapus manual saat sudah stabil) + blocker Core di SHA lama
    GitHub (risiko sudah diterima user — jangan dibuka lagi).
 
-## UPDATE 2026-09-22 (67) — Stage 3e: runtime VTuber (scheduler + mock) diport ke Rust
+## UPDATE 2026-09-22 (67) — Stage 3e: runtime VTuber (scheduler + 3 provider) diport ke Rust
 
 Melanjutkan migrasi runtime JS→Rust (branch `migration/pixi8-cubism`). Runtime
-mode VTuber kini jalan **tanpa Bun** untuk provider **mock** — jalur verifikasi
-headless sesuai pola batch sebelumnya.
+mode VTuber kini jalan **tanpa Bun** untuk **ketiga provider** (mock/twitch/
+youtube) — koneksi disiapkan penuh (permintaan user: "koneksinya disiapin aja,
+nanti aku tes sendiri kalau udah full rust backendnya").
 
 **Yang diport:**
 - `core/src/vtuber_scheduler.rs` — otak behavior §7 (port `vtuber-scheduler.ts`).
@@ -79,10 +80,17 @@ headless sesuai pola batch sebelumnya.
   Eksekusi LLM + tahan-slot (estimasi bicara) didorong runtime. `estimate_speech_ms`
   padanan `shared/speech-timing.ts`.
 - `core/src/vtuber.rs` — runtime single-active (epoch bump → task lama mati
-  sendiri). Feed 500-event; `push_feed`/`ingest_feed`; task mock (tokio interval,
-  butuh fitur tokio `time`); `spawn_run` (LLM role "chat" → emit agent → sleep
-  speak_ms → finish → drain berikut). Overlay heartbeat (8 dtk). API:
-  status/events/inject/agent_say/operator_say/set_config/start/stop.
+  sendiri). Feed 500-event; `push_feed`/`ingest_feed`/`feed_incoming`/`feed_system`;
+  `spawn_run` (LLM role "chat" → emit agent → sleep speak_ms → finish → drain
+  berikut). Overlay heartbeat (8 dtk). API: status/events/inject/agent_say/
+  operator_say/set_config/start/stop. **Tiga provider:**
+  - `mock` — simulator penonton+donasi (tokio interval, butuh fitur tokio `time`).
+  - `twitch` — IRC over WebSocket (`tokio-tungstenite` + rustls) ke
+    `wss://irc-ws.chat.twitch.tv:443`. Anonim (justinfan) atau token; PING→PONG;
+    parse PRIVMSG (display-name dari tags) → chat; reconnect 5 dtk saat tertutup.
+  - `youtube` — poll `liveChatMessages.list` (reqwest): ambil activeLiveChatId
+    dari `videos.list`, superChat/superSticker → donasi, textMessage → chat,
+    hormati `pollingIntervalMillis` (min 5 dtk).
 - `config.rs`: `save_vtuber_conn` (merge per-field, apiKey masked/kosong
   dipertahankan) + `vtuber_conn_masked` (prefill form, nilai asli tak balik HTTP).
 - `mode.rs`: `set_active` + teardown (pindah dari vtuber → `vtuber::stop()`);
@@ -90,17 +98,28 @@ headless sesuai pola batch sebelumnya.
 - `lib.rs`: 8 rute `/api/vtuber/*` (start/stop/overlay/events/mock-event/conn/
   config/operator) — kontrak identik server Bun.
 
-**Verifikasi:** `cargo test -p live2d-core` → **61 passed** (+11 baru), guard JS
-**416 passed**, `tsc --noEmit` bersih, `cargo check` bersih. Smoke HTTP (PORT
-8361): start mock→ok, `/api/mode` active=vtuber + sub-status vtuber nyata,
-inject chat/operator masuk feed, config persist (conn masked), provider twitch
-ditolak eksplisit, stop→ok. Tanpa panic.
+- `config.rs`: `save_vtuber_conn` (merge per-field, apiKey masked/kosong
+  dipertahankan) + `vtuber_conn_masked` (prefill form, nilai asli tak balik HTTP).
+- `mode.rs`: `set_active` + teardown (pindah dari vtuber → `vtuber::stop()`);
+  `status()` kini memuat `vtuber::status()` nyata (assistant/pet masih stub).
+- `lib.rs`: 8 rute `/api/vtuber/*` (start/stop/overlay/events/mock-event/conn/
+  config/operator) — kontrak identik server Bun. `start` mengisi apiKey asli
+  tersimpan saat form kirim masked/kosong.
+- `Cargo.toml`: `tokio-tungstenite` (default-features off, `connect` +
+  `rustls-tls-webpki-roots`) + fitur tokio `time`.
 
-**Belum diport (menyusul):** provider **twitch** (IRC WebSocket — butuh WS
-client dep) & **youtube** (poll liveChatMessages — butuh kunci live), keduanya
-`start` menolak dgn pesan eksplisit "pakai mock". Balasan LLM VTuber lewat model
-sungguhan (mock tak emit balasan bermakna) belum diuji interaktif — sama batas
-dgn jalur tool assistant.
+**Verifikasi:** `cargo test -p live2d-core` → **61 passed** (+11 baru), guard JS
+**416 passed**, `tsc --noEmit` bersih, `cargo check` bersih. Smoke HTTP:
+- (PORT 8361) mock: start→ok, `/api/mode` active=vtuber + sub-status vtuber
+  nyata, inject chat/operator masuk feed, config persist (conn masked), stop→ok.
+- (PORT 8362) **twitch anonim** ke `#twitch`: feed system "Terhubung ke Twitch
+  #twitch (anonim)" muncul — jalur WS + TLS terverifikasi hidup, tanpa panic.
+- youtube belum di-smoke (butuh videoId live + API key user) — validasi param
+  wajib + parser item ter-cover; user akan uji sendiri dgn kredensial nyata.
+
+**Batas verifikasi:** balasan LLM VTuber lewat model sungguhan (mock tak emit
+balasan bermakna) belum diuji interaktif — sama batas dgn jalur tool assistant.
+Twitch/YouTube dgn kredensial live diuji user saat backend sudah full Rust.
 
 ## UPDATE 2026-09-22 (66) — Stage 2 mulai: penyajian statis Rust (fondasi single-exe)
 

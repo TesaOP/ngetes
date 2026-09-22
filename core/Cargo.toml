@@ -32,6 +32,9 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 futures-util = "0.3"
 tokio-stream = "0.1"
+# Twitch chat = IRC over WebSocket (wss). rustls agar konsisten dgn reqwest
+# (tanpa OpenSSL). YouTube live chat pakai reqwest (poll) — sudah ada.
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 # Engine inferensi native sebagai LIBRARY — TTS SuperTonic dipanggil IN-PROCESS
 # (tanpa sidecar/HTTP). STT (whisper) di belakang feature `engine-stt` karena
 # butuh cmake+libclang; TTS (ort) tidak.
