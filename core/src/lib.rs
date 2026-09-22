@@ -21,6 +21,7 @@ pub mod mode;
 pub mod model;
 pub mod motion_ai;
 pub mod motion_dsl;
+pub mod motion_taxonomy;
 pub mod motions;
 pub mod paths;
 pub mod rescue;
@@ -99,6 +100,7 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/model/analyze-sheet", axum::routing::post(post_analyze_sheet))
         .route("/api/motions/analyze", axum::routing::post(post_motions_analyze))
         .route("/api/motions/generate", axum::routing::post(post_motions_generate))
+        .route("/api/model/motion-taxonomy", get(get_motion_taxonomy).post(post_motion_taxonomy))
         .route("/api/models", get(get_models))
         .route("/api/model/path", get(get_model_path))
         .route("/api/sheet", get(get_sheet_h).post(post_sheet_h))
@@ -873,6 +875,25 @@ async fn put_motion_h(
 async fn post_motions_generate(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
     let (status, out) = motion_ai::generate_motion(&paths.data_dir.join("config.json"), &v).await;
+    json_raw(status, out)
+}
+
+/// GET /api/model/motion-taxonomy?name=X[&force=1] — sajikan cache taksonomi
+/// (klasifikasi dihitung klien; server hanya store/serve — opsi B).
+async fn get_motion_taxonomy(
+    State(paths): State<AppPaths>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let name = q.get("name").map(String::as_str).unwrap_or("");
+    let force = q.get("force").map(String::as_str) == Some("1");
+    let (status, body) = motion_taxonomy::get(&paths.model_dir, &paths.sheets_dir, name, force);
+    json_raw(status, body)
+}
+
+/// POST /api/model/motion-taxonomy {name, ...payload} — simpan hasil klasifikasi klien.
+async fn post_motion_taxonomy(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let (status, out) = motion_taxonomy::store(&paths.model_dir, &paths.sheets_dir, &v);
     json_raw(status, out)
 }
 
