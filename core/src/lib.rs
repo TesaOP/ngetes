@@ -62,6 +62,10 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/mode", get(get_mode).post(post_mode))
         .route("/api/assistant/memory", get(get_memory))
         .route("/api/assistant/memory/forget", axum::routing::post(post_memory_forget))
+        .route("/api/assistant/sessions", get(get_sessions))
+        .route("/api/assistant/sessions/new", axum::routing::post(post_sessions_new))
+        .route("/api/assistant/sessions/switch", axum::routing::post(post_sessions_switch))
+        .route("/api/assistant/sessions/delete", axum::routing::post(post_sessions_delete))
         .route("/api/animate-text", axum::routing::post(post_animate_text))
         .route("/api/model/classify-params", axum::routing::post(post_classify_params))
         .route("/api/model/analyze-sheet", axum::routing::post(post_analyze_sheet))
@@ -164,6 +168,41 @@ async fn post_memory_forget(State(paths): State<AppPaths>, body: axum::body::Byt
     let key = v.get("key").and_then(|x| x.as_str()).unwrap_or("");
     let (status, out) = agent::memory::memory_delete(&paths.root, key);
     json_status(StatusCode::from_u16(status).unwrap_or(StatusCode::OK), out)
+}
+
+/// GET /api/assistant/sessions — daftar sesi (ringkasan).
+async fn get_sessions(State(paths): State<AppPaths>) -> Json<serde_json::Value> {
+    Json(agent::sessions::list(&paths.data_dir))
+}
+
+/// POST /api/assistant/sessions/new {workDir?} — buat sesi baru.
+async fn post_sessions_new(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let work_dir = v.get("workDir").and_then(|x| x.as_str()).unwrap_or("");
+    let rec = agent::sessions::create(&paths.data_dir, work_dir);
+    json_status(StatusCode::OK, json!({ "ok": true, "session": rec }))
+}
+
+/// POST /api/assistant/sessions/switch {id}.
+async fn post_sessions_switch(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
+    match agent::sessions::switch_to(&paths.data_dir, id) {
+        Some(rec) => json_status(StatusCode::OK, json!({ "ok": true, "session": rec })),
+        None => json_status(StatusCode::NOT_FOUND, json!({ "error": "sesi tidak ada" })),
+    }
+}
+
+/// POST /api/assistant/sessions/delete {id}.
+async fn post_sessions_delete(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
+    let (ok, new_active) = agent::sessions::remove(&paths.data_dir, id);
+    if ok {
+        json_status(StatusCode::OK, json!({ "ok": true, "newActive": new_active }))
+    } else {
+        json_status(StatusCode::NOT_FOUND, json!({ "error": "sesi tidak ada" }))
+    }
 }
 
 /// GET /api/mode — status mode (kunci "active" dipakai probe shell Tauri).

@@ -183,8 +183,13 @@ butuh Bun: assistant (agent loop), vtuber, browser, pet, upload/motions-write.
 - `core/src/agent/memory.rs` — port memory.ts: remember/recall/memory_prompt_block/
   memory_list/memory_delete. File `<root>/.agent-memory/memory.json` (BUKAN data/),
   cap 100×1200. Routes GET /api/assistant/memory + POST memory/forget. 40 test
-  cargo hijau (remember/recall/timpa/forget/prompt-block). Menyusul: sessions,
-  undo, tool registry, loop+gate+SSE.
+  cargo hijau (remember/recall/timpa/forget/prompt-block).
+- **batch 3d-2 (sessions)**: `core/src/agent/sessions.rs` — port sessions.ts:
+  load/normalize/create/switch_to/remove + migrasi legacy assistant-history.json,
+  derive_name, cap 20 sesi × 60 history, atomic write. Routes GET
+  /api/assistant/sessions + POST sessions/new|switch|delete (rail projek).
+  42 test cargo hijau (create/switch/remove + migrasi legacy).
+  Menyusul: undo, tool registry, loop+gate+SSE.
 
 ## WIRING Stage 5 (parsial) — shell luncurkan server Rust
 - `core/src/mode.rs` + GET/POST `/api/mode` (kunci "active" utk probe shell
