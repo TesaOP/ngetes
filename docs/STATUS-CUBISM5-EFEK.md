@@ -167,7 +167,13 @@ Tujuan user: **melepas runtime JS**. Tercapai untuk permukaan inti:
   GET / → index.html (200), /api/models identik, **/api/tts → 282 KB WAV
   in-process** (3s termasuk cold-load model, ~1.4s setelahnya). Log:
   `[core] server HTTP in-process siap`.
-- STT (whisper) in-process di belakang feature `engine-stt` (butuh cmake+LLVM).
+- **STT (whisper) in-process** di belakang feature `engine-stt`: `media.rs`
+  +transcribe_stt (decode WAV → live2d_engine::stt::Whisper, cache model,
+  spawn_blocking), route POST /api/stt (local→in-process; tanpa feature→503).
+  **Smoke roundtrip TANPA Bun** (`live2d-core.exe --features engine-stt`):
+  TTS "tes" → WAV → /api/stt → `{"text":"des"}` (model base, transkrip nyata).
+  **Voice I/O (TTS+STT) kini Rust-only in-process.** Build default (tanpa feature)
+  → /api/stt 503; build `--features engine-stt` → in-process penuh.
 
 Artinya: aplikasi inti (render + config + models + sheet + ekspresi + motions +
 chat/LLM + streaming + TTS) **berjalan penuh di Rust tanpa Bun**. Sisa yang masih

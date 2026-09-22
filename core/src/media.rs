@@ -81,6 +81,55 @@ pub fn tts_voice_lang(config_path: &Path) -> (String, String) {
     (voice, lang)
 }
 
+// ── STT in-process (whisper) — di belakang feature engine-stt (cmake+LLVM) ──
+#[cfg(feature = "engine-stt")]
+static STT_ENGINE: OnceLock<Mutex<Option<live2d_engine::stt::Whisper>>> = OnceLock::new();
+
+/// Path model GGML whisper: engines/models/ggml-<name>.bin (release) atau
+/// engine/models/ggml-<name>.bin (dev). None bila tak ada.
+#[cfg(feature = "engine-stt")]
+fn stt_model_path(paths: &AppPaths, name: &str) -> Option<PathBuf> {
+    let clean: String = name.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '.' || *c == '-').collect();
+    for base in [paths.root.join("engines").join("models"), paths.root.join("engine").join("models")] {
+        let p = base.join(format!("ggml-{clean}.bin"));
+        if p.exists() {
+            return Some(p);
+        }
+    }
+    None
+}
+
+/// Transkripsi STT in-process (whisper). `audio_wav` = byte WAV; lang mis "id".
+/// Hanya tersedia bila di-compile dgn feature engine-stt.
+#[cfg(feature = "engine-stt")]
+pub async fn transcribe_stt(paths: &AppPaths, audio_wav: Vec<u8>, lang: String, model_name: String) -> Result<String, String> {
+    let model_path = stt_model_path(paths, &model_name)
+        .ok_or_else(|| format!("model whisper ggml-{model_name}.bin belum ada (unduh dulu)"))?;
+    tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let (samples, sr) = live2d_engine::wav::decode_pcm16(&audio_wav)?;
+        let cell = STT_ENGINE.get_or_init(|| Mutex::new(None));
+        let mut guard = cell.lock().map_err(|_| "lock STT")?;
+        if guard.is_none() {
+            *guard = Some(live2d_engine::stt::Whisper::load(&model_path)?);
+        }
+        let lang_opt = if lang.is_empty() { None } else { Some(lang.as_str()) };
+        guard.as_ref().unwrap().transcribe(&samples, sr, lang_opt)
+    })
+    .await
+    .map_err(|e| format!("task STT gagal: {e}"))?
+}
+
+/// STT provider + model dari config.stt (fallback local / base).
+pub fn stt_provider_model(config_path: &Path) -> (String, String, String) {
+    let cfg = config::load(config_path);
+    let stt = cfg.get("stt").cloned().unwrap_or_default();
+    let provider = stt.get("provider").and_then(|v| v.as_str()).unwrap_or("local").to_string();
+    let model = stt.get("engineModel").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).unwrap_or("base").to_string();
+    let raw_lang = stt.get("language").and_then(|v| v.as_str()).unwrap_or("auto");
+    let lang = if raw_lang == "indonesian" { "id" } else { raw_lang }.to_string();
+    (provider, model, lang)
+}
+
 /// Daftar voice style tersedia (nama file voice_styles/*.json), untuk katalog.
 pub fn tts_voices(paths: &AppPaths) -> Vec<String> {
     let dir = tts_model_dir(paths).join("voice_styles");

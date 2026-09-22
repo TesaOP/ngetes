@@ -56,6 +56,7 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/chat", axum::routing::post(post_chat))
         .route("/api/chat-stream", axum::routing::post(post_chat_stream))
         .route("/api/tts", axum::routing::post(post_tts))
+        .route("/api/stt", axum::routing::post(post_stt))
         .route("/api/animate-text", axum::routing::post(post_animate_text))
         .route("/api/model/classify-params", axum::routing::post(post_classify_params))
         .route("/api/model/analyze-sheet", axum::routing::post(post_analyze_sheet))
@@ -144,6 +145,30 @@ async fn post_tts(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Res
             .body(Body::from(buf))
             .unwrap(),
         Err(e) => json_status(StatusCode::BAD_GATEWAY, json!({ "error": format!("TTS error: {e}") })),
+    }
+}
+
+/// POST /api/stt — transkripsi audio WAV. Provider "local" = whisper in-process
+/// (butuh build feature engine-stt); tanpa feature → 503. Cloud (openai) belum.
+async fn post_stt(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let (provider, model, lang) = media::stt_provider_model(&paths.data_dir.join("config.json"));
+    if provider != "local" {
+        return json_status(StatusCode::NOT_IMPLEMENTED, json!({ "error": format!("STT provider '{provider}' belum diport ke core") }));
+    }
+    if body.is_empty() {
+        return json_status(StatusCode::BAD_REQUEST, json!({ "error": "audio kosong" }));
+    }
+    #[cfg(feature = "engine-stt")]
+    {
+        match media::transcribe_stt(&paths, body.to_vec(), lang, model).await {
+            Ok(text) => json_status(StatusCode::OK, json!({ "text": text })),
+            Err(e) => json_status(StatusCode::BAD_GATEWAY, json!({ "error": format!("STT error: {e}") })),
+        }
+    }
+    #[cfg(not(feature = "engine-stt"))]
+    {
+        let _ = (model, lang);
+        json_status(StatusCode::SERVICE_UNAVAILABLE, json!({ "error": "STT native tidak dikompilasi (build dgn --features engine-stt)" }))
     }
 }
 
