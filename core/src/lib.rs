@@ -16,6 +16,7 @@ pub mod expressions;
 pub mod jsonx;
 pub mod llm;
 pub mod media;
+pub mod mode;
 pub mod model;
 pub mod motion_ai;
 pub mod motions;
@@ -57,6 +58,7 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/chat-stream", axum::routing::post(post_chat_stream))
         .route("/api/tts", axum::routing::post(post_tts))
         .route("/api/stt", axum::routing::post(post_stt))
+        .route("/api/mode", get(get_mode).post(post_mode))
         .route("/api/animate-text", axum::routing::post(post_animate_text))
         .route("/api/model/classify-params", axum::routing::post(post_classify_params))
         .route("/api/model/analyze-sheet", axum::routing::post(post_analyze_sheet))
@@ -146,6 +148,18 @@ async fn post_tts(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Res
             .unwrap(),
         Err(e) => json_status(StatusCode::BAD_GATEWAY, json!({ "error": format!("TTS error: {e}") })),
     }
+}
+
+/// GET /api/mode — status mode (kunci "active" dipakai probe shell Tauri).
+async fn get_mode() -> Json<serde_json::Value> {
+    Json(mode::status())
+}
+
+/// POST /api/mode {mode} — set mode aktif.
+async fn post_mode(body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    let (status, out) = mode::set_mode(&v);
+    json_status(StatusCode::from_u16(status).unwrap_or(StatusCode::OK), out)
 }
 
 /// POST /api/stt — transkripsi audio WAV. Provider "local" = whisper in-process

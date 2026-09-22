@@ -34,6 +34,9 @@ const OUT_DIR_NAME = "Live2D-Agent";
 const OUT = join(REPO, "dist", OUT_DIR_NAME);
 const SHELL_EXE = join(REPO, "agent-shell", "target", "release", "live2d-shell.exe");
 const ENGINE_EXE = join(REPO, "engine", "target", "release", "live2d-engine.exe");
+// Server Rust in-process (tujuan lepas runtime JS). Bila ada, shell Tauri
+// mengutamakannya (sibling_server), menggantikan live2d-agent.exe (Bun).
+const CORE_EXE = join(REPO, "target", "release", "live2d-core.exe");
 
 const BUN = process.execPath; // bun.exe saat dev — dipakai lagi sebagai driver build
 
@@ -110,6 +113,21 @@ if (existsSync(ENGINE_EXE)) {
   console.log("        [i] live2d-engine.exe belum dibangun —");
   console.log("            cd engine && cargo build --release --features stt");
   console.log("            (tanpa ini, TTS/STT native nonaktif; provider cloud tetap jalan)");
+}
+
+// 4c) Server Rust in-process (live2d-core.exe) — tujuan lepas runtime JS.
+// Bila sudah dibangun (cargo build --release -p live2d-core), disalin & shell
+// mengutamakannya. TTS in-process; STT butuh build --features engine-stt.
+if (existsSync(CORE_EXE)) {
+  const dst = join(OUT, "live2d-core.exe");
+  cpSync(CORE_EXE, dst);
+  const mb = (statSync(dst).size / 1024 / 1024).toFixed(1);
+  console.log(`        [OK] live2d-core.exe (${mb} MB) — server Rust in-process (shell mengutamakannya)`);
+} else {
+  console.log("        [i] live2d-core.exe belum dibangun — jalankan:");
+  console.log("            cargo build --release -p live2d-core   (TTS in-process)");
+  console.log("            cargo build --release -p live2d-core --features engine-stt   (+STT)");
+  console.log("            Tanpa ini, shell pakai live2d-agent.exe (Bun) untuk semua mode.");
 }
 
 writeFileSync(

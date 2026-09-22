@@ -177,7 +177,21 @@ Tujuan user: **melepas runtime JS**. Tercapai untuk permukaan inti:
 
 Artinya: aplikasi inti (render + config + models + sheet + ekspresi + motions +
 chat/LLM + streaming + TTS) **berjalan penuh di Rust tanpa Bun**. Sisa yang masih
-butuh Bun: assistant (agent loop), vtuber, browser, pet, STT, upload/motions-write.
+butuh Bun: assistant (agent loop), vtuber, browser, pet, upload/motions-write.
+
+## WIRING Stage 5 (parsial) — shell luncurkan server Rust
+- `core/src/mode.rs` + GET/POST `/api/mode` (kunci "active" utk probe shell
+  is_our_server + boot mode-runtime.js; sub-status vtuber/assistant/pet stub).
+- `agent-shell/main.rs::sibling_server()` kini **mengutamakan live2d-core.exe**
+  (lalu live2d-agent.exe fallback) — shell Tauri menyalakan server RUST.
+- `dist.ts` [4c]: salin `target/release/live2d-core.exe` bila ada (shell
+  mengutamakannya) — menggantikan live2d-agent.exe (Bun) di release.
+- Gate: tsc + cargo check shell + 416 guard hijau.
+
+**Cara pakai lepas-JS**: `cargo build --release -p live2d-core` (+`--features
+engine-stt` utk STT) → shell (atau `PORT=8310 live2d-core.exe`) menyajikan app
+penuh TANPA Bun untuk mode Stage (render+chat+voice). Mode assistant/vtuber/
+browser/pet masih perlu Bun sampai runtime-nya diport.
 
 ## Stage 3 MULAI (batch 3a) — LLM client + /api/chat
 - `core/src/llm.rs` — port llm-client (jalur non-stream): call_llm multi-provider

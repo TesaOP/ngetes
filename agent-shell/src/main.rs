@@ -170,7 +170,9 @@ fn pick_port() -> u16 {
 /// dev — di sana server dinyalakan start.bat / `bun run dev` secara terpisah.
 fn sibling_server() -> Option<PathBuf> {
     let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    for name in ["live2d-agent.exe", "live2d-agent"] {
+    // Utamakan server Rust in-process (live2d-core) — tujuan lepas runtime JS;
+    // fallback ke server Bun (live2d-agent) untuk mode yang belum diport.
+    for name in ["live2d-core.exe", "live2d-core", "live2d-agent.exe", "live2d-agent"] {
         let p = dir.join(name);
         if p.is_file() {
             return Some(p);
