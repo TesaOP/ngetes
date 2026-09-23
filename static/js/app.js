@@ -9,12 +9,35 @@
   // .model3.json → Cubism Core native → PixiJS 8. Tidak ada byte-stamp lagi.
 
   // server.js honours process.env.PORT, so a hardcoded :8310 silently breaks every
-  // fetch the moment the server runs on any other port. The page is always served
-  // BY that same server, so location.origin is correct by construction.
-  // The literal survives only as a file:// fallback (opening index.html directly).
-  const API = (typeof location !== 'undefined' && /^https?:$/.test(location.protocol))
+  // fetch the moment the server runs on any other port. Dev (browser): halaman
+  // disajikan server yang sama → location.origin benar by construction.
+  // Produksi (satu binary): halaman di-embed (origin tauri.localhost) → API
+  // harus loopback proses-sendiri; port ditemukan via IPC `server_port`
+  // (refreshApiBase, sekali saat boot). Literal hanya fallback file://.
+  let API = (typeof location !== 'undefined' && /^https?:$/.test(location.protocol))
     ? location.origin
     : 'http://127.0.0.1:8310';
+  // Samakan basis HTTP dengan seam transport (bundle.js): embedded →
+  // loopback:port (async IPC sekali, di-cache); dev → tanpa perubahan.
+  // Dipanggil fire-forget saat eval + await di boot sebelum fetch pertama.
+  let __apiBaseReady = null;
+  function refreshApiBase() {
+    if (!__apiBaseReady) {
+      __apiBaseReady = (async () => {
+        try {
+          const w = window.__transport;
+          if (w && typeof w.initLoopback === 'function') {
+            await w.initLoopback();
+            const b = w.httpBase();
+            if (b) API = b;
+          }
+        } catch (e) {}
+        return API;
+      })();
+    }
+    return __apiBaseReady;
+  }
+  refreshApiBase();
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
   const state = {
@@ -449,7 +472,7 @@
 
       settings.url = new URL(
         modelPath.split("/").map(encodeURIComponent).join("/"),
-        location.href,
+        API + "/",
       ).href;
       console.log(
         "[exp3] adopted",
@@ -540,7 +563,12 @@
       // supaya model dengan deklarasi kosong (mis. lumine/神宫白子) tetap
       // punya ekspresi (in-memory, tidak pernah ke disk).
       await window.__live2dViewWait;
-      state.model = await window.__live2dView.loadModel(modelPath, settings);
+      // Satu-exe: loader butuh URL absolut loopback (halaman ter-embed bukan
+      // origin loopback). Tekstur/motion relatif menurun dari URL ini.
+      const modelUrl = /^https?:\/\//.test(modelPath)
+        ? modelPath
+        : API + "/" + String(modelPath).replace(/^\/+/, "");
+      state.model = await window.__live2dView.loadModel(modelUrl, settings);
       // Kepemilikan efek: framework memutar blink/breath/gaze/lipsync,
       // app.js tetap pemegang pintu konfigurasi — gate dibaca live updater
       // tiap frame.
@@ -6113,6 +6141,9 @@
   wireUI();
 
   (async () => {
+    // Satu-exe: pastikan basis HTTP sudah loopback proses-sendiri (IPC
+    // server_port) sebelum fetch boot pertama.
+    await refreshApiBase();
     const q = new URLSearchParams(location.search).get("model");
     if (q) {
       try {

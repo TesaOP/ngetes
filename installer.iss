@@ -20,7 +20,7 @@
 ;     (dan menawarkan membuka halaman unduhan) bila runtime tidak ditemukan.
 
 #define MyAppName "Live2D Agent"
-#define MyAppExeName "live2d-shell.exe"
+#define MyAppExeName "Companion.exe"
 
 #ifndef APP_VERSION
   #define APP_VERSION "2.0.0"
@@ -51,7 +51,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-; Satu baris wildcard — isi dist/Live2D-Agent/ utuh: 2 exe + static/ + BACA-SAYA.txt
+; Satu baris wildcard — isi dist/Live2D-Agent/ utuh: exe + static/ + BACA-SAYA.txt
 Source: "dist\Live2D-Agent\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]

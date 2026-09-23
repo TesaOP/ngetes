@@ -215,32 +215,27 @@ actor / view / panel) di-bundle ke `bundle.js` sebagai `window.__agentPanel`;
 - Kontrak lama utuh: CLI `bun run agent` memakai runtime yang sama; panel
   hanya LAYAR — destroy() melepas UI, runtime tetap hidup.
 
-## Desktop Pet (`src/server/pet.ts` + `static/pet.html`)
+## Desktop Pet (`core/src/pet.rs` + `static/pet.html`)
 
 Web murni tidak bisa menembus desktop; pet berjalan di jendela aplikasi
-terpisah. Peluncur memilih cangkang otomatis:
+terpisah. SATU PROSES: pet adalah window Tauri KEDUA ("pet") dalam
+`Companion.exe` yang sama — dibuka/tutup lewat `/api/pet/launch|close`
+(server in-process memanggil balik bridge `register_pet_host` dari shell;
+tutup-oleh-user disinkronkan via `notify_closed`). Tak ada proses kedua,
+tak ada mode CLI `pet` lagi.
 
-1. **Shell Tauri** (`agent-shell/target/release/live2d-shell.exe`, dibangun dengan
-   `bun run build:pet`) — jendela WebView2 transparan melayang di desktop,
-   always-on-top native, tanpa frame, tanpa taskbar (±40-90MB RAM). Server
-   menjalankan `live2d-shell.exe pet http://127.0.0.1:<PORT>/pet.html`.
-   Shell yang sama juga membuka **jendela utama** app (`live2d-shell.exe main
-   <url>`, dipakai start.bat) — jendela berdekorasi normal, dan menunggu
-   server bind (maks 15 dtk) sebelum membuat jendela. Di folder release
-   portable (`bun run dist` → `dist/Live2D-Agent/`) hubungannya dibalik:
-   shell jadi **sidecar** — bila port masih kosong dan `live2d-agent.exe`
-   ada di sampingnya, shell menyalakan server sendiri dan mematikannya saat
-   aplikasi ditutup, jadi user cukup dobel-klik shell.
-   - Klik-tembus: toggle "Klik Tembus" di panel Pet (atau tombol di bar pet)
-     → `POST /api/pet/clickthrough {on}` → pet page memanggil Tauri
-     `setIgnoreCursorEvents`. Saat menyala, klik menembus ke desktop; satu-
-     satunya jalan keluar adalah toggle yang sama di app utama.
-2. **Fallback Chrome/Edge** (jika exe Tauri belum dibangun) — cari Chrome/Edge
-   (path resmi + LOCALAPPDATA), lalu spawn
-   `<exe> --app=http://127.0.0.1:<PORT>/pet.html --window-size=420,640`.
-   Always-on-top via PowerShell `SetWindowPos(hwnd, -1, …, 0x0041)` (Win32
-   resmi) 2,5 dtk setelah spawn — flag CLI Chromium tidak punya always-on-top.
-   Jendela ini opaque dan tanpa klik-tembus.
+1. **Window pet in-process** — WebView2 transparan melayang di desktop,
+   always-on-top native, tanpa frame, tanpa taskbar. Jendela utama
+   (`Companion.exe [main <url>]`, dipakai start.bat) berdekorasi normal dan
+   menunggu server bind (maks 15 dtk) sebelum membuat jendela.
+    - Klik-tembus: toggle "Klik Tembus" di panel Pet (atau tombol di bar pet)
+      → `POST /api/pet/clickthrough {on}` → pet page memanggil Tauri
+      `setIgnoreCursorEvents`. Saat menyala, klik menembus ke desktop; satu-
+      satunya jalan keluar adalah toggle yang sama di app utama.
+2. **Fallback (hanya bila core jalan TANPA shell — dev `cargo run -p
+   live2d-core`)**: spawn `Companion.exe` sebagai proses pet (transparan),
+   lalu Chrome/Edge `--app` (opaque, always-on-top via PowerShell
+   `SetWindowPos`, tanpa klik-tembus).
 3. `pet.html` — adapter view stack baru (importmap pixi8.mjs +
    `js/live2d-view.mjs`; model lewat `__live2dView.loadModel`). Blink/breath
    diputar framework; gaze kursor via `setLookTarget(±1)` — semua sendi

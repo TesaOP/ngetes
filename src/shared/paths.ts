@@ -1,15 +1,19 @@
 /**
  * shared/paths.ts — resolusi akar aplikasi untuk dua mode jalan:
  *
- *   dev      : `bun run src/server/index.ts` / `bun test` — akar = folder repo
- *              (static/index.html ada dua tingkat di atas modul ini).
- *   compiled : `bun build --compile` → exe mandiri (folder release portable) —
+ *   dev      : `bun run dev` (cargo run -p live2d-core) / `bun test` —
+ *              akar = folder repo (static/index.html ada dua tingkat di atas
+ *              modul ini).
+ *   compiled : exe mandiri (folder release portable) —
  *              akar = folder tempat exe berada; static/ & data/ hidup di
  *              sampingnya. PENTING: import.meta.dir di exe hasil compile TIDAK
  *              menunjuk folder exe (dialihkan ke direktori virtual Bun), dan
  *              Bun.embeddedFiles juga terdefinisi ([] saja) di runtime biasa —
  *              jadi satu-satunya penanda yang bisa diandalkan adalah
  *              process.execPath + keberadaan static/index.html.
+ *
+ * CATATAN satu-jalur: file ini dipakai kode TS dev/test saja. Backend produksi
+ * adalah Rust (core/src/paths.rs — AppPaths::detect, padanan fungsi ini).
  */
 import { existsSync } from "fs";
 import { dirname, join } from "path";

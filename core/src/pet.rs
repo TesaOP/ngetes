@@ -1,26 +1,62 @@
 //! pet.rs — Peluncur jendela overlay Desktop Pet, port `src/server/pet.ts`.
 //! Web tak bisa menembus batas browser, jadi pet jalan di jendela terpisah
 //! always-on-top + transparan. Urutan peluncur:
-//!   1. Shell Tauri (live2d-shell.exe "pet" url) — transparan + klik-tembus.
-//!   2. Chrome/Edge --app (opaque, always-on-top via PowerShell) — fallback.
+//!   1. Window Tauri in-process (didaftarkan shell Companion via
+//!      register_pet_host) — jendela kedua dalam PID yang sama, transparan +
+//!      klik-tembus. JALUR PRODUKSI.
+//!   2. Companion.exe "pet" (spawn proses) — fallback bila core jalan TANPA
+//!      shell (dev `cargo run -p live2d-core` + browser).
+//!   3. Chrome/Edge --app (opaque, always-on-top via PowerShell) — fallback
+//!      terakhir bila exe Companion tak ditemukan.
+//!
+//! HTTP routes & state TIDAK BERUBAH (status/clickthrough/close sama persis);
+//! yang diganti hanya TRANSPORT peluncuran #1 (callback, bukan spawn).
 
 use std::path::Path;
 use std::process::Child;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::{json, Value};
+
+/// Pengendali jendela pet in-process (diisi shell sekali saat boot).
+/// Core tak boleh depend ke Tauri — arah dependensi tetap shell → core.
+pub struct PetHost {
+    pub open: Arc<dyn Fn() -> bool + Send + Sync>,
+    pub close: Arc<dyn Fn() + Send + Sync>,
+}
+
+static PET_HOST: OnceLock<PetHost> = OnceLock::new();
+
+/// Daftarkan pembuka/penutup jendela pet in-process (dipanggil shell sekali
+/// di setup; idempoten — pendaftaran kedua diabaikan).
+pub fn register_pet_host(host: PetHost) -> bool {
+    PET_HOST.set(host).is_ok()
+}
+
+/// Dipanggil shell saat jendela pet in-process ditutup user (sinkron state —
+/// padanan deteksi proses-mati di status() untuk jalur spawn).
+pub fn notify_closed() {
+    let mut s = state().lock().unwrap();
+    if s.in_process {
+        s.in_process = false;
+        s.click_through = false;
+        s.shell = None;
+    }
+}
 
 struct PetState {
     proc: Option<Child>,
     pid: Option<u32>,
     helper_pid: Option<u32>,
+    /// true bila pet = window in-process (bukan proses anak).
+    in_process: bool,
     click_through: bool,
     shell: Option<&'static str>, // "tauri" | "browser"
 }
 
 impl Default for PetState {
     fn default() -> Self {
-        PetState { proc: None, pid: None, helper_pid: None, click_through: false, shell: None }
+        PetState { proc: None, pid: None, helper_pid: None, in_process: false, click_through: false, shell: None }
     }
 }
 
@@ -30,9 +66,11 @@ fn state() -> &'static Mutex<PetState> {
 }
 
 fn shell_candidates(root: &Path) -> Vec<std::path::PathBuf> {
+    // Workspace Cargo: target terpusat di root (bukan agent-shell/target).
     vec![
-        root.join("live2d-shell.exe"),
-        root.join("agent-shell").join("target").join("release").join("live2d-shell.exe"),
+        root.join("Companion.exe"),
+        root.join("target").join("release").join("Companion.exe"),
+        root.join("target").join("debug").join("Companion.exe"),
     ]
 }
 
@@ -47,7 +85,8 @@ fn taskkill(pid: u32) {
 /// GET /api/pet/state — status jendela pet.
 pub fn status() -> Value {
     let mut s = state().lock().unwrap();
-    // Proses bisa mati sendiri (user tutup) → sinkronkan.
+    // Proses bisa mati sendiri (user tutup) → sinkronkan. Window in-process
+    // disinkronkan via notify_closed() dari shell (event Destroyed).
     let dead = s.proc.as_mut().map(|p| matches!(p.try_wait(), Ok(Some(_)))).unwrap_or(false);
     if dead {
         s.proc = None;
@@ -57,7 +96,7 @@ pub fn status() -> Value {
         s.shell = None;
     }
     json!({
-        "running": s.proc.is_some() || s.pid.is_some(),
+        "running": s.proc.is_some() || s.pid.is_some() || s.in_process,
         "clickThrough": s.click_through,
         "shell": s.shell,
     })
@@ -72,6 +111,17 @@ pub fn set_click_through(on: bool) -> Value {
 
 /// POST /api/pet/close — tutup jendela pet.
 pub fn close() -> Value {
+    // Window in-process dulu (kasus produksi) — lalu sisa proses fallback.
+    if state().lock().unwrap().in_process {
+        if let Some(host) = PET_HOST.get() {
+            (host.close)();
+        }
+        let mut s = state().lock().unwrap();
+        s.in_process = false;
+        s.click_through = false;
+        s.shell = None;
+        return json!({ "ok": true });
+    }
     let mut s = state().lock().unwrap();
     if let Some(mut p) = s.proc.take() {
         let _ = p.kill();
@@ -88,11 +138,23 @@ pub fn close() -> Value {
 }
 
 /// POST /api/pet/launch — luncurkan jendela pet (port = server). {ok, how} / {ok:false, error}.
+/// Bentuk respons & state IDENTIK di semua jalur; hanya transport yang beda.
 pub fn launch(root: &Path, port: u16) -> Value {
     close();
+    // Jalur 1 (produksi): window in-process via host terdaftar.
+    if let Some(host) = PET_HOST.get() {
+        if (host.open)() {
+            let mut s = state().lock().unwrap();
+            s.in_process = true;
+            s.click_through = false;
+            s.shell = Some("tauri");
+            return json!({ "ok": true, "how": "tauri-window (in-process, satu PID)" });
+        }
+        eprintln!("[pet] window in-process gagal dibuka — jatuh ke fallback spawn");
+    }
     let url = format!("http://127.0.0.1:{port}/pet.html");
 
-    // Shell 1: Tauri (transparan + klik-tembus).
+    // Jalur 2: spawn Companion.exe "pet" (dev core tanpa shell).
     if let Some(shell) = find_shell_exe(root) {
         match std::process::Command::new(&shell).args(["pet", &url]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
             Ok(child) => {
@@ -108,7 +170,7 @@ pub fn launch(root: &Path, port: u16) -> Value {
         }
     }
 
-    // Shell 2: Chrome/Edge --app (fallback nol-build).
+    // Jalur 3: Chrome/Edge --app (fallback nol-build).
     let exe = match crate::browser::find_chromium() {
         Some(e) => e,
         None => {

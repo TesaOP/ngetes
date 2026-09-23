@@ -47,7 +47,7 @@ use serde_json::json;
 use paths::AppPaths;
 use static_serve::{mime_for, safe_join, Resolved};
 
-/// Versi core — dipakai command Tauri `app_info` + endpoint `/api/version`.
+/// Versi core — dipakai endpoint `/api/version` (satu jalur HTTP).
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Placeholder Stage 0: bukti crate ter-link.
@@ -62,6 +62,7 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/health", get(health))
         .route("/api/version", get(version))
         .route("/api/config", get(get_config).post(post_config))
+        .route("/api/test", axum::routing::post(post_test))
         .route("/api/chat", axum::routing::post(post_chat))
         .route("/api/chat-stream", axum::routing::post(post_chat_stream))
         .route("/api/tts", axum::routing::post(post_tts))
@@ -134,8 +135,12 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/model/upload", axum::routing::post(post_model_upload))
         .route("/api/model/import-zip", axum::routing::post(post_import_zip))
         .route("/api/model/{name}", axum::routing::delete(delete_model_h))
-        .route("/api/motions", get(get_motions_list))
+        .route("/api/motions", get(get_motions_list).post(post_motions_h))
         .route("/api/motions/{id}", get(get_motion_h).put(put_motion_h).delete(del_motion_h))
+        // Adapter HTTP = eksternal/bridge (CLI, OBS, dev browser, + domain yang
+        // belum migrasi IPC). Loopback saja; CORS permisif supaya frontend
+        // ter-embed (origin tauri.localhost) tetap bisa memakainya.
+        .layer(tower_http::cors::CorsLayer::permissive())
         .fallback(static_handler)
         .with_state(paths)
 }
@@ -163,6 +168,65 @@ async fn post_config(State(paths): State<AppPaths>, body: axum::body::Bytes) -> 
             json_raw(status, out)
         }
         None => json_status(StatusCode::BAD_REQUEST, json!({ "error": "body JSON rusak" })),
+    }
+}
+
+/// POST /api/test {connection} — uji satu koneksi LLM (padanan
+/// handleTestConnection TS). Hasil WAJIB menulis testStatus/lastError ke
+/// koneksi tersimpan supaya badge panel ikut berubah; gagal test TIDAK
+/// menyetel cooldown (itu hak classifier trafik nyata).
+async fn post_test(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = match serde_json::from_slice(&body).ok() {
+        Some(v) => v,
+        None => return json_status(StatusCode::BAD_REQUEST, json!({ "error": "body JSON rusak" })),
+    };
+    let mut conn = v.get("connection").cloned().unwrap_or(json!({}));
+    let cfg_path = paths.data_dir.join("config.json");
+    let cfg = config::load(&cfg_path);
+    let mut conns: Vec<serde_json::Value> = cfg
+        .get("connections")
+        .and_then(|c| c.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let active_id = cfg.get("activeId").cloned().unwrap_or(serde_json::Value::Null);
+    let cid = conn.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let stored_idx = conns.iter().position(|c| c.get("id").and_then(|x| x.as_str()) == Some(cid.as_str()));
+    // Kunci asli tersimpan menang (form hanya membawa mask/placeholder).
+    if let Some(i) = stored_idx {
+        if let Some(k) = conns[i].get("apiKey").cloned() {
+            if let Some(o) = conn.as_object_mut() {
+                o.insert("apiKey".into(), k);
+            }
+        }
+    }
+    let provider = conn.get("provider").and_then(|x| x.as_str()).unwrap_or("openai-compatible").to_lowercase();
+    let key = conn.get("apiKey").and_then(|x| x.as_str()).unwrap_or("");
+    if provider != "mock" && (key.is_empty() || key.starts_with("MASUKKAN")) {
+        return json_status(StatusCode::BAD_REQUEST, json!({ "valid": false, "error": "apiKey belum diisi" }));
+    }
+    let probe = vec![llm::ChatMessage { role: "user".into(), content: "Reply with just: OK".into() }];
+    match llm::call_llm(&conn, &probe, "").await {
+        Ok(reply) => {
+            if let Some(i) = stored_idx {
+                if let Some(o) = conns[i].as_object_mut() {
+                    o.insert("testStatus".into(), json!("success"));
+                    o.insert("lastError".into(), json!(""));
+                }
+                let _ = config::save_connections(&cfg_path, conns, active_id);
+            }
+            let short: String = reply.chars().take(80).collect();
+            json_status(StatusCode::OK, json!({ "valid": true, "reply": short }))
+        }
+        Err(e) => {
+            if let Some(i) = stored_idx {
+                if let Some(o) = conns[i].as_object_mut() {
+                    o.insert("testStatus".into(), json!("error"));
+                    o.insert("lastError".into(), json!(e.message.clone()));
+                }
+                let _ = config::save_connections(&cfg_path, conns, active_id);
+            }
+            json_status(StatusCode::OK, json!({ "valid": false, "error": e.message }))
+        }
     }
 }
 
@@ -490,8 +554,7 @@ async fn post_mode(body: axum::body::Bytes) -> Response {
 // ── Pet overlay window ──────────────────────────────────────────────────────
 
 async fn post_pet_launch(State(paths): State<AppPaths>) -> Response {
-    let port: u16 = std::env::var("PORT").ok().and_then(|s| s.parse().ok()).unwrap_or(8310);
-    json_status(StatusCode::OK, pet::launch(&paths.root, port))
+    json_status(StatusCode::OK, pet::launch(&paths.root, server_port()))
 }
 
 async fn post_pet_close() -> Response {
@@ -1055,6 +1118,28 @@ async fn post_motions_generate(State(paths): State<AppPaths>, body: axum::body::
     json_raw(status, out)
 }
 
+/// POST /api/motions — buat motion baru (padanan handleMotionsPost TS).
+/// Sanitasi lewat motion_dsl lalu tulis; 409 bila id sudah ada (pakai PUT
+/// untuk timpa/Simpan).
+async fn post_motions_h(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = match serde_json::from_slice(&body).ok() {
+        Some(v) => v,
+        None => return json_status(StatusCode::BAD_REQUEST, json!({ "error": "body JSON rusak" })),
+    };
+    let model_key = v.get("model").and_then(|x| x.as_str()).filter(|s| !s.is_empty()).unwrap_or("default").to_string();
+    // raw = body.motion || body.
+    let raw = v.get("motion").cloned().unwrap_or_else(|| v.clone());
+    let src_model = raw.get("sourceModelId").and_then(|x| x.as_str()).map(String::from).unwrap_or_else(|| model_key.clone());
+    match motion_dsl::sanitize_motion_asset(&raw, &motion_dsl::SanitizeOpts { require_tracks: true, source: Some("user".into()), source_model_id: Some(src_model) }) {
+        Ok(asset) => {
+            let id = asset.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let (status, out) = motions::create_motion(&paths.motions_dir, &model_key, &id, &asset);
+            json_raw(status, out)
+        }
+        Err(errs) => json_status(StatusCode::BAD_REQUEST, json!({ "error": format!("motion invalid: {}", errs.join("; ")) })),
+    }
+}
+
 /// GET /api/model/motion-taxonomy?name=X[&force=1] — sajikan cache taksonomi
 /// (klasifikasi dihitung klien; server hanya store/serve — opsi B).
 async fn get_motion_taxonomy(
@@ -1159,11 +1244,29 @@ fn json_status(status: StatusCode, v: serde_json::Value) -> Response {
         .unwrap()
 }
 
-/// Jalankan server core di loopback `127.0.0.1:<port>`. Blocking sampai shutdown.
+/// Port loopback yang NYATA di-bind server ini (diisi serve(); dibaca
+/// peluncur pet — env PORT saja tak cukup karena shell bisa bergeser port
+/// bila default diduduki aplikasi asing).
+static SERVER_PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+
+/// Port aktual server. Urutan: bind serve() → env PORT → 8310.
+pub fn server_port() -> u16 {
+    if let Some(p) = SERVER_PORT.get() {
+        return *p;
+    }
+    std::env::var("PORT").ok().and_then(|s| s.parse().ok()).unwrap_or(8310)
+}
+
+/// Jalankan server core di `<HOST>:<port>` (env HOST, default loopback
+/// `127.0.0.1`; set HOST=0.0.0.0 bila memang mau diakses dari jaringan —
+/// padanan perilaku server lama). Catat port aktual untuk peluncur pet.
+/// Blocking sampai shutdown.
 pub async fn serve(port: u16, paths: AppPaths) -> std::io::Result<()> {
-    let addr = format!("127.0.0.1:{port}");
+    let _ = SERVER_PORT.set(port);
+    let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".into());
+    let addr = format!("{host}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    eprintln!("[core] server HTTP in-process siap di http://{addr}");
+    eprintln!("[core] server HTTP siap di http://{addr}");
     axum::serve(listener, router(paths)).await
 }
 
@@ -1224,5 +1327,39 @@ mod tests {
             .unwrap();
         // axum menormalkan sebagian; safe_join tetap menolak segmen "..".
         assert!(matches!(resp.status(), StatusCode::FORBIDDEN | StatusCode::NOT_FOUND));
+    }
+
+    #[tokio::test]
+    async fn test_koneksi_tanpa_key_400() {
+        let body = serde_json::json!({ "connection": { "id": "x", "provider": "openai-compatible", "apiKey": "" } }).to_string();
+        let resp = app()
+            .oneshot(Request::builder().uri("/api/test").method("POST").body(Body::from(body)).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn motions_post_invalid_400() {
+        let body = serde_json::json!({ "model": "default", "motion": { "id": "!!!", "tracks": [] } }).to_string();
+        let resp = app()
+            .oneshot(Request::builder().uri("/api/motions").method("POST").body(Body::from(body)).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn server_port_fallback_env_tanpa_serve() {
+        // Tanpa serve() (unit test tak bind), env PORT kosong → 8310.
+        let old = std::env::var("PORT").ok();
+        std::env::remove_var("PORT");
+        assert_eq!(server_port(), 8310);
+        std::env::set_var("PORT", "8399");
+        assert_eq!(server_port(), 8399);
+        match old {
+            Some(v) => std::env::set_var("PORT", v),
+            None => std::env::remove_var("PORT"),
+        }
     }
 }

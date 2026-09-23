@@ -98,12 +98,19 @@ pub fn reset() {
     }
 }
 
+/// Kunci serialisasi test yang menyentuh bus GLOBAL (bus dipakai bersama
+/// antar thread test — tanpa ini `emit_read_reset` vs test loop yang emit
+/// flaky: reset di tengah baca). Dipakai juga oleh test assistant.
+#[cfg(test)]
+pub(crate) static BUS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn emit_read_reset() {
+        let _g = BUS_TEST_LOCK.lock().unwrap();
         reset();
         emit("thinking_start", "");
         emit("final_answer", "selesai");

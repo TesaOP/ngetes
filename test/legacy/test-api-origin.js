@@ -10,10 +10,13 @@
  * with nothing on it. Symptom: config never loads, chat does nothing, model list
  * empty, no obvious cause.
  *
- * The page is always served BY the backend, so location.origin is correct by
- * construction. This suite asserts the derivation exists, that no literal
- * survives outside its documented fallback, and that the derivation actually
- * produces the right origin under http/https/file protocols.
+ * Satu-exe (2026-09-22): halaman di-embed di Companion.exe (origin lokal
+ * tauri.localhost) → basis HTTP default (location.origin) SALAH untuk API/model
+ * (server statis embed tak punya /api/* dan data/ runtime). Basis disamakan ke
+ * loopback proses-sendiri: app.js via refreshApiBase() (IPC server_port),
+ * modul TS via transport.httpBase(). Guard ini mengunci: derivasi default
+ * tetap location.origin-or-literal (dev/browser tak berubah), tanpa literal
+ * liar, dan app.js memuat refresh IPC.
  *
  * Run: node test/test-api-origin.js
  */
@@ -54,26 +57,34 @@ for (const [label, src] of [['static/js/app.js', appSrc], ['src/client/agent/bra
     hits.length ? hits.join(' | ') : 'clean');
 }
 
-// Every fetch must go through the derived constant.
-for (const [label, src] of [['static/js/app.js', appSrc], ['src/client/agent/brain.ts', agentSrc]]) {
-  const fetches = src.match(/fetch\(\s*['"`]https?:\/\/[^'"`]+/g) || [];
-  ok(`${label}: no fetch() to an absolute literal URL`, fetches.length === 0,
+// Every fetch must go through the derived constant (app.js legacy) atau seam
+// transport (brain.ts TS — single source di src/client/transport).
+{
+  const fetches = appSrc.match(/fetch\(\s*['"`]https?:\/\/[^'"`]+/g) || [];
+  ok(`static/js/app.js: no fetch() to an absolute literal URL`, fetches.length === 0,
     fetches.length ? fetches.join(' | ') : 'clean');
-  const viaApi = (src.match(/fetch\(API\s*\+/g) || []).length;
-  ok(`${label}: fetches route through API constant`, viaApi > 0, viaApi + ' call site(s)');
+  const viaApi = (appSrc.match(/fetch\(API\s*\+/g) || []).length;
+  ok(`static/js/app.js: fetches route through API constant`, viaApi > 0, viaApi + ' call site(s)');
 }
-
-// Both files are separate modules, so each needs its own derivation.
-for (const [label, src] of [['static/js/app.js', appSrc], ['src/client/agent/brain.ts', agentSrc]]) {
-  ok(`${label}: declares its own API constant`,
-    /const API\s*=\s*\(?\s*typeof location/.test(src));
+{
+  const fetches = agentSrc.match(/fetch\(\s*['"`]https?:\/\/[^'"`]+/g) || [];
+  ok(`src/client/agent/brain.ts: no fetch() to an absolute literal URL`, fetches.length === 0,
+    fetches.length ? fetches.join(' | ') : 'clean');
+  // brain.ts tak lagi punya const API sendiri — basis via transport.httpBase
+  // (+ modeGet untuk domain MODE). Perilaku transport diuji di
+  // test/transport.test.ts (bun), bukan di sini.
+  ok(`src/client/agent/brain.ts: no own API literal`, !/127\.0\.0\.1:8310|localhost:8310/.test(agentSrc), 'clean');
+  ok(`src/client/agent/brain.ts: routes through transport seam`,
+    /from\s*["']\.\.\/transport["']/.test(agentSrc) && /httpBase\(\)/.test(agentSrc), 'httpBase in use');
+  ok(`src/client/agent/brain.ts: mode domain via IPC helper`, /transport\.modeGet\(\)/.test(agentSrc), 'transport.modeGet in use');
 }
 
 // ── 2. the derivation behaves ────────────────────────────────────────────────
 section('derivation under each protocol');
 
 // The file uses CRLF, so anchor on the fallback literal rather than ';\n'.
-const API_EXPR_RE = /const API = \(typeof location[\s\S]*?'http:\/\/127\.0\.0\.1:8310';/;
+// app.js memakai `let` (satu-exe) — terima keduanya.
+const API_EXPR_RE = /(const|let) API = \(typeof location[\s\S]*?'http:\/\/127\.0\.0\.1:8310';/;
 
 function deriveWith(locObj) {
   // Extract and evaluate the REAL expression from js/app.js rather than a copy.
@@ -125,26 +136,21 @@ ok('server reads process.env.PORT', /Number\(process\.env\.PORT\)\s*\|\|\s*8310/
 ok('server default is still 8310 (no behaviour change for normal use)',
   /\|\|\s*8310/.test(srvSrc));
 
-// ── 4. the brain's own derivation behaves (v2: brain.ts bukan agent.js) ──────
-section('brain.ts derivation under each protocol');
-const BRAIN_API_RE = /const API =[\s\S]*?['"]http:\/\/127\.0\.0\.1:8310['"];/;
-ok('brain.ts API derivation expression extracted', BRAIN_API_RE.test(agentSrc));
-function deriveBrainWith(locObj) {
-  const m = agentSrc.match(BRAIN_API_RE);
-  if (!m) return { err: 'expression not found' };
-  const sandbox = { location: locObj, __out: undefined };
-  vm.createContext(sandbox);
-  vm.runInContext(m[0] + '\n;__out = API;', sandbox);
-  return { api: sandbox.__out };
-}
-let rb = deriveBrainWith({ protocol: 'http:', origin: 'http://127.0.0.1:8399' });
-ok('brain: PORT=8399 → follows the page', rb.api === 'http://127.0.0.1:8399', rb.api);
-rb = deriveBrainWith({ protocol: 'https:', origin: 'https://live2d.example.com' });
-ok('brain: https origin preserved', rb.api === 'https://live2d.example.com', rb.api);
-rb = deriveBrainWith({ protocol: 'file:', origin: 'null' });
-ok('brain: file:// → literal fallback', rb.api === 'http://127.0.0.1:8310', rb.api);
-rb = deriveBrainWith(undefined);
-ok('brain: no location at all → literal fallback, no throw', rb.api === 'http://127.0.0.1:8310', rb.api);
+// ── 4. satu-exe: app.js memuat refresh IPC + loader absolut ────────────────
+section('satu-exe wiring (static/js/app.js)');
+ok('app.js: refreshApiBase() ada (IPC server_port saat embedded)',
+  /function refreshApiBase\(\)/.test(appSrc) && /server_port/.test(appSrc));
+ok('app.js: boot menunggu basis sebelum fetch pertama',
+  /await refreshApiBase\(\)/.test(appSrc));
+ok('app.js: loader model pakai URL absolut (origin embed)',
+  /const modelUrl = \/\^https/.test(appSrc) && /loadModel\(modelUrl, settings\)/.test(appSrc));
+ok('app.js: settings.url berbasis API (bukan location.href)',
+  /settings\.url = new URL\([\s\S]*?,\s*API \+ "\/"\s*,?\s*\)/.test(appSrc));
+
+// ── 5. the brain's derivation lives in transport (bun-tested) ──────────────
+section('brain.ts via transport (perilaku di test/transport.test.ts)');
+ok('brain.ts tidak lagi menanam derivasi origin sendiri',
+  !/typeof location/.test(agentSrc), 'single source: transport');
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

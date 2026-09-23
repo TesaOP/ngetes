@@ -569,6 +569,8 @@ mod tests {
 
     #[tokio::test]
     async fn ask_no_tool_final_dgn_mock() {
+        // Kunci bus global (lihat BUS_TEST_LOCK) — loop emit ke bus bersama.
+        let _g = bus::BUS_TEST_LOCK.lock().unwrap();
         // mock LLM (echo) tak emit "TOOL:" → loop langsung final.
         let dir = std::env::temp_dir().join(format!("l2das-{}-{}", std::process::id(), now_ms()));
         std::fs::create_dir_all(&dir).unwrap();

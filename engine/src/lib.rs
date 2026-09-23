@@ -1,9 +1,7 @@
 //! live2d-engine — library inferensi native (TTS SuperTonic + STT Whisper).
 //!
-//! Modul di sini dipakai dua konsumen:
-//!   - `src/main.rs` (bin) — sidecar HTTP loopback untuk debug/standalone.
-//!   - Rust core Tauri (Stage 4 migrasi) — memanggil langsung in-process,
-//!     menghilangkan sidecar + port 8330.
+//! Dipakai IN-PROCESS oleh Rust core (Companion.exe) — tanpa sidecar, tanpa
+//! port 8330. Bin sidecar lama sudah dihapus.
 //!
 //! Lihat docs/ARCHITECTURE-TAURI-RUST.md.
 

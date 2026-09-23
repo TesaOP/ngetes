@@ -3,8 +3,8 @@
  * Web tidak bisa menembus batas browser, jadi pet berjalan di jendela
  * aplikasi terpisah yang selalu di atas (always-on-top) dan transparan.
  * Urutan peluncur:
- *   1. Shell Tauri (agent-shell/target/release/live2d-shell.exe pada dev,
- *      live2d-shell.exe di samping server pada folder release portable) —
+ *   1. Companion (target/release/Companion.exe pada dev,
+ *      Companion.exe di samping server pada folder release portable) —
  *      jendela WebView2 transparan, selalu di atas, dan bisa klik-tembus;
  *      paling ringan (±40-90MB) karena memakai WebView2 bawaan Windows.
  *   2. Chrome/Edge --app (jendela opaque always-on-top via PowerShell)
@@ -20,10 +20,11 @@ import { findChromium } from "./browser/discovery";
 const ROOT = appRoot();
 const STATIC = join(ROOT, "static");
 // Urutan kandidat shell: (1) exe di samping server — folder release portable;
-// (2) hasil build dev di agent-shell/target.
+// (2) hasil build workspace di target/{release,debug}.
 const SHELL_CANDIDATES = [
-  join(ROOT, "live2d-shell.exe"),
-  join(ROOT, "agent-shell", "target", "release", "live2d-shell.exe"),
+  join(ROOT, "Companion.exe"),
+  join(ROOT, "target", "release", "Companion.exe"),
+  join(ROOT, "target", "debug", "Companion.exe"),
 ];
 function findShellExe(): string | null {
   for (const c of SHELL_CANDIDATES) { try { if (existsSync(c)) return c; } catch {} }

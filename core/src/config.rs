@@ -1,7 +1,5 @@
-//! Config — port BACA `src/shared/config.ts` (byte-compatible dengan
-//! `data/config.json`). Stage 2: baru jalur BACA (load + mask + GET /api/config).
-//! Tulis (saveConnections/saveTTS/dst) menyusul; sampai itu, server Bun tetap
-//! pemilik tulisan selama transisi.
+//! Config — port BACA+TULIS `src/shared/config.ts` (byte-compatible dengan
+//! `data/config.json`). Backend satu-satunya: core Rust.
 //!
 //! Strategi byte-compat: pakai `serde_json::Value` mentah, TIDAK memodelkan tiap
 //! field — merge section-level ({...DEFAULT, ...base}) persis seperti TS, mask

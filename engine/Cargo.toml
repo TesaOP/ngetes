@@ -1,16 +1,13 @@
-# live2d-engine — sidecar inferensi native (STT + TTS) untuk Live2D Agent.
+# live2d-engine — library inferensi native (STT + TTS) untuk Live2D Agent.
 #
-# Dua mesin dalam satu proses HTTP loopback:
-#   - TTS: port penuh SuperTonic (4 ONNX via `ort`) — TIDAK butuh cmake/libclang.
-#   - STT: Whisper via `whisper-rs` (binding whisper.cpp) — di belakang feature
-#     `stt` karena butuh cmake + libclang. Tanpa toolchain itu, crate tetap
-#     kompilasi (TTS saja) dan endpoint /stt membalas 503.
-#
-# Model diambil relatif ke direktori yang di-pass server (appRoot()/engines/...).
+# Dipakai IN-PROCESS oleh Rust core (bukan sidecar/exe): TTS SuperTonic
+# (4 ONNX via `ort`) + STT Whisper via `whisper-rs` (binding whisper.cpp).
+# Bin sidecar HTTP lama (src/main.rs) SUDAH DIHAPUS (2026-09-23) — tak ada
+# konsumen tersisa (dulu hanya dijalankan server Bun yang kini arsip).
 [package]
 name = "live2d-engine"
 version = "0.1.0"
-description = "Sidecar inferensi native (SuperTonic TTS + Whisper STT) untuk Live2D Agent"
+description = "Library inferensi native (SuperTonic TTS + Whisper STT) untuk Live2D Agent — dipakai in-process oleh Rust core"
 edition = "2021"
 rust-version = "1.77"
 
@@ -18,14 +15,9 @@ rust-version = "1.77"
 name = "live2d_engine"
 path = "src/lib.rs"
 
-[[bin]]
-name = "live2d-engine"
-path = "src/main.rs"
-
 [dependencies]
 ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "ndarray", "download-binaries"] }
 ndarray = "0.16"
-tiny_http = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rand = "0.8"

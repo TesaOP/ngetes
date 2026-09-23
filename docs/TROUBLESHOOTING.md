@@ -17,6 +17,10 @@ untuk agent · README untuk ringkasan produk.
 - **VTuber Twitch feed kosong padahal "Terhubung"?** Sebagian ISP/proxy memblokir TMI chat Twitch — coba VPN/hotspot, atau pakai provider YouTube/mock.
 - **Assistant menolak menjalankan perintah?** Itu fitur — `write_file`/`run_command` menunggu persetujuanmu di panel Assistant (kartu ⚠️).
 - **STT tidak mulai merekam?** Karakter sedang bicara TTS — push-to-talk sengaja ditolak saat itu (anti-echo: tanpa itu dia mengobrol dengan dirinya sendiri).
-- **TTS/STT native diam / "engine native tidak tersedia"?** Sidecar `engines/live2d-engine.exe` belum di-build atau tak jalan. Build: `cd engine && cargo build --release --features stt` (butuh cmake + LLVM/libclang di PATH + `LIBCLANG_PATH`). Server auto-spawn saat boot; cek log `[engine] sidecar native siap`. Tanpa sidecar, pilih provider TTS/STT lain di ⚙️ — degrade anggun.
+- **TTS/STT native diam / "engine native tidak tersedia"?** Engine native kini
+  library in-process (bukan sidecar exe — `engines/live2d-engine.exe` sudah
+  dihapus). Build: STT butuh `cargo build --release -p companion --features engine-stt`
+  (cmake + LLVM/libclang di PATH + `LIBCLANG_PATH`); TTS jalan tanpa itu. Tanpa
+  build STT, pilih provider TTS/STT lain di ⚙️ — degrade anggun.
 - **Native pertama kali lama / "mengunduh model…"?** Model TIDAK dibundel — diunduh on-demand sekali (SuperTonic ~385 MB, Whisper GGML ~40–150 MB) dari HuggingFace lalu di-cache (`~/.cache/supertonic3` + `engines/models/`). Butuh online sekali; offline sebelum terunduh → error jelas, fitur degrade.
 - **STT native kurang akurat?** Default model `base`. Ganti `stt.engineModel` ke `small`/`medium` di `data/config.json` (lebih akurat, lebih berat + unduhan lebih besar). Model `tiny` paling ringan tapi paling sering salah kata.

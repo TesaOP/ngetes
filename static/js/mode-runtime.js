@@ -4,7 +4,21 @@
  * (interval, listener, feed dibersihkan) sebelum yang baru dinyalakan.
  */
 (function () {
-  const API = location.origin;
+  // Basis HTTP via seam transport (bundle.js, dimuat sebelum file ini):
+  // embedded → loopback proses-sendiri; dev → origin halaman.
+  const apiBase = () =>
+    window.__transport && typeof window.__transport.httpBase === "function"
+      ? window.__transport.httpBase()
+      : location.origin;
+  // Domain MODE via helper IPC-nya (embedded → command, dev → HTTP).
+  const modeGet = () =>
+    window.__transport && typeof window.__transport.modeGet === "function"
+      ? window.__transport.modeGet()
+      : fetch(apiBase() + "/api/mode").then((r) => r.json());
+  const modeSet = (mode) =>
+    window.__transport && typeof window.__transport.modeSet === "function"
+      ? window.__transport.modeSet(mode)
+      : post("/api/mode", { mode });
   // i18n: window.__i18n dipasang bundle.js (dimuat sebelum file ini).
   const __t = (k, v) => (window.__i18n ? window.__i18n.t(k, v) : k);
   const $ = (s) => document.querySelector(s);
@@ -23,7 +37,7 @@
   }
 
   async function post(path, body) {
-    const r = await fetch(API + path, {
+    const r = await fetch(apiBase() + path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body || {}),
@@ -70,7 +84,7 @@
     //    Tanpa pemetaan ini POST-nya 400 dan `active` di server nyangkut di
     //    mode lama (invarian MODES.md: /api/mode satu-satunya pintu).
     const serverMode = mode === "chat" ? "stage" : mode;
-    try { await post("/api/mode", { mode: serverMode }); } catch (e) { console.warn("[mode] server switch:", e.message); }
+    try { await modeSet(serverMode); } catch (e) { console.warn("[mode] server switch:", e.message); }
     active = mode;
     setPanel(mode);
     // 3) nyalakan runtime client baru
@@ -132,7 +146,7 @@
     async function poll() {
       if (stopped) return;
       try {
-        const r = await fetch(API + "/api/vtuber/events?since=" + cursor);
+        const r = await fetch(apiBase() + "/api/vtuber/events?since=" + cursor);
         const d = await r.json();
         cursor = d.cursor || cursor;
         const nowOverlay = !!d.overlay;
@@ -255,7 +269,7 @@
     // ganti tiap stream user tinggal menimpanya.
     (async () => {
       try {
-        const saved = await fetch(API + "/api/vtuber/conn").then((r) => r.json());
+        const saved = await fetch(apiBase() + "/api/vtuber/conn").then((r) => r.json());
         if (!saved || stopped) return;
         const setVal = (id, v) => { const e = $(id); if (e && v != null && v !== "") e.value = v; };
         if (saved.provider) { const p = $("#vt-provider"); if (p) p.value = saved.provider; }
@@ -271,7 +285,7 @@
     })();
     // Overlay OBS: halaman transparan untuk Browser Source. Dibuka dengan
     // ?hud=1 (panel preferensi tampil); URL untuk OBS = tanpa ?hud=1.
-    const onOverlayOpen = () => window.open(API + "/vtuber.html?hud=1", "_blank");
+    const onOverlayOpen = () => window.open(apiBase() + "/vtuber.html?hud=1", "_blank");
     $("#vt-overlay-open").addEventListener("click", onOverlayOpen);
     pollTimer = setInterval(poll, 2500);
 
@@ -326,7 +340,7 @@
     let throughOn = false;
     async function checkStatus() {
       try {
-        const st = await fetch(API + "/api/mode").then((r) => r.json());
+        const st = await modeGet();
         if (!st.pet?.running) {
           status.textContent = __t("pet.notOpen");
           throughOn = false;
@@ -387,7 +401,7 @@
     // me-restart jendela yang sudah ada.
     (async () => {
       try {
-        const st = await fetch(API + "/api/mode").then((r) => r.json());
+        const st = await modeGet();
         if (st.pet?.running) { checkStatus(); return; }
       } catch (e) {}
       onLaunch();
@@ -405,7 +419,7 @@
 
   // ── Boot ─────────────────────────────────────────────────────
   $$("#mode-switch button").forEach((b) => b.addEventListener("click", () => switchMode(b.dataset.mode)));
-  fetch(API + "/api/mode").then((r) => r.json()).then((st) => {
+  modeGet().then((st) => {
     // mode tersimpan di server hanya berlaku sesi runtime; UI selalu mulai chat
     setPanel("chat");
   }).catch(() => setPanel("chat"));

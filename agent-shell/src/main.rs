@@ -1,109 +1,127 @@
-// Cangkang jendela Live2D Agent — satu exe, dua mode.
+// Cangkang jendela Companion — SATU exe, SATU proses.
 //
-//   live2d-shell.exe main <url>   → jendela utama app: berdekorasi normal,
-//                                   bisa diresize.
-//   live2d-shell.exe pet  <url>   → jendela pet: transparan, selalu di atas,
-//                                   tanpa frame, tanpa taskbar, klik-tembus.
-//   argv[1] langsung berupa http… → dianggap pet (kompatibel panggilan lama).
+//   Companion.exe [main <url>|<url>] → jendela utama (port dari URL eksplisit
+//                                     atau dipilih sendiri).
+//   Dobel-klik exe = semuanya nyala: server HTTP Rust (live2d-core) berjalan
+// IN-PROCESS di thread runtime tokio sendiri — jendela WebView me-load
+// loopback yang dilayani proses ini juga. Tak ada exe kedua, tak ada sidecar.
 //
-// URL diterima dari server Bun / start.bat supaya ikut PORT yang sebenarnya.
-// Sebelum jendela dibuat, shell menunggu port server terbuka (maks 15 dtk):
-// start.bat menyalakan shell dan server hampir bersamaan, dan WebView tidak
-// punya retry — tanpa menunggu, jendela bisa menampilkan halaman error.
-// Kalau 15 dtk tidak cukup (mesin lambat / server gagal boot sesaat), jendela
-// tetap dibuat dan thread pemulihan me-RELOAD begitu server terlihat — dulu
-// halaman error WebView2 nyangkut permanen padahal server lalu naik sendiri.
+// Jendela PET (overlay transparan selalu-di-atas) adalah window Tauri KEDUA
+// dalam proses yang SAMA — dibuka/tutup lewat /api/pet/* (server in-process
+// memanggil balik pembuka yang didaftarkan di setup). Tak ada lagi mode
+// proses-pet (`Companion.exe pet …`); argumen itu kini diabaikan (jendela
+// utama yang dibuka, pet via panel).
+//
+// URL diterima dari argumen supaya ikut PORT yang sebenarnya. Sebelum jendela
+// menunggu port server terbuka (maks 15 dtk): start.bat menyalakan shell dan
+// server hampir bersamaan, dan WebView tidak punya retry — tanpa menunggu,
+// jendela bisa menampilkan halaman error. Kalau 15 dtk tidak cukup (mesin
+// lambat / server gagal boot sesaat), jendela tetap dibuat dan thread
+// pemulihan me-RELOAD begitu server terlihat — dulu halaman error WebView2
+// nyangkut permanen padahal server lalu naik sendiri.
 //
 // Kenapa bukan Electron: WebView2 sudah menjadi bagian dari Windows 10/11,
-// jadi binary-nya kecil (±3MB) dan RAM jendela ±40-90MB — tidak membawa
-// Chromium sendiri seperti Electron.
-//
-// Mode portable (release): bila exe server (live2d-agent.exe) ada di samping
-// shell dan port masih kosong, shell menyalakannya sendiri (sidecar) dan
-// mematikannya saat aplikasi ditutup — user cukup dobel-klik satu exe.
+// jadi binary-nya kecil dan RAM jendela ±40-90MB — tidak membawa Chromium
+// sendiri seperti Electron.
 //
 // Port (peluncuran TANPA argumen URL — dobel-klik shortcut installer): port
 // dasar 8310 dipakai bila kosong ATAU sudah dipakai server milik kita sendiri
-// (probe /api/mode — dobel-klik kedua menempel ke instance pertama). Bila
-// port diduduki aplikasi ASING, shell bergeser ke 8311..8319. URL argumen
-// eksplisit (start.bat / peluncuran dari server) selalu dihormati apa adanya.
+// (probe /api/mode — dobel-klik kedua menempel ke instance pertama, tanpa
+// server baru). Bila port diduduki aplikasi ASING, shell bergeser ke
+// 8311..8319. URL argumen eksplisit (start.bat / pet yang diluncurkan server)
+// selalu dihormati apa adanya.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::net::TcpStream;
-use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
-/// Info aplikasi untuk frontend (command Tauri `app_info`). Titik masuk pertama
-/// jalur IPC — membuktikan seam Tauri hidup & core ter-link (Stage 1b).
-#[derive(serde::Serialize)]
-struct AppInfo {
-    shell_version: String,
-    core_version: String,
-    core_ready: bool,
+/// Perintah IPC — frontend ter-embed (origin lokal) memanggil logika core
+/// LANGSUNG dalam proses yang sama (tanpa HTTP). Tiap command adalah selubung
+/// tipis di atas fungsi `live2d_core` (single source of truth — handler HTTP
+/// di core memakai fungsi yang sama untuk adapter eksternal CLI/OBS/dev).
+/// Render loop Live2D/PixiJS tetap 100% di WebView — tak ada IPC per-frame.
+#[tauri::command]
+fn core_version() -> String {
+    live2d_core::VERSION.to_string()
 }
 
+/// Port loopback adapter HTTP eksternal (dipilih shell saat boot).
 #[tauri::command]
-fn app_info() -> AppInfo {
-    AppInfo {
-        shell_version: env!("CARGO_PKG_VERSION").to_string(),
-        core_version: live2d_core::VERSION.to_string(),
-        core_ready: live2d_core::core_ready(),
+fn server_port(port: tauri::State<u16>) -> u16 {
+    *port
+}
+
+/// Model awal jendela pet (?model= dari peluncur, via State karena URL App
+/// tak membawa query). Dipakai pet.html setelah qs (dev browser) kosong.
+#[tauri::command]
+fn pet_model(model: tauri::State<Option<String>>) -> Option<String> {
+    model.inner().clone()
+}
+
+/// GET /api/mode versi IPC (domain pertama yang migrasi penuh).
+#[tauri::command]
+fn get_mode() -> serde_json::Value {
+    live2d_core::mode::status()
+}
+
+/// POST /api/mode versi IPC — satu-satunya pintu pindah mode (MODES.md).
+#[tauri::command]
+fn set_mode(mode: String) -> Result<serde_json::Value, String> {
+    let (status, out) = live2d_core::mode::set_mode(&serde_json::json!({ "mode": mode }));
+    if status < 400 {
+        Ok(out)
+    } else {
+        Err(out
+            .get("error")
+            .and_then(|e| e.as_str())
+            .unwrap_or("gagal ganti mode")
+            .to_string())
     }
 }
 
-const FALLBACK_MAIN_URL: &str = "http://127.0.0.1:8310/";
-const FALLBACK_PET_URL: &str = "http://127.0.0.1:8310/pet.html";
+const FALLBACK_PORT: u16 = 8310;
 /** Batas pemulihan: kalau server belum juga naik dalam 2 menit, menyerah —
  *  user tinggal menutup jendela dan menjalankan start.bat lagi. */
 const RECOVER_SECS: u64 = 120;
 
-enum Mode {
-    Main,
-    Pet,
-}
-
 struct Launch {
-    mode: Mode,
-    url: String,
-    /// true bila URL datang dari argumen user (dihormati apa adanya);
-    /// false bila jatuh ke fallback — shell boleh memilih port sendiri.
-    explicit: bool,
+    /// URL eksplisit (start.bat / dev) — port-nya dihormati; HALAMAN selalu
+    /// dari aset ter-embed (origin lokal → IPC hidup). Tanpa argumen → shell
+    /// memilih port sendiri (pick_port). Argumen "pet" lama diabaikan: pet
+    /// kini window kedua se-proses (via /api/pet/*), bukan proses terpisah.
+    explicit_url: Option<String>,
 }
 
 fn parse_args() -> Launch {
     let rest: Vec<String> = std::env::args().skip(1).collect();
-    match rest.first().map(|s| s.as_str()) {
-        Some("main") => {
-            let url = rest.get(1).cloned();
-            Launch {
-                mode: Mode::Main,
-                url: url.clone().unwrap_or_else(|| FALLBACK_MAIN_URL.into()),
-                explicit: url.is_some(),
-            }
-        }
-        Some("pet") => {
-            let url = rest.get(1).cloned();
-            Launch {
-                mode: Mode::Pet,
-                url: url.clone().unwrap_or_else(|| FALLBACK_PET_URL.into()),
-                explicit: url.is_some(),
-            }
-        }
-        // Kompatibel: panggilan lama langsung memberi URL pet tanpa kata "pet".
-        Some(url) if url.starts_with("http") => Launch {
-            mode: Mode::Pet,
-            url: url.into(),
-            explicit: true,
-        },
-        _ => Launch {
-            mode: Mode::Main,
-            url: FALLBACK_MAIN_URL.into(),
-            explicit: false,
-        },
+    let url = match rest.first().map(|s| s.as_str()) {
+        Some("main") => rest.get(1).cloned(),
+        Some(u) if u.starts_with("http") => Some(u.into()),
+        _ => None,
+    };
+    Launch { explicit_url: url }
+}
+
+/// Bangun jendela pet (overlay desktop) di DALAM proses ini. Dipanggil lewat
+/// bridge yang didaftarkan ke core (server in-process → AppHandle). Jendela
+/// "pet" yang sudah ada dipakai ulang (tak ada duplikat).
+fn build_pet_window(app: &tauri::AppHandle) -> tauri::Result<()> {
+    if app.get_webview_window("pet").is_some() {
+        return Ok(());
     }
+    WebviewWindowBuilder::new(app, "pet", WebviewUrl::App("pet.html".into()))
+        .title("Companion Pet")
+        .inner_size(420.0, 640.0)
+        .position(40.0, 40.0)
+        .decorations(false) // tanpa frame — murni overlay
+        .transparent(true) // latar tembus pandang: karakter melayang
+        .always_on_top(true) // native, tanpa trik PowerShell SetWindowPos
+        .skip_taskbar(true) // pet bukan aplikasi biasa, jangan isi taskbar
+        .resizable(false)
+        .build()?;
+    Ok(())
 }
 
 fn host_port_of(url: &str) -> String {
@@ -150,7 +168,7 @@ fn is_our_server_with_retry(host_port: &str) -> bool {
 }
 
 /// Pilih port bila peluncuran tanpa argumen URL (dobel-klik shortcut):
-///   1) port kosong → pakai (sidecar menyusul);
+///   1) port kosong → pakai (server in-process menyusul di ensure_server);
 ///   2) port berisi server MILIK KITA → pakai, menempel ke instance itu;
 ///   3) port diduduki aplikasi asing → geser ke kandidat berikutnya.
 /// Semua kandidat gagal → kembali ke port dasar (perilaku lama).
@@ -166,68 +184,54 @@ fn pick_port() -> u16 {
     BASE_PORT
 }
 
-/// Server exe di samping shell (folder release portable). Tidak ada di layout
-/// dev — di sana server dinyalakan start.bat / `bun run dev` secara terpisah.
-fn sibling_server() -> Option<PathBuf> {
-    let dir = std::env::current_exe().ok()?.parent()?.to_path_buf();
-    // HANYA server Rust in-process (live2d-core) — runtime JS (Bun) sudah
-    // dilepas: seluruh rute /api/* diport ke core (Stage 5). Tidak ada lagi
-    // fallback live2d-agent.exe.
-    for name in ["live2d-core.exe", "live2d-core"] {
-        let p = dir.join(name);
-        if p.is_file() {
-            return Some(p);
-        }
+/// Pastikan ada server yang melayani `host_port`, dengan SATU PROSES sebagai
+/// prioritas: bila port masih kosong, nyalakan server Rust IN-PROCESS (thread
+/// runtime tokio sendiri, root path terdeteksi dari lokasi exe / cwd dev).
+/// Bila port sudah dilayani server milik kita (instance lain / dev
+/// `cargo run -p live2d-core`), menempel saja tanpa server baru. Bila
+/// diduduki aplikasi asing, bukan urusan kita (jendela menampilkan apa adanya,
+/// seperti dulu).
+fn ensure_server(host_port: &str, port: u16) {
+    if is_our_server_with_retry(host_port) {
+        return;
     }
-    None
+    if can_connect(host_port) {
+        return;
+    }
+    let paths = live2d_core::paths::AppPaths::detect();
+    eprintln!(
+        "[shell] server Rust in-process — root={} port={port}",
+        paths.root.display()
+    );
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("gagal membuat runtime server");
+        rt.block_on(async move {
+            if let Err(e) = live2d_core::serve(port, paths).await {
+                eprintln!("[shell] server gagal: {e}");
+                std::process::exit(1);
+            }
+        });
+    });
 }
 
 fn main() {
-    let mut launch = parse_args();
-    // Tanpa argumen URL → shell memilih port sendiri (lihat pick_port).
-    if !launch.explicit {
-        let port = pick_port();
-        launch.url = format!("http://127.0.0.1:{port}/");
-    }
-    let host_port = host_port_of(&launch.url);
-    // Sidecar: folder portable — user dobel-klik shell, port masih kosong →
-    // shell menyalakan exe server di sampingnya sendiri (PORT ikut URL arg).
-    // Di layout dev sibling tidak ada, jadi perilaku lama (tunggu + recovery)
-    // tetap berlaku.
-    let server_child: Option<Child> = if !can_connect(&host_port) {
-        match sibling_server() {
-            Some(path) => {
-                let port = host_port.rsplit(':').next().unwrap_or("8310").to_string();
-                match Command::new(&path)
-                    .env("PORT", &port)
-                    // stdin null WAJIB: build release GUI (windows_subsystem="windows")
-                    // tak punya console; mewarisi stdin invalid ke child bisa
-                    // menggagalkan CreateProcess → sidecar tak menyala. null handle
-                    // memberi child handle valid.
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .spawn()
-                {
-                    Ok(child) => {
-                        eprintln!("[shell] sidecar server dinyalakan: {}", path.display());
-                        Some(child)
-                    }
-                    Err(e) => {
-                        eprintln!("[shell] gagal menyalakan sidecar: {e}");
-                        None
-                    }
-                }
-            }
-            None => None,
-        }
-    } else {
-        None
+    let launch = parse_args();
+    // Port: dari URL eksplisit bila ada, else shell memilih sendiri.
+    // HALAMAN selalu dari aset ter-embed (WebviewUrl::App → origin lokal →
+    // IPC hidup). URL eksplisit hanya menyumbang PORT (+ ?model= pet).
+    let port: u16 = match launch.explicit_url.as_deref() {
+        Some(url) => host_port_of(url)
+            .rsplit(':')
+            .next()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(FALLBACK_PORT),
+        None => pick_port(),
     };
-    // Dibunuh saat aplikasi keluar supaya tidak menyisakan server yatim —
-    // HANYA bila shell sendiri yang menyalakannya; bila server sudah jalan
-    // dulu (start.bat / pet yang diluncurkan server), server_child kosong.
-    let server_child = Arc::new(Mutex::new(server_child));
+    let host_port = format!("127.0.0.1:{port}");
+    ensure_server(&host_port, port);
     // Tunggu server bind (maks 15 dtk) SEBELUM jendela dibuat — kasus normal.
     let ready = {
         let deadline = Instant::now() + Duration::from_secs(15);
@@ -241,36 +245,52 @@ fn main() {
             std::thread::sleep(Duration::from_millis(250));
         }
     };
-    let main_mode = matches!(launch.mode, Mode::Main);
-    let label = if main_mode { "main" } else { "pet" };
+    let label = "main";
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![app_info])
+        .manage(port)
+        // Command pet_model dipertahankan (pet.html memanggilnya; selalu None
+        // di jalur in-process — pet memakai daftar model dari server).
+        .manage(None::<String>)
+        .invoke_handler(tauri::generate_handler![
+            core_version,
+            server_port,
+            pet_model,
+            get_mode,
+            set_mode
+        ])
         .setup(move |app| {
-            let parsed = launch
-                .url
-                .parse()
-                .unwrap_or_else(|e| panic!("URL tidak valid ({}): {e}", launch.url));
-            let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::External(parsed))
-                .title(if main_mode { "Live2D Agent" } else { "Live2D Pet" });
-            if main_mode {
-                // Jendela utama: aplikasi biasa — berdekorasi, bisa diresize.
-                builder
-                    .inner_size(1280.0, 800.0)
-                    .min_inner_size(700.0, 520.0)
-                    .center()
-                    .build()?;
-            } else {
-                // Pet: overlay murni di atas desktop.
-                builder
-                    .inner_size(420.0, 640.0)
-                    .position(40.0, 40.0)
-                    .decorations(false) // tanpa frame — murni overlay
-                    .transparent(true) // latar tembus pandang: karakter melayang
-                    .always_on_top(true) // native, tanpa trik PowerShell SetWindowPos
-                    .skip_taskbar(true) // pet bukan aplikasi biasa, jangan isi taskbar
-                    .resizable(false)
-                    .build()?;
+            // Daftarkan pembuka/penutup pet in-process ke core (server yang
+            // sama memanggilnya saat /api/pet/launch|close — satu PID).
+            {
+                let h = app.handle().clone();
+                let opener = move || build_pet_window(&h).is_ok();
+                let h2 = app.handle().clone();
+                let closer = move || {
+                    if let Some(w) = h2.get_webview_window("pet") {
+                        let _ = w.destroy();
+                    }
+                };
+                let _ = live2d_core::pet::register_pet_host(live2d_core::pet::PetHost {
+                    open: Arc::new(opener),
+                    close: Arc::new(closer),
+                });
             }
+            // Halaman dari aset ter-embed (frontendDist → binary) — origin
+            // LOKAL, jadi command aplikasi diizinkan (temuan §6b tak berlaku).
+            // Adapter HTTP loopback proses-sendiri tetap ada untuk CLI/OBS/dev
+            // + domain yang belum migrasi IPC.
+            let builder = WebviewWindowBuilder::new(
+                app,
+                label,
+                WebviewUrl::App("index.html".into()),
+            )
+            .title("Companion");
+            // Jendela utama: aplikasi biasa — berdekorasi, bisa diresize.
+            builder
+                .inner_size(1280.0, 800.0)
+                .min_inner_size(700.0, 520.0)
+                .center()
+                .build()?;
             if !ready {
                 // Server belum ada saat jendela dibuat → WebView menampilkan
                 // halaman error. Pantau port dan reload begitu server naik.
@@ -293,12 +313,12 @@ fn main() {
         })
         .build(tauri::generate_context!())
         .expect("gagal menjalankan shell")
-        .run(move |_app, event| {
-            if let tauri::RunEvent::Exit = event {
-                if let Ok(mut guard) = server_child.lock() {
-                    if let Some(child) = guard.as_mut() {
-                        let _ = child.kill();
-                    }
+        .run(|_app, event| {
+            // Jendela pet in-process ditutup user (Esc/tombol) → sinkronkan
+            // state core (padanan deteksi proses-mati jalur spawn).
+            if let tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } = &event {
+                if label == "pet" {
+                    live2d_core::pet::notify_closed();
                 }
             }
         });

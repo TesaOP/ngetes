@@ -55,21 +55,17 @@ if (typeof window !== "undefined") {
   // app.js dieksekusi (script di akhir body → DOM sudah ter-parse), lalu
   // app.js/motion-editor/mode-runtime memakai window.__i18n.t() saat runtime.
   window.__i18n = i18n;
-  // Seam transport (Stage 1a migrasi Tauri) — titik tunggal komunikasi ke
-  // backend. Call-site baru pakai window.__transport; migrasi call-site lama
-  // bertahap. Lihat docs/ARCHITECTURE-TAURI-RUST.md.
+  // Seam transport (satu binary, satu proses) — titik tunggal komunikasi ke
+  // backend. Call-site baru pakai window.__transport.
+  // Lihat docs/ARCHITECTURE-TAURI-RUST.md.
   window.__transport = transport;
-  // Indikator core native: bila berjalan di shell Tauri, tanyakan app_info lewat
-  // IPC dan cerminkan di judul jendela ("· core vX native"). Di browser biasa
-  // (hasTauri=false) tak berubah. Sekaligus bukti seam IPC hidup (Stage 1b).
-  // Indikator core native: bila berjalan di shell Tauri DAN command app_info
-  // terotorisasi, cerminkan di judul jendela. Catatan (temuan Stage 1b): saat
-  // frontend disajikan dari server HTTP (origin "remote"), Tauri v2 memblokir
-  // command app — jadi ini hanya menyala bila frontend disajikan LOKAL oleh
-  // Tauri (frontendDist). Lihat docs/ARCHITECTURE-TAURI-RUST.md §Temuan IPC.
-  transport.appInfo().then((info) => {
-    if (info) document.title = document.title + " · core v" + info.core_version + " (native)";
-  }).catch(() => { /* di luar Tauri / origin remote → biarkan */ });
+  // Boot transport: temukan port loopback (embedded) sedini mungkin supaya
+  // httpBase() tepat sebelum fetch pertama. Non-blokir.
+  transport.initLoopback().catch(() => {});
+  // Indikator core native: embedded → command IPC; dev → HTTP. Non-blokir.
+  transport.coreVersion().then((v) => {
+    if (v) document.title = document.title + " · core v" + v + " (native)";
+  }).catch(() => { /* server belum naik → biarkan */ });
   // Panel agent (mode Assistant) — dipanggil mode-runtime.js saat tab
   // assistant aktif. Remake tampilan ala ZCode tinggal di sini (TS).
   window.__agentPanel = { start: startAssistantPanel };

@@ -28,6 +28,7 @@ import {
   deriveReplyActions,
   EMOTION_GESTURE_FALLBACK,
 } from "./directive-parser";
+import { httpBase, transport } from "../transport";
 import { scaleRoleFraction } from "./param-range";
 import { estimateSpeechMs as estimateSpeechMsShared } from "../../shared/speech-timing";
 import type {
@@ -38,10 +39,9 @@ import type {
 } from "../../shared/types";
 
 const HISTORY_LIMIT = 12;
-const API =
-  typeof location !== "undefined" && /^https?:$/.test(location.protocol)
-    ? location.origin
-    : "http://127.0.0.1:8310";
+// Basis HTTP via seam transport (satu binary: embedded → loopback proses
+// sendiri + initLoopback di bundle-entry; dev → origin halaman). Domain MODE
+// lewat helper IPC-nya (modeGet). Guard origin kini di transport.test.ts.
 
 const EVENT_PROMPTS: Record<string, string> = {
   idle:
@@ -379,7 +379,7 @@ Contoh pendek:
           noteCount++;
         }
       }
-      const res = await fetch(API + "/api/animate-text", {
+      const res = await fetch(httpBase() + "/api/animate-text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -457,7 +457,7 @@ Contoh pendek:
           console.warn("[agent] profile unavailable", e);
         }
       if (this.gen !== myGen) return; // digulingkan saat menunggu profile
-      const resp = await fetch(API + "/api/chat", {
+      const resp = await fetch(httpBase() + "/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -553,7 +553,7 @@ Contoh pendek:
       const messages = this.history
         .slice(-6)
         .concat([{ role: "user", content: synthetic }]);
-      const resp = await fetch(API + "/api/chat", {
+      const resp = await fetch(httpBase() + "/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messages, system }),
@@ -1005,7 +1005,7 @@ Contoh pendek:
     // Fallback ke /api/config saat engine belum siap, supaya otak tetap punya
     // konteks dasar alih-alih prompt kosong.
     try {
-      const resp = await fetch(API + "/api/config");
+      const resp = await fetch(httpBase() + "/api/config");
       if (epoch !== this.modelEpoch) return; // jangan timpa profil model baru
       if (resp.ok) {
         this.capProfile = {
@@ -1049,8 +1049,8 @@ Contoh pendek:
     if (toggle && !(toggle as HTMLInputElement).checked)
       return { allowed: false, reason: "mode otak mati" };
     try {
-      const r = await fetch(API + "/api/mode");
-      const m = await r.json();
+      // Domain MODE: IPC bila embedded (helper transport), HTTP bila dev.
+      const m = await transport.modeGet();
       if (m && m.active && m.active !== "stage")
         return { allowed: false, reason: "mode aktif " + m.active };
       if (m && m.assistant && m.assistant.busy)

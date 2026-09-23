@@ -4,7 +4,7 @@ title Live2D Agent v2
 cd /d "%~dp0"
 echo.
 echo   ============================================
-echo     Live2D Agent v2 - Bun + TypeScript
+echo     Live2D Agent v2 - Rust + TypeScript
 echo   ============================================
 echo.
 
@@ -17,7 +17,7 @@ if not "%~1"=="" set "PORT=%~1"
 echo   Port: %PORT%
 echo.
 
-rem 1) Check for Bun
+rem 1) Check for Bun (build tool: bundle client saja, bukan server)
 where bun >nul 2>&1
 if %ERRORLEVEL% NEQ 0 goto :nobun
 
@@ -38,25 +38,27 @@ if %ERRORLEVEL% EQU 0 (
     goto :open
 )
 
-echo   [2/2] Starting server on http://127.0.0.1:%PORT%
-echo         Press Ctrl+C to stop
+echo   [2/2] Starting app on http://127.0.0.1:%PORT%
 echo.
-rem UI: shell Tauri bila sudah dibangun, kalau tidak browser default.
-rem Shell menunggu server bind (maks 15 dtk) dan me-reload sendiri begitu
-rem server naik — aman dinyalakan sebelum server siap.
-if exist "agent-shell\target\release\live2d-shell.exe" (
-    start "" "%~dp0agent-shell\target\release\live2d-shell.exe" main "http://127.0.0.1:%PORT%/"
-) else (
-    echo   [i] Shell Tauri belum dibangun - buka di browser. Bangun dengan: bun run build:pet
-    start "" "http://127.0.0.1:%PORT%"
+rem SATU EXE SATU PROSES: shell meng-host server sendiri. Bila shell release
+rem ada, cukup nyalakan — server ikut nyala in-process, tidak ada proses kedua.
+if exist "target\release\Companion.exe" (
+    echo   Shell satu-proses (server in-process, tanpa jendela console ini).
+    start "" "%~dp0target\release\Companion.exe" main "http://127.0.0.1:%PORT%/"
+    goto :end
 )
-bun run src/server/index.ts
+rem Dev tanpa shell: browser + server Rust terpisah (cargo).
+echo   [i] Shell Tauri belum dibangun - dev via browser. Bangun dengan: bun run build:pet
+start "" "http://127.0.0.1:%PORT%"
+echo   Press Ctrl+C to stop
+echo.
+cargo run -p live2d-core
 goto :end
 
 :open
 rem Server sudah jalan (jalur atas) — buka jendela tanpa menyalakan server.
-if exist "agent-shell\target\release\live2d-shell.exe" (
-    start "" "%~dp0agent-shell\target\release\live2d-shell.exe" main "http://127.0.0.1:%PORT%/"
+if exist "target\release\Companion.exe" (
+    start "" "%~dp0target\release\Companion.exe" main "http://127.0.0.1:%PORT%/"
 ) else (
     start "" "http://127.0.0.1:%PORT%"
 )

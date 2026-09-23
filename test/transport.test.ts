@@ -1,13 +1,25 @@
-// transport.test.ts — seam komunikasi frontend↔backend (Stage 1a migrasi Tauri).
-// Menjaga: derivasi origin identik dengan kontrak guard test-api-origin.js
-// (http/https → location.origin; selain itu → fallback literal 8310).
+// transport.test.ts — seam komunikasi frontend↔backend (satu binary).
+// Menjaga:
+// - dev/browser: derivasi origin (http/https → location.origin; selain itu →
+//   fallback literal 8310) — kontrak guard test-api-origin.js.
+// - embedded (shell Companion): loopback proses-sendiri (port via IPC
+//   server_port, default 8310) + domain termigrasi via IPC (modeGet/modeSet,
+//   coreVersion) dengan jembatan HTTP sementara.
 import { test, expect, afterEach } from "bun:test";
-import { apiBase, apiUrl, hasTauri } from "../src/client/transport";
+import {
+  apiBase,
+  apiUrl,
+  isEmbedded,
+  initLoopback,
+  httpBase,
+  _resetLoopbackForTest,
+} from "../src/client/transport";
 
 const g = globalThis as any;
 afterEach(() => {
   delete g.location;
   delete g.__TAURI__;
+  _resetLoopbackForTest();
 });
 
 test("apiBase: http → location.origin", () => {
@@ -42,22 +54,70 @@ test("apiUrl: URL absolut dibiarkan apa adanya", () => {
   expect(apiUrl("https://cdn.example/x.png")).toBe("https://cdn.example/x.png");
 });
 
-test("hasTauri: false tanpa window.__TAURI__, true dengan", () => {
-  expect(hasTauri()).toBe(false);
+test("isEmbedded: false tanpa __TAURI__, true di shell", () => {
+  expect(isEmbedded()).toBe(false);
   g.__TAURI__ = {};
-  expect(hasTauri()).toBe(true);
+  expect(isEmbedded()).toBe(true);
 });
 
-test("tauriInvoke: undefined tanpa shell Tauri (caller fallback HTTP)", async () => {
-  const { tauriInvoke } = await import("../src/client/transport");
-  expect(await tauriInvoke("app_info")).toBeUndefined();
+test("embedded: httpBase default loopback:8310 sebelum init", () => {
+  g.__TAURI__ = {};
+  g.location = { protocol: "https:", origin: "https://tauri.localhost" };
+  expect(httpBase()).toBe("http://127.0.0.1:8310");
 });
 
-test("tauriInvoke: meneruskan ke __TAURI__.core.invoke bila ada", async () => {
-  const { tauriInvoke } = await import("../src/client/transport");
-  let seen: any = null;
-  g.__TAURI__ = { core: { invoke: async (cmd: string, args: any) => { seen = { cmd, args }; return { ok: true }; } } };
-  const r = await tauriInvoke<{ ok: boolean }>("app_info", { a: 1 });
-  expect(seen).toEqual({ cmd: "app_info", args: { a: 1 } });
-  expect(r).toEqual({ ok: true });
+test("embedded: initLoopback membaca port dari IPC server_port", async () => {
+  g.__TAURI__ = {
+    core: { invoke: async (cmd: string) => (cmd === "server_port" ? 8317 : undefined) },
+  };
+  g.location = { protocol: "https:", origin: "https://tauri.localhost" };
+  expect(await initLoopback()).toBe(8317);
+  expect(httpBase()).toBe("http://127.0.0.1:8317");
+  expect(apiBase()).toBe("http://127.0.0.1:8317");
+});
+
+test("embedded: initLoopback gagal → null, base tetap default", async () => {
+  g.__TAURI__ = {
+    core: {
+      invoke: async () => {
+        throw new Error("denied");
+      },
+    },
+  };
+  expect(await initLoopback()).toBeNull();
+  expect(httpBase()).toBe("http://127.0.0.1:8310");
+});
+
+test("modeGet/modeSet: embedded via IPC", async () => {
+  const seen: any[] = [];
+  g.__TAURI__ = {
+    core: {
+      invoke: async (cmd: string, args: any) => {
+        seen.push([cmd, args]);
+        if (cmd === "get_mode") return { active: "stage" };
+        if (cmd === "set_mode") return { ok: true };
+        return undefined;
+      },
+    },
+  };
+  const { transport } = await import("../src/client/transport");
+  expect(await transport.modeGet()).toEqual({ active: "stage" });
+  expect(await transport.modeSet("vtuber")).toEqual({ ok: true });
+  expect(seen).toEqual([
+    ["get_mode", undefined],
+    ["set_mode", { mode: "vtuber" }],
+  ]);
+});
+
+test("coreVersion: embedded via IPC", async () => {
+  g.__TAURI__ = { invoke: async (cmd: string) => (cmd === "core_version" ? "0.1.0" : undefined) };
+  const { transport } = await import("../src/client/transport");
+  expect(await transport.coreVersion()).toBe("0.1.0");
+});
+
+test("transport: permukaan seam lengkap", async () => {
+  const { transport } = await import("../src/client/transport");
+  for (const k of ["fetch", "getJson", "postJson", "invoke", "modeGet", "modeSet", "coreVersion", "initLoopback", "httpBase", "isEmbedded"]) {
+    expect(typeof (transport as any)[k], k).toBe("function");
+  }
 });

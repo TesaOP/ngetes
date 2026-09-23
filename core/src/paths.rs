@@ -1,8 +1,8 @@
 //! Resolusi path aplikasi — padanan `src/shared/paths.ts::appRoot()`.
 //!
-//! `static/` & `data/` hidup di samping akar app. Saat jadi satu exe (Tauri),
-//! akar = folder exe; di dev = root repo. Kontrak folder dipertahankan supaya
-//! kompatibel dengan server Bun selama transisi.
+//! `static/` & `data/` hidup di samping akar app. Akar = folder exe bila ada
+//! static/index.html di sampingnya (portable + shell satu-proses), selain itu
+//! cwd (dev `cargo run`).
 
 use std::path::{Path, PathBuf};
 

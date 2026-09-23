@@ -32,6 +32,10 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 futures-util = "0.3"
 tokio-stream = "0.1"
+# CORS permisif untuk adapter HTTP eksternal/bridge (loopback saja):
+# frontend ter-embed (origin tauri.localhost) + CLI/OBS mengakses loopback
+# lintas-origin sampai migrasi IPC per-domain selesai.
+tower-http = { version = "0.6", features = ["cors"] }
 # Twitch chat = IRC over WebSocket (wss). rustls agar konsisten dgn reqwest
 # (tanpa OpenSSL). YouTube live chat pakai reqwest (poll) — sudah ada.
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }

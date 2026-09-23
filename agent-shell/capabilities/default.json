@@ -1,11 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Izin minimal untuk jendela shell (pet & main): kelola jendela sendiri tanpa akses lain.",
-  "windows": ["pet", "main"],
-  "remote": {
-    "urls": ["http://127.0.0.1:*", "http://localhost:*"]
-  },
+  "description": "Capability utama Companion (origin lokal, halaman ter-embed): jendela main + pet boleh memakai API jendela native (drag, klik-tembus, destroy). Perintah aplikasi (invoke_handler) diizinkan untuk origin lokal tanpa capability tambahan.",
+  "windows": ["main", "pet"],
   "permissions": [
     "core:default",
     "core:window:allow-set-ignore-cursor-events",

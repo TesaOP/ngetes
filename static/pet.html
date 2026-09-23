@@ -65,7 +65,48 @@
 <script type="module" src="js/live2d-view.mjs"></script>
 <script>
 (function () {
-  const API = location.origin;
+  // Basis HTTP: dev/browser → origin halaman (same-origin); embedded
+  // (Companion, origin tauri.localhost) → loopback proses-sendiri, port via
+  // IPC `server_port` (async sekali, di-cache). Halaman pet tidak memuat
+  // bundle.js → logika ini mandiri di sini (cermin transport/index.ts).
+  let API = location.origin;
+  let __portReady = null;
+  function refreshApiBase() {
+    if (!__portReady) {
+      __portReady = (async () => {
+        try {
+          const t = window.__TAURI__;
+          const invoke = t?.core?.invoke ?? t?.invoke;
+          if (typeof invoke === "function") {
+            const p = await invoke("server_port");
+            if (typeof p === "number" && p > 0) API = "http://127.0.0.1:" + p;
+          }
+        } catch (e) {}
+        return API;
+      })();
+    }
+    return __portReady;
+  }
+  refreshApiBase();
+  // URL absolut untuk aset model (loader butuh absolut bila origin embed).
+  function absUrl(path) {
+    if (/^https?:\/\//.test(path)) return path;
+    return API + "/" + String(path).replace(/^\/+/, "");
+  }
+  // Model awal: ?model= (dev/browser) → command pet_model (embedded) → daftar.
+  async function petModelArg() {
+    const q = qs.get("model");
+    if (q) return q;
+    try {
+      const t = window.__TAURI__;
+      const invoke = t?.core?.invoke ?? t?.invoke;
+      if (typeof invoke === "function") {
+        const m = await invoke("pet_model");
+        if (m) return m;
+      }
+    } catch (e) {}
+    return null;
+  }
   const t = (k, v) => (window.__i18n ? window.__i18n.t(k, v) : k);
   const qs = new URLSearchParams(location.search);
   const state = { model: null, bubbleTimer: null, idleTimer: null };
@@ -88,8 +129,9 @@
   }
 
   async function boot() {
+    await refreshApiBase();
     document.getElementById("status").textContent = t("petWindow.loadingModel");
-    let path = qs.get("model");
+    let path = await petModelArg();
     if (!path) {
       try {
         const r = await fetch(API + "/api/models");
@@ -105,8 +147,8 @@
     if (!path) { document.getElementById("status").textContent = t("petWindow.noModel"); return; }
     await window.__live2dViewWait;
     // Muat model lewat adapter stack baru (moc native, tanpa pixi-live2d).
-    // Blink/breath/gaze diputar framework; tidak ada lagi id param hardcode.
-    state.model = await window.__live2dView.loadModel(path);
+    // URL absolut loopback bila origin embed (relatif menurun dengan benar).
+    state.model = await window.__live2dView.loadModel(absUrl(path));
     const m = state.model;
     // Skala pas jendela lalu pusatkan (bounds dibaca via facade — math sama
     // dengan versi lama, dikoreksi sudah membaca bounds pasca-scale).

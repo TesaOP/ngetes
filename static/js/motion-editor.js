@@ -17,8 +17,13 @@
 (function () {
   'use strict';
 
-  const API = (typeof location !== 'undefined' && /^https?:$/.test(location.protocol))
-    ? location.origin : 'http://127.0.0.1:8310';
+  // Basis HTTP via seam transport (bundle.js, dimuat sebelum file ini):
+  // embedded → loopback proses-sendiri; dev → origin halaman.
+  const apiBase = () =>
+    window.__transport && typeof window.__transport.httpBase === "function"
+      ? window.__transport.httpBase()
+      : (typeof location !== 'undefined' && /^https?:$/.test(location.protocol))
+        ? location.origin : 'http://127.0.0.1:8310';
 
   const $ = (s) => document.querySelector(s);
   const L2D = () => window.__live2dAgent;
@@ -751,7 +756,7 @@
   // ── Muat / simpan ────────────────────────────────────────────────
   async function fetchUserMotions() {
     try {
-      const r = await fetch(API + '/api/motions?model=' + encodeURIComponent(modelKey()));
+      const r = await fetch(apiBase() + '/api/motions?model=' + encodeURIComponent(modelKey()));
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const d = await r.json();
       state.userMotions = Array.isArray(d.motions) ? d.motions : [];
@@ -865,7 +870,7 @@
     const exists = state.userMotions.some(m => m.id === d.id);
     setStatus(__t('sys.saving'));
     try {
-      const r = await fetch(API + '/api/motions' + (exists ? '/' + encodeURIComponent(d.id) : ''), {
+      const r = await fetch(apiBase() + '/api/motions' + (exists ? '/' + encodeURIComponent(d.id) : ''), {
         method: exists ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model: modelKey(), motion: d }),
@@ -889,7 +894,7 @@
     if (!state.userMotions.some(m => m.id === d.id)) { loadDraft(''); setStatus(__t('ms.draftCleared')); return; }
     if (!confirm(__t('ms.delConfirm', { name: d.name || d.id }))) return;
     try {
-      const r = await fetch(API + '/api/motions/' + encodeURIComponent(d.id) + '?model=' + encodeURIComponent(modelKey()), { method: 'DELETE' });
+      const r = await fetch(apiBase() + '/api/motions/' + encodeURIComponent(d.id) + '?model=' + encodeURIComponent(modelKey()), { method: 'DELETE' });
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const l2d = L2D();
       if (l2d && l2d.removeUserMotion) l2d.removeUserMotion(d.id);
@@ -1131,7 +1136,7 @@
     }
     setStatus(__t('ms.analyzing'));
     try {
-      const r = await fetch(API + '/api/motions/analyze', {
+      const r = await fetch(apiBase() + '/api/motions/analyze', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ motion: d, emotions: state.emotions }),
       });
@@ -1174,7 +1179,7 @@
     if (!prompt || !prompt.trim()) { toggleGenBox(true); setStatus(__t('ms.describeFirst'), 'err'); return; }
     setStatus(__t('ms.generating'));
     try {
-      const r = await fetch(API + '/api/motions/generate', {
+      const r = await fetch(apiBase() + '/api/motions/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: prompt.trim(), emotions: state.emotions }),
       });

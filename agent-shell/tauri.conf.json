@@ -1,9 +1,11 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "live2d-shell",
+  "productName": "Companion",
   "version": "0.1.0",
-  "identifier": "com.live2dagent.pet",
-  "build": {},
+  "identifier": "com.live2d.companion",
+  "build": {
+    "frontendDist": "../static"
+  },
   "app": {
     "withGlobalTauri": true,
     "windows": [],

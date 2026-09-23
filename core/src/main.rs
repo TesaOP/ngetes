@@ -1,11 +1,9 @@
-//! live2d-core (bin) — server HTTP produksi Rust in-process, pengganti
-//! live2d-agent.exe (Bun). Menyajikan frontend + rute yang sudah diport
-//! (statis, config, models, sheet, ekspresi, motions, chat/LLM, TTS in-process).
-//! Rute yang belum diport (assistant/vtuber/browser/pet/stt) menjawab 404 —
-//! degrade anggun sampai diport. Tujuan akhir: melepas runtime JS sepenuhnya.
+//! live2d-core (bin) — host DEV/EKSTERNAL adapter HTTP, bukan produksi.
+//! Produksi = in-process di dalam Companion.exe. Binary ini untuk: dev
+//! browser (`cargo run -p live2d-core` / `bun run dev`), CLI, dan integrasi
+//! eksternal (OBS). Wire & logika identik (router yang sama).
 //!
-//! PORT dari env PORT (default 8310, sama dengan Bun) supaya shell Tauri &
-//! frontend tidak perlu berubah.
+//! PORT dari env PORT (default 8310).
 
 #[tokio::main]
 async fn main() {

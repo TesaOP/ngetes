@@ -4,9 +4,15 @@
 > migrasi backend `live2d-agent` dari TypeScript/Bun ke **Rust core di dalam
 > Tauri**, tanpa merusak renderer Live2D/PixiJS yang sudah jalan.
 >
-> **Status: RENCANA (belum dieksekusi).** Kode belum berubah. Dokumen ini
-> adalah kontrak yang mengikat saat eksekusi dimulai. Jika dokumen & kode
-> bertentangan setelah eksekusi dimulai: **kode yang benar — perbaiki dokumen.**
+> **Status: DIEKSEKUSI — TARGET FINAL (revisi 2026-09-22).** `Companion.exe` =
+> satu binary satu proses: Tauri + Rust core (library, in-process) + frontend
+> ter-embed (frontendDist → binary). Transport INTERNAL WebView↔Rust = perintah
+> IPC per-domain, bertahap (single source of truth = fungsi `live2d_core`;
+> handler HTTP memakai fungsi yang sama). HTTP/Axum loopback dipertahankan
+> HANYA sebagai adapter eksternal (CLI, OBS `vtuber.html`, dev browser) +
+> jembatan transisi domain yang belum migrasi (CORS permisif, loopback saja).
+> Render loop Live2D/PixiJS tetap 100% di WebView — tanpa IPC per-frame.
+> Server Bun (`src/server/`) arsip + fixture test; Bun = alat build/dev.
 >
 > Sumber niat: arah "Tauri + Rust Application Core + TypeScript/Live2D Frontend"
 > yang disetujui user. Prinsip inti:
@@ -43,16 +49,18 @@ WebGL → compositing), **bukan** dengan memindah logika backend ke Rust.
 0. **PRODUK AKHIR = SATU EXE (`Companion.exe`).** Tidak ada proses Bun terpisah
    di produksi. Ini menutup opsi "pertahankan server Bun" — Bun hanya alat dev.
 
-1. **Backend disajikan oleh Rust IN-PROCESS di dalam Tauri.** Cara mencapai
-   single-exe: Tauri (a) **meng-embed aset frontend** (frontendDist) dan (b)
-   menjalankan **server HTTP Rust in-process** (axum, loopback) yang melayani
-   `/api/*` + `/model/*` — menggantikan server Bun rute demi rute. Karena wire
-   tetap HTTP loopback, frontend nyaris tak berubah, guard origin tetap, dan
-   **temuan blokir-origin IPC (§6b) tak relevan** (bukan IPC lintas-origin).
-   Tauri IPC (`invoke`/event) menjadi **optimisasi opsional** untuk hal yang
-   memang lebih baik native (window, pet, notifikasi) — bukan jalur utama.
-   (Ini menggeser keputusan lama "IPC-first" → "Rust-in-process-HTTP-first",
-   karena itulah yang benar-benar memberi single-exe tanpa rework frontend.)
+1. **PRODUK AKHIR = SATU EXE SATU PROSES (`Companion.exe`).** Shell Tauri
+    me-link server Rust dan menjalankannya **in-process**
+    (`agent-shell/src/main.rs::ensure_server` — thread runtime tokio sendiri,
+    root path dari lokasi exe / cwd dev). Frontend **di-embed ke binary**
+    (`frontendDist: ../static`; `WebviewUrl::App` → origin lokal → command
+    aplikasi diizinkan — temuan blokir-origin IPC §6b tak berlaku).
+    Transport internal = **IPC per-domain, bertahap**: command shell selubung
+    tipis atas fungsi `live2d_core` (handler HTTP memakai fungsi yang SAMA —
+    single source of truth). HTTP loopback = adapter EKSTERNAL (CLI, OBS,
+    dev) + jembatan domain-belum-migrasi. **Tak ada exe server kedua, tak ada
+    sidecar.** `window.__TAURI__` untuk IPC + kontrol jendela native
+    (pet overlay) — BUKAN untuk API per-frame (render loop tetap di WebView).
 
 2. **HTTP loopback = arsitektur inti (bukan sekadar kompat).** Karena server
    Rust in-process memang berbicara HTTP loopback, klien mandiri (CLI agent,
@@ -69,31 +77,39 @@ WebGL → compositing), **bukan** dengan memindah logika backend ke Rust.
 ## 3. Arsitektur target
 
 ```
-Companion.exe (Tauri)
-├─ WebView (TypeScript) — presentation & rendering
-│    UI · Companion presentation · MotionRuntime · ParameterArbiter
-│    · Live2D/Cubism · PixiJS 8 · WebGL
-│    └─ src/client/transport/  ← SEAM TUNGGAL (baru)
-│         api.call(scope, action, payload)   — request/response
-│         api.stream(scope, action, payload) — streaming (delta token, dsb)
-│         api.subscribe(topic, cb)           — event push (ganti polling)
-│         backend:
-│           • TauriTransport  = invoke + ipc::Channel + event listen  (primer)
-│           • HttpTransport    = fetch / poll / SSE                   (kompat)
-│
-├─ Tauri IPC (coarse-grained — JANGAN per-frame):
-│    commands per domain · streaming via ipc::Channel · event push per topik
-│    custom protocol  lumi://  untuk aset model (/model/*) & payload biner
-│
-└─ Rust Core (cargo workspace)
-     config/persistence · llm-provider (trait) · agent (loop+21 tool+gate)
-     · modes (vtuber/assistant/pet) · media (tts/stt — engine absorbed)
-     · browser CDP · model/sheet/motion file manager
-     compat adapter (axum, OPSIONAL, di belakang flag) → mirror /api/*
-
-LLM = provider eksternal (trait LlmProvider): Cloud · Local · OpenAI-compat
-      · Custom — bisa diganti tanpa mengubah arsitektur companion.
+Companion.exe — SATU exe, SATU proses (semuanya dalam satu proses OS)
+├─ Tauri
+│   ├─ WebView2 → frontend JS ter-embed (PixiJS + Live2D, MotionRuntime, panel)
+│   │    ├─ Render loop 100% lokal (tanpa IPC per-frame)
+│   │    └─ src/client/transport/ — SEAM TUNGGAL
+│   │         domain termigrasi → invoke() IPC · sisanya → HTTP loopback
+│   └─ Rust Core (in-process, thread tokio) — core/src
+│        ├── Agent (loop + tool + gate) · LLM (multi-provider + fallback)
+│        ├── Memory (lintas sesi) · Tools · Browser (CDP)
+│        ├── TTS/STT native (lib live2d-engine) · Persistence (config/sheet)
+│        ├── Command IPC: core_version · server_port · pet_model ·
+│        │   get_mode · set_mode (+ domain berikut bertahap)
+│        └── HTTP loopback (axum, PORT/HOST, CORS) → ADAPTER EKSTERNAL:
+│             CLI · OBS vtuber.html · dev browser · jembatan transisi
+└─ Dobel-klik kedua menempel ke instance pertama bila port sudah dilayani
+   server milik kita — tanpa server baru. Jendela pet = window Tauri KEDUA
+   ("pet") dalam PROSES yang sama (via /api/pet/launch → bridge
+   register_pet_host; tutup-oleh-user → notify_closed). Fallback spawn
+   proses/browser hanya bila core jalan TANPA shell (dev).
 ```
+
+### Aturan migrasi IPC per-domain (mengikat)
+
+Setiap domain yang pindah HTTP → IPC WAJIB sekaligus:
+1. Command di `agent-shell/src/main.rs` = selubung tipis atas fungsi
+   `live2d_core` (JANGAN duplikat logika; handler HTTP tetap memakai fungsi
+   yang sama — itu adapter eksternalnya).
+2. Helper bernama di `src/client/transport/` (modeGet/modeSet/…) — JANGAN
+   `invoke` mentah di call-site (satu titik cabut jembatan).
+3. Call-site lama dialihkan ke helper; guard/test menyertakan domain itu.
+4. Jembatan HTTP sementara (fallback + console.warn) dicabut per-domain
+   setelah migrasi terbukti di build nyata — bukan sekaligus di akhir.
+5. Render loop / per-frame TIDAK PERNAH lewat IPC (invarian tetap).
 
 ### Frame Loop Rule (KRITIS)
 
@@ -102,7 +118,7 @@ motion: idle"). Frontend yang menerjemahkan ke animasi/parameter/blend/render,
 seluruhnya lokal. Tidak pernah `setAngleX()`/`setParameter()` lewat IPC.
 
 ```
-LLM → Agent/Decision (Rust) → Companion Directive → IPC → Frontend
+LLM → Agent/Decision (Rust) → Companion Directive → HTTP loopback → Frontend
     → CompanionPolicy → MotionRuntime → ParameterArbiter → Live2D → Pixi → WebGL
 ```
 
@@ -175,6 +191,13 @@ Setiap stage harus mempertahankan semuanya; kalau berubah, itu regresi.
 ---
 
 ## 6. Roadmap bertahap
+
+> **CATATAN satu-exe (2026-09-22):** roadmap Stage 0–5 di bawah adalah SEJARAH
+> eksekusi. Kondisi akhir MELAMPAUI rencana: bukan "dua proses sementara" —
+> server Rust hidup **in-process di dalam `Companion.exe`** (satu proses OS).
+> `bun run dev/start` = `cargo run -p live2d-core` (dev via browser), produk =
+> `Companion.exe`. Jangan memulai stage "pindah rute / sidecar / IPC" baru.
+> Sisa pekerjaan adalah stabilisasi + packaging, bukan migrasi.
 
 Aturan: **tiap stage meninggalkan aplikasi tetap fungsional + gate hijau**
 (`bun run build` + `bunx tsc --noEmit` + `bun run test` + `cargo test` untuk
@@ -289,13 +312,14 @@ mulus di dalam jendela Tauri via HTTP (origin remote) — "model muncul, suara
 keluar". Jadi HttpTransport (mode kompatibilitas) valid; hanya jalur IPC yang
 menuntut origin lokal.
 
-**Keputusan terbuka untuk user** (belum diputus):
-- **A. Pindah frontend ke Tauri-served (local origin) lebih dulu** → buka jalan
-  IPC-first sesuai rencana; perubahan besar di shell (`frontendDist`, resolusi
-  aset model lewat protocol lokal — spike custom protocol jadi wajib duluan).
-- **B. Pertahankan HTTP transport** (sudah terbukti jalan), Tauri tetap sekadar
-  cangkang jendela; tunda/urungkan IPC-first. Jauh lebih sederhana, tapi
-  menyimpang dari pilihan "Tauri IPC-first".
+**Keputusan terbuka untuk user** (SUDAH DIPUTUS — revisi satu-jalur 2026-09-22):
+dipilih **B yang dimatikan dualnya**: HTTP transport adalah SATU-SATUNYA jalur
+(server Rust `live2d-core`), Tauri IPC untuk API **dihapus** (shell tanpa
+`invoke_handler`; `src/client/transport/` tanpa `TauriTransport`/`tauriInvoke`/
+`appInfo`; indikator core di judul jendela via `GET /api/version` HTTP).
+Opsi A (frontendDist + origin lokal + IPC-first) DITOLAK — tak ada custom
+protocol `lumi://`, tak ada frontendDist. §6b tinggal sebagai catatan sejarah
+temuan teknis.
 
 ## 7. Risiko utama & mitigasi
 
@@ -324,7 +348,7 @@ Internal    : Rust = core/backend/native
 Dan rantai ini tetap bersih & terpisah:
 
 ```
-LLM → Agent/Decision → Semantic Directive → Tauri IPC → Frontend
+LLM → Agent/Decision → Semantic Directive → HTTP loopback → Frontend
     → MotionRuntime → ParameterArbiter → Live2D → PixiJS 8 → WebGL
 ```
 

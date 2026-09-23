@@ -1,10 +1,8 @@
-//! Rute motions READ/DELETE — port `listMotions`/`handleMotionsGet`/`Delete`
-//! dari `src/server/index.ts`. Motion buatan user disimpan di
-//! `data/motions/<key>/<id>.motion.json`.
-//!
-//! Gap sengaja (Stage 2): POST/PUT (create/update) butuh `sanitizeMotionAsset`
-//! dari kode client (motion-dsl) — belum diport; Bun pemilik jalur tulis selama
-//! transisi. List/get/delete aman & self-contained.
+//! Rute motions READ/WRITE/DELETE — port `listMotions`/`handleMotionsGet`/
+//! `handleMotionsPost`/`handleMotionsPut`/`Delete` dari `src/server/index.ts`.
+//! Motion buatan user disimpan di `data/motions/<key>/<id>.motion.json`.
+//! Semua tulisan lewat `motion_dsl::sanitize_motion_asset` (satu-satunya
+//! entrypoint sanitize sisi Rust).
 
 use std::path::{Path, PathBuf};
 
@@ -76,6 +74,23 @@ pub fn get_motion(motions_root: &Path, model_key: &str, id: &str) -> (u16, Strin
     }
 }
 
+/// POST /api/motions — buat asset baru (sudah disanitasi pemanggil).
+/// Menolak bila id sudah ada (409, padanan handleMotionsPost: "sudah ada.
+/// Pakai nama lain atau Simpan (timpa)"). Buat dir bila perlu.
+pub fn create_motion(motions_root: &Path, model_key: &str, id: &str, asset: &Value) -> (u16, String) {
+    let file = match motion_file_for(motions_root, model_key, id) {
+        Some(f) => f,
+        None => return (400, json!({ "error": "motion id tidak valid" }).to_string()),
+    };
+    if file.exists() {
+        return (
+            409,
+            json!({ "error": format!("motion \"{id}\" sudah ada. Pakai nama lain atau Simpan (timpa).") }).to_string(),
+        );
+    }
+    write_motion(motions_root, model_key, id, asset)
+}
+
 /// PUT /api/motions/:id?model=X — tulis asset (sudah disanitasi pemanggil).
 /// Buat dir bila perlu. Return (status, body).
 pub fn write_motion(motions_root: &Path, model_key: &str, id: &str, asset: &Value) -> (u16, String) {
@@ -137,6 +152,19 @@ mod tests {
         assert_eq!(std_, 200);
         assert_eq!(get_motion(&root, "hana", "wave").0, 404);
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn create_menolak_duplikat_409() {
+        let root = std::env::temp_dir().join(format!("l2dmotc-{}-{}", std::process::id(), now()));
+        let asset = serde_json::json!({"id":"jump","frames":[]});
+        assert_eq!(create_motion(&root, "hana", "jump", &asset).0, 200);
+        let (st, body) = create_motion(&root, "hana", "jump", &asset);
+        assert_eq!(st, 409);
+        assert!(body.contains("sudah ada"));
+        // PUT (write) tetap bisa timpa.
+        assert_eq!(write_motion(&root, "hana", "jump", &asset).0, 200);
         let _ = std::fs::remove_dir_all(&root);
     }
 
