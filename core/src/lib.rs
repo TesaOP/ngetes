@@ -8,7 +8,7 @@
 //! Renderer Live2D/PixiJS TETAP di frontend TypeScript. Lihat
 //! docs/ARCHITECTURE-TAURI-RUST.md.
 //!
-//! Stage 2: static serving + /api/version. Rute Bun lain diport bertahap.
+//! Backend penuh: /api/* + aset statis (arsip Bun src/server dihapus Batch A).
 
 pub mod agent;
 pub mod browser;

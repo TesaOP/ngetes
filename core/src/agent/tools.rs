@@ -1,6 +1,5 @@
-//! Tool agent (sandbox workDir) — port `src/server/agent/tools/{fs,search}.ts`.
-//! Batch 3d-3: FS (list/read/write/edit/delete) + search_code + git_diff.
-//! Tool berbahaya (run_command) & browser/subagent menyusul bersama loop+gate.
+//! Tool agent (sandbox workDir): FS (list/read/write/edit/delete) + search_code
+//! + git_diff + run_command. Browser/subagent di-dispatch lewat loop (assistant.rs).
 //!
 //! Semua path lewat `safe_path` — tak boleh keluar workDir.
 

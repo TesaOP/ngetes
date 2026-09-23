@@ -1,9 +1,6 @@
-//! Endpoint LLM-role "motion" — port `handleMotionsAnalyze`
-//! (`POST /api/motions/analyze`): tebak makna satu motion → deskripsi + tag +
-//! kompatibilitas emosi. Echo-retry + validasi emosi (hanya dari daftar).
-//!
-//! CATATAN: `/api/motions/generate` BELUM diport — butuh `sanitizeMotionAsset`
-//! dari client motion-dsl (belum ada di Rust). Bun pemilik jalur itu.
+//! Endpoint LLM-role "motion": `/api/motions/analyze` (tebak makna satu motion
+//! → deskripsi + tag + kompatibilitas emosi) dan `/api/motions/generate` (buat
+//! motion dari teks). Echo-retry + validasi emosi + sanitize via motion_dsl.
 
 use std::path::Path;
 

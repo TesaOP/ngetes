@@ -1,5 +1,4 @@
-//! speech_lang.rs — Terjemahan teks-bicara per bahasa suara, port
-//! `src/server/persona/speech-lang.ts`.
+//! speech_lang.rs — Terjemahan teks-bicara per bahasa suara.
 //!
 //! Kasus: user menyetel "Bahasa suara" TETAP (mis. ja-JP) sementara balasan
 //! karakter tetap bahasa user. Supaya suara natural, teks diterjemahkan ke

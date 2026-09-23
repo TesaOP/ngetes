@@ -1,6 +1,6 @@
-//! Agent loop — port `src/server/agent/loop.ts` (bagian inti).
+//! Agent loop (bagian inti).
 //! build_system (system prompt + katalog tool), detect_tool_call (parse longgar),
-//! exec_tool (dispatch), tool_level. Loop + permission gate + SSE di batch 3d-5.
+//! exec_tool (dispatch), tool_level. Loop + permission gate + SSE.
 
 use std::path::Path;
 
@@ -15,8 +15,9 @@ pub struct ToolDef {
     pub level: &'static str,
 }
 
-/// Katalog tool. Yang belum diport (update_plan/subagent/browser_*) ditandai
-/// tapi exec-nya membalas ERROR "belum diport" — LLM diberi tahu di prompt hanya
+/// Katalog tool. update_plan/subagent/browser_* di-dispatch di run_loop
+/// (assistant.rs), bukan exec_tool di sini; exec_tool memuat FS/search/git/
+/// run_command/memory, sisanya jatuh ke catch-all ERROR. LLM diberi tahu prompt
 /// yang aktif supaya tak memanggil yang belum ada.
 pub const TOOLS: &[ToolDef] = &[
     ToolDef { name: "list_dir", params: "path: string, default '.'", level: "safe" },

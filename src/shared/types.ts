@@ -98,7 +98,7 @@ export interface MotionConfig {
 // STT dua arah — Whisper lokal di browser (push-to-talk, audio tidak di-upload).
 export interface SttConfig {
   // Provider transkripsi:
-  //   "local"   → sidecar native (Whisper via whisper-rs) — DEFAULT proyek
+  //   "local"   → whisper in-process di server Rust core (whisper-rs) — DEFAULT proyek
   //   "browser" → Whisper transformers.js in-browser (audio tak keluar tab)
   //   "openai"  → server OpenAI-compatible /v1/audio/transcriptions (cloud)
   provider?: string;

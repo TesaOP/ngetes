@@ -1,4 +1,4 @@
-//! bus.rs — Event bus aktivitas agent, port `src/server/agent/bus.ts`.
+//! bus.rs — Event bus aktivitas agent.
 //!
 //! Loop menulis event kanonik di titik penting; konsumen:
 //!   - Ring buffer ber-seq → GET /api/assistant/events (panel web / pet shell).

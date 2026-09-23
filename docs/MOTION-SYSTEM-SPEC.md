@@ -14,7 +14,7 @@ src/client/engine/motion-taxonomy.ts      Klasifikasi klip .motion3.json (dipaka
 src/client/agent/brain.ts                 AI Motion Director (prompt, directive, arbitrase)
 static/js/motion-editor.js                UI Motion Studio (timeline, metadata, preview)
 static/js/app.js                          Bridge runtime ↔ render loop ↔ state.aiPose
-POST /api/motions, /api/motions/analyze, /api/motions/generate   (src/server/index.ts)
+POST /api/motions, /api/motions/analyze, /api/motions/generate   (core/src/motions.rs + motion_ai.rs)
 ```
 
 Semua di-bundle/di-bridge lewat `window.MotionDSL / MotionRegistry /
@@ -256,7 +256,7 @@ POST   /api/motions/analyze            POST   /api/motions/generate
 ```
 
 API key tetap hanya di server — jangan pindah ke browser. (Semua endpoint di
-`src/server/index.ts`.)
+`core/src/` — mis. motions.rs, sheet.rs, director.rs.)
 
 # 28. Security / Validation
 

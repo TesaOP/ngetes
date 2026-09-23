@@ -1,9 +1,9 @@
 //! Media TTS in-process — memanggil `live2d_engine::tts` (SuperTonic) LANGSUNG,
 //! tanpa sidecar HTTP. Ini bagian dari tujuan single-exe: TTS dijalankan di
-//! proses Rust yang sama, bukan diproxy ke Bun/engine.exe.
+//! proses Rust yang sama, bukan diproxy ke engine.exe.
 //!
 //! Model diambil dari `~/.cache/supertonic3` (berbagi dengan Python) atau
-//! `engines/models/supertonic3`. STT (whisper) menyusul di belakang feature.
+//! `engines/models/supertonic3`. STT (whisper) di belakang feature engine-stt.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};

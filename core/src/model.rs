@@ -1,10 +1,6 @@
-//! Rute model READ-ONLY — port `findModel3` + `/api/models` + `/api/model/path`
-//! dari `src/server/index.ts`.
-//!
-//! CATATAN (gap sengaja, Stage 2): logika Auto-Rescue (folder tanpa
-//! `.model3.json` → manifest virtual) BELUM diport. Selama transisi server Bun
-//! masih pemilik jalur itu; folder model normal (punya `.model3.json`) sudah
-//! ditangani di sini. Rescue menyusul di grup berikutnya.
+//! Rute model READ-ONLY: `findModel3` + `/api/models` + `/api/model/path`.
+//! Folder tanpa `.model3.json` dilayani lewat blueprint Auto-Rescue (rescue.rs)
+//! — ikut list_models + model_path menunjuk manifest virtual __rescue__.
 
 use std::path::{Path, PathBuf};
 

@@ -1,5 +1,4 @@
-//! Rute motions READ/WRITE/DELETE — port `listMotions`/`handleMotionsGet`/
-//! `handleMotionsPost`/`handleMotionsPut`/`Delete` dari `src/server/index.ts`.
+//! Rute motions READ/WRITE/DELETE.
 //! Motion buatan user disimpan di `data/motions/<key>/<id>.motion.json`.
 //! Semua tulisan lewat `motion_dsl::sanitize_motion_asset` (satu-satunya
 //! entrypoint sanitize sisi Rust).

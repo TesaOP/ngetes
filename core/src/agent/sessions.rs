@@ -1,4 +1,4 @@
-//! Multi-session assistant — port `src/server/agent/sessions.ts`.
+//! Multi-session assistant.
 //! Store `data/assistant-sessions.json`: {active, sessions:[{id,name,workDir,
 //! ts,messages}]}. cap 20 sesi (FIFO), history cap 60. Migrasi sekali dari
 //! `data/assistant-history.json` (format lama) → satu sesi.

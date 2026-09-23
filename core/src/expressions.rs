@@ -1,5 +1,4 @@
-//! Rute ekspresi — port `discoverExpressions` + adoption GET/POST dari
-//! `src/server/index.ts` (arsip Bun dihapus Batch A — Rust pemilik tunggal).
+//! Rute ekspresi: discoverExpressions + adoption GET/POST.
 //! Guard `test-overlay-gate` (bagian client) + test di bawah menuntut tiap
 //! ekspresi membawa `params` (Id dari file .exp3.json) untuk gate
 //! overlay-vs-native. Folder tanpa `.model3.json` memakai blueprint

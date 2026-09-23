@@ -1,4 +1,4 @@
-//! Auto-Rescue — port `src/server/rescue.ts`. Folder model tanpa `.model3.json`
+//! Auto-Rescue. Folder model tanpa `.model3.json`
 //! (hanya .moc3 + tekstur + motion/exp yatim) dirakit jadi manifest virtual DI
 //! MEMORI (read-only, tak menulis folder), disajikan via jalur virtual
 //! `model/<folder>/__rescue__.model3.json`. Model-agnostic: dari struktur folder,

@@ -1,4 +1,4 @@
-//! Long-term memory lintas sesi — port `src/server/agent/memory.ts`.
+//! Long-term memory lintas sesi.
 //! Disimpan di `<root>/.agent-memory/memory.json` (BUKAN di data/ — kontrak path
 //! dipertahankan). Model memanggil remember/recall eksplisit; ringkasan disuntik
 //! ke system prompt. Cap 100 entri × 1200 char.

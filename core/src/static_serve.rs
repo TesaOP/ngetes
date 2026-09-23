@@ -1,5 +1,4 @@
-//! Penyajian file statis — port `serveStatic`/`safeJoinStatic` dari
-//! `src/server/index.ts`. Menjaga invarian:
+//! Penyajian file statis (serveStatic/safeJoin). Menjaga invarian:
 //!   - guard traversal ".." (dicek pada string mentah, bukan cuma hasil normalize)
 //!   - `config.json`/`.bak` (berisi apiKey plaintext) TIDAK PERNAH disajikan
 //!   - path `model/...` diresolve di bawah `data/`, bukan `static/`

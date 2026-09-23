@@ -1,5 +1,4 @@
-//! vtuber_scheduler.rs — Otak behavior VTuber (§7 ARSITEKTUR-TARGET), port dari
-//! `src/server/vtuber-scheduler.ts`.
+//! vtuber_scheduler.rs — Otak behavior VTuber (§7 ARSITEKTUR-TARGET).
 //!
 //! SATU scheduler di server; dua klien (app utama + overlay OBS) hanya render
 //! feed + memutar balasan. Ini mematikan race app-vs-overlay dari akarnya dan

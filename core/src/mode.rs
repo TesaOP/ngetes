@@ -1,9 +1,7 @@
-//! Mode manager minimal — GET/POST `/api/mode`. Satu mode aktif (stage/vtuber/
-//! assistant/pet). Padanan modeStatus()/handleModePost tapi RINGKAS: runtime
-//! vtuber/assistant/pet belum diport ke core, jadi sub-status di sini stub
-//! (running:false). Yang penting: GET membawa kunci "active" — dipakai probe
-//! shell Tauri (is_our_server) untuk mengenali server ini, dan mode-runtime.js
-//! saat boot. Diisi lengkap saat runtime mode diport.
+//! Mode manager — GET/POST `/api/mode`. Satu mode aktif (stage/vtuber/assistant/
+//! pet). Sub-status vtuber & pet nyata; assistant ringkas di sini (status penuh
+//! di `/api/assistant/status`). GET membawa kunci "active" — dipakai probe shell
+//! Tauri (is_our_server) untuk mengenali server ini, dan mode-runtime.js saat boot.
 
 use std::sync::{Mutex, OnceLock};
 

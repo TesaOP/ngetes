@@ -1,11 +1,7 @@
-//! vtuber.rs — Runtime konektor + otak behavior mode AI VTuber, port dari
-//! `src/server/vtuber.ts`. Single active runtime: `start()` menghancurkan
-//! runtime lama dulu (bump epoch → task lama mati sendiri).
-//!
-//! Provider yang diport batch ini: **mock** (simulator penonton + donasi, tanpa
-//! API key) — jalur verifikasi headless. Provider `twitch` (IRC WS) & `youtube`
-//! (poll) BELUM diport ke core (butuh WS client + kunci live) → `start` menolak
-//! dengan pesan eksplisit; menyusul di batch berikut.
+//! vtuber.rs — Runtime konektor + otak behavior mode AI VTuber. Single active
+//! runtime: `start()` menghancurkan runtime lama dulu (bump epoch → task lama
+//! mati sendiri). Provider: **mock** (simulator penonton+donasi tanpa key),
+//! **twitch** (IRC over WSS via tokio-tungstenite), **youtube** (poll live chat).
 //!
 //! Behavior (dedup/cooldown audience, antrean donation/operator FIFO-20 +
 //! precedence, LLM balasan) hidup DI SINI via `vtuber_scheduler` — satu

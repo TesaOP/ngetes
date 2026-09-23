@@ -1,4 +1,4 @@
-//! pet.rs — Peluncur jendela overlay Desktop Pet, port `src/server/pet.ts`.
+//! pet.rs — Peluncur jendela overlay Desktop Pet.
 //! Web tak bisa menembus batas browser, jadi pet jalan di jendela terpisah
 //! always-on-top + transparan. Urutan peluncur:
 //!   1. Window Tauri in-process (didaftarkan shell Companion via

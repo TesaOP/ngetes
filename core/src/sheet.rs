@@ -1,6 +1,5 @@
-//! Rute sheet — port `handleSheetGet`/`handleSheetPost` + `sanitizeKey` dari
-//! `src/server/index.ts`. Sheet = cache scan karakter per-model di
-//! `data/sheets/<key>.json`.
+//! Rute sheet: get/post + sanitizeKey. Sheet = cache scan karakter per-model
+//! di `data/sheets/<key>.json`.
 //!
 //! Invarian dipertahankan: `sanitizeKey` mempertahankan huruf/angka SEMUA aksara
 //! (kanji/kana/latin) → `_` untuk sisanya; stamp `scannerVersion`; sheet dgn

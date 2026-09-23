@@ -1,5 +1,4 @@
-//! subagent.rs — Delegasi sub-task ke loop terpisah (context segar), port
-//! `src/server/agent/subagent.ts` + `tools/subagent.ts`.
+//! subagent.rs — Delegasi sub-task ke loop terpisah (context segar).
 //!
 //! Aturan keras (sama dgn TS):
 //!   - Subagent TIDAK boleh spawn subagent lagi (nesting 1 level).

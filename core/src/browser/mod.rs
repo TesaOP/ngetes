@@ -1,5 +1,5 @@
-//! browser/ — Control plane browser agent (Edge/Chrome via CDP), port
-//! `src/server/browser/`. Meluncurkan browser dengan remote-debugging,
+//! browser/ — Control plane browser agent (Edge/Chrome via CDP). Meluncurkan
+//! browser dengan remote-debugging,
 //! menghubungkan CDP, dan menyediakan open/navigate/inspect/click/type/
 //! screenshot dengan kebijakan URL (policy) + snapshot AX ber-ref.
 //!

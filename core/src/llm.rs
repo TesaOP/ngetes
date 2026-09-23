@@ -1,7 +1,6 @@
-//! Klien LLM multi-provider — port `src/shared/llm-client.ts` (jalur non-stream).
-//! Provider: openai-compatible, groq, openai, gemini, anthropic, mock.
-//! Role routing (chat/motion/sheet/assistant) + fallback/cooldown + persist ke
-//! config (byte-compatible). Streaming (SSE) menyusul di batch assistant.
+//! Klien LLM multi-provider. Provider: openai-compatible, groq, openai, gemini,
+//! anthropic, mock. Role routing (chat/motion/sheet/assistant) + fallback/cooldown
+//! + persist ke config. Streaming (SSE) di lib.rs (chat-stream/ask-stream).
 
 use std::path::Path;
 
