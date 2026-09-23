@@ -2,10 +2,10 @@
   "name": "live2d-agent",
   "version": "2.0.0",
   "private": true,
-  "description": "Live2D AI Agent — karakter Live2D yang dikendalikan AI (Bun + TypeScript)",
+  "description": "Live2D AI Agent — karakter Live2D yang dikendalikan AI (runtime Rust, logika TypeScript)",
   "scripts": {
-    "dev": "bun run src/server/index.ts",
-    "start": "bun run src/server/index.ts",
+    "dev": "cargo run -p live2d-core",
+    "start": "cargo run -p live2d-core",
     "build": "bun run scripts/setup-core.mjs && bun run src/build.ts",
     "test": "bun test && bun run test/run-guards.js",
     "test:unit": "bun test",
@@ -21,8 +21,7 @@
   },
   "devDependencies": {
     "@types/ws": "^8.18.1",
-    "bun-types": "^1.4.0",
-    "playwright": "1.63.0"
+    "bun-types": "^1.4.0"
   },
   "dependencies": {
     "pixi.js": "8.20.1",

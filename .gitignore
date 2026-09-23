@@ -17,19 +17,22 @@ static/js/live2dcubismcore.min.js
 # lihat README "Data user"). Dulu piecemeal, _param_todo.json lolos — kini utuh.
 data/
 
+# model inferensi yang diunduh on-demand (Whisper ggml-*.bin, cache SuperTonic
+# di ~/.cache) — runtime data, bukan source.
+engines/models/
+
 # state runtime agent (ingatan tool remember — lokal saja)
 .agent-memory/
 
 # state CLI lokal (rencana sesi, artifact)
 .zcode/
 
-# Rust workspace — build artifacts only; sources & Cargo.lock di-track.
-# Sejak jadi workspace (Cargo.toml root), target/ terpusat di root.
-/target/
-agent-shell/target/
+# Tauri build artifacts (schemas regenerated saat build)
 agent-shell/gen/
-engine/target/
-core/target/
+
+# Rust workspace — build artifacts only; sources & Cargo.lock di-track.
+# Target terpusat di root (workspace).
+/target/
 
 # lain-lain
 *.tmp
