@@ -11,11 +11,15 @@ Aplikasi Live2D yang dikendalikan AI: karakter Cubism 4/5 **apa pun** di
 `data/model/<nama>/` dianimasikan oleh agent — ngobrol (teks/STT), bergerak
 (directive → MotionRuntime), bersuara (TTS multi-provider), proaktif saat idle,
 membaca mood dari webcam, dan punya 3 mode (VTuber / Assistant / Pet).
-Runtime **Bun**, inti logika **TypeScript** (`src/`, di-bundle ke
-`static/js/bundle.js` + `static/js/live2d-view.mjs`), driver karakter & UI di
-`static/js/app.js` (dijaga guard). Renderer satu jalur: **Pixi 8 + Cubism SDK
-5-r.5 (Core 6.0.1)** di `src/live2d/view/` — stack lama (Pixi 6 + pixi-live2d)
-sudah dipensiunkan (entri 27–40 STATUS).
+Backend **Rust** (`core/`, axum HTTP loopback) yang di-host **in-process di
+dalam shell Tauri** (`agent-shell/`) — produk = **satu exe satu proses**
+(`Companion.exe`; dobel-klik = server + jendela nyala sekaligus),
+frontend **TypeScript**
+(`src/`, di-bundle ke `static/js/bundle.js` + `static/js/live2d-view.mjs`),
+driver karakter & UI di `static/js/app.js` (dijaga guard). **Bun = alat
+build/dev saja** (bundle, test, tsc) — bukan runtime. Renderer satu jalur:
+**Pixi 8 + Cubism SDK 5-r.5 (Core 6.0.1)** di `src/live2d/view/` — stack lama
+(Pixi 6 + pixi-live2d) sudah dipensiunkan (entri 27–40 STATUS).
 
 Produk ini juga membawa **agent-nya sendiri** sebagai fitur (loop + 21 tool +
 permission gate di `src/server/agent/`) — jangan tertukar: itu kode produk,
@@ -29,7 +33,7 @@ bukan instruksi untukmu.
 | 2 | [`docs/SHEET-SYSTEM.md`](docs/SHEET-SYSTEM.md) | menyentuh sheet, preset, migrasi, atau analisa LLM |
 | 3 | [`docs/MOTION-SYSTEM-SPEC.md`](docs/MOTION-SYSTEM-SPEC.md) | menyentuh pipeline motion / Motion Studio |
 | 4 | [`docs/MODES.md`](docs/MODES.md) | menyentuh mode, runtime, atau teardown |
-| 5 | [`docs/ARCHITECTURE-TAURI-RUST.md`](docs/ARCHITECTURE-TAURI-RUST.md) | menyentuh **apa pun** terkait migrasi backend→Rust / Tauri IPC / transport (arah + invarian; masih rencana) |
+| 5 | [`docs/ARCHITECTURE-TAURI-RUST.md`](docs/ARCHITECTURE-TAURI-RUST.md) | menyentuh **apa pun** terkait backend Rust / shell Tauri / transport (satu-jalur HTTP; IPC-first sudah ditolak) |
 | 6 | [`docs/STATUS-CUBISM5-EFEK.md`](docs/STATUS-CUBISM5-EFEK.md) | **awal sesi**: baca entri teratas (handoff sesi sebelumnya) · **akhir sesi**: tambah entri baru |
 | 7 | [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | debugging perilaku yang dilaporkan user |
 
@@ -37,7 +41,7 @@ bukan instruksi untukmu.
 
 ```bash
 bun run build          # WAJIB sebelum run — static/js/bundle.js di-gitignore
-bun run test           # SEMUA: 457 unit test (bun test) + 416 guard (10 suite)
+bun run test           # SEMUA: 549 unit test (bun test) + 416 guard (8 suite)
 bun run test:unit      # hanya unit test TS
 bun run test:guards    # hanya guard legacy
 bunx tsc --noEmit      # type-check (harus bersih)
@@ -73,11 +77,21 @@ Tidak ada test yang memanggil jaringan (endpoint LLM di-stub ke provider
    bind loopback default; body cap per endpoint; guard path traversal;
    **frame webcam TIDAK PERNAH di-upload** (inferensi kamera 100% lokal —
    aturan tak berubah). **Audio mic** (revisi 2026-09-21): default STT provider
-   `local` = dikirim ke sidecar native di **loopback 127.0.0.1** (proses lokal,
-   bukan jaringan); provider `browser` = 100% dalam tab; provider cloud HANYA
-   bila user memilihnya sadar. Cloud tak pernah default.
+   `local` = whisper in-process di server Rust **loopback 127.0.0.1** (proses
+   lokal, bukan jaringan); provider `browser` = 100% dalam tab; provider cloud
+   HANYA bila user memilihnya sadar. Cloud tak pernah default.
 
 ## Aturan kerja
+
+- **Satu exe satu proses** — produk = `Companion.exe`: Tauri + Rust core
+  (library, in-process via `ensure_server`) + frontend ter-embed
+  (`frontendDist`). Transport internal = IPC per-domain bertahap (aturan di
+  `ARCHITECTURE-TAURI-RUST.md` §aturan-migrasi: selubung tipis atas
+  `live2d_core` + helper bernama di `transport/` + jembatan dicabut
+  per-domain). HTTP loopback = adapter EKSTERNAL (CLI/OBS/dev) + jembatan
+  transisi — jangan jadikan jalur internal baru. Render loop/per-frame tidak
+  pernah lewat IPC. `src/server/` adalah arsip — jangan tambah rute/fitur di
+  sana; port ke `core/src/` bila perlu.
 
 - **Satu jalur render** — stack lama (Pixi 6 + pixi-live2d) sudah dipensiunkan;
   jangan menambah cabang dual-stack. Kepemilikan gerak: framework memutar
@@ -121,13 +135,17 @@ Tidak ada test yang memanggil jaringan (endpoint LLM di-stub ke provider
 ## Peta kode
 
 ```text
-src/server/index.ts          Bun.serve (loopback default) — 40+ route API + static
-src/server/{vtuber,assistant,pet}.ts   runtime 3 mode (satu aktif)
-src/server/agent/            loop, plan, bus, memory, subagent, tools/ (21 tool),
-                             sessions (multi-session), undo (snapshot/revert)
-src/server/browser/          Edge/Chrome CDP: policy, discovery, manager,
-                             AX snapshot/ref + trusted input/screenshot
-src/server/persona/          persona narrator
+src/server/index.ts          ARSIP referensi — BUKAN server produksi (server = core/).
+                             Hanya fixture unit test TS; jangan tambah rute/fitur di sini.
+core/                        server HTTP Rust (axum, loopback) — SATU-SATUNYA backend
+agent-shell/                 SATU exe SATU proses: host server Rust in-process
+                             (`ensure_server`) + jendela (tanpa IPC command)
+src/client/transport/        seam HTTP-only (apiBase/apiUrl/apiFetch/getJson/postJson)
+src/server/{vtuber,assistant,pet}.ts   ARSIP (logika sudah diport ke core/src/)
+src/server/agent/            ARSIP (loop, plan, bus, memory, subagent, tools/,
+                             sessions, undo) — sudah diport ke core/src/agent/
+src/server/browser/          ARSIP (Edge/Chrome CDP) — sudah diport ke core/src/browser/
+src/server/persona/          ARSIP (persona narrator) — sudah diport (speech_lang)
 src/shared/                  types, config, llm-client (role routing), paths
 src/client/animation/        easing, motion-dsl, motion-registry, motion-runtime
 src/client/engine/           motion-taxonomy (klasifikasi klip .motion3.json)
@@ -140,7 +158,6 @@ src/client/i18n/             core i18n zero-dep + kamus id/en
 src/build.ts                 bundle-entry → static/js/bundle.js (IIFE)
 src/dist.ts                  bun run dist — rakit dist/Live2D-Agent/ (exe + static)
 src/cli/agent.ts             bun run agent — REPL Assistant di terminal
-agent-shell/                 cangkang Tauri (Rust) — jendela utama, pet, sidecar
 src/live2d/                  renderer satu jalur — Pixi 8 + Cubism 5-r.5 (Core 6.0.1)
   ├─ view/                   Live2DView (facade + backend tulis) + framing + entry
   ├─ Live2DUserModel.ts      pipeline update dua fase + updater efek ber-gate
@@ -151,7 +168,7 @@ static/js/mode-runtime.js    switcher mode — panel assistant tinggal bridge
                              window.__agentPanel
 static/js/{voice-input,emotion-overlay,motion-editor,camera-presence}.js
 test/                        bun test (unit) — termasuk server-parity & integration
-test/legacy/                 guard legacy — 512 assertion, 11 suite
+test/legacy/                 guard legacy — 416 assertion, 8 suite
 data/                        data user — TIDAK di-commit
 ```
 
@@ -166,7 +183,7 @@ data/                        data user — TIDAK di-commit
 - ❌ Menggabungkan `paramGroups` dan `presets` jadi satu.
 - ❌ Melewatkan teardown saat pindah mode.
 - ❌ Mengirim frame webcam ke server/provider mana pun (tetap mutlak).
-- ❌ Mengirim audio mic ke **cloud** sebagai default — loopback lokal (sidecar
-  native) boleh; cloud HANYA bila user memilih provider cloud sadar.
+- ❌ Mengirim audio mic ke **cloud** sebagai default — loopback lokal (whisper
+  in-process di core) boleh; cloud HANYA bila user memilih provider cloud sadar.
 - ❌ Memperbaiki balik aturan yang terkunci di `docs/` — kalaupun kelihatan
   seperti bisa disederhanakan, itu sudah dibalik orang dan punya alasan.

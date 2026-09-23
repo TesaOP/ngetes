@@ -2,7 +2,7 @@
 //
 // Privasi (aturan direvisi 2026-09-21): audio mic TIDAK PERNAH ke jaringan/cloud
 // KECUALI user memilih provider cloud secara sadar. Default provider "local" =
-// dikirim ke sidecar native di loopback 127.0.0.1 (proses lokal, bukan cloud).
+// dikirim ke /api/stt di server Rust loopback — whisper in-process, bukan cloud.
 // Provider "browser" = Whisper transformers.js 100% dalam tab (audio tak keluar
 // sama sekali). Provider "openai"/cloud = eksplisit dipilih user.
 // Frame webcam tetap tak pernah keluar (aturan itu tidak berubah).
@@ -98,11 +98,21 @@ export function shouldAutoStop(now, { spokeOnce: spoke, lastVoiceAt: lv, started
   return null;
 }
 
+// Basis HTTP via seam transport (bundle.js klasik dimuat sebelum modul ini;
+// modul ESM dieksekusi deferred). Embedded → loopback proses-sendiri.
+function apiBase() {
+  try {
+    const w = window.__transport;
+    if (w && typeof w.httpBase === 'function') return w.httpBase();
+  } catch (e) {}
+  return '';
+}
+
 // ── config ───────────────────────────────────────────────────────
 async function ensureConfig() {
   if (cfgLoaded) return;
   try {
-    const resp = await fetch('/api/config');
+    const resp = await fetch(apiBase() + '/api/config');
     if (resp.ok) {
       const c = await resp.json();
       if (c && c.stt && typeof c.stt === 'object') cfg = Object.assign({ ...DEFAULTS }, c.stt);
@@ -242,7 +252,7 @@ async function transcribeAndSend() {
     }
     // Provider transkripsi: "browser" = Whisper transformers.js in-browser
     // (audio tak keluar tab); selain itu ("local"/cloud) → kirim WAV ke server
-    // /api/stt (sidecar native atau penyedia cloud sesuai config.stt.provider).
+    // /api/stt (whisper in-process di core atau penyedia cloud sesuai config.stt.provider).
     const provider = String(cfg.provider || 'local').toLowerCase();
     let text;
     if (provider === 'browser') {
@@ -297,11 +307,11 @@ function f32ToWav16(f32) {
   return buf;
 }
 
-// Kirim audio ke server /api/stt (sidecar native / cloud). Server memilih
+// Kirim audio ke server /api/stt (whisper in-process di core / cloud). Server memilih
 // provider dari config.stt — klien cukup mengirim WAV mentah.
 async function transcribeViaServer(f32) {
   const wav = f32ToWav16(f32);
-  const resp = await fetch('/api/stt', { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: wav });
+  const resp = await fetch(apiBase() + '/api/stt', { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: wav });
   if (!resp.ok) {
     let msg = 'HTTP ' + resp.status;
     try { const j = await resp.json(); if (j && j.error) msg = j.error; } catch {}

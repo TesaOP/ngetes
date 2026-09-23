@@ -1,16 +1,17 @@
 # 🎭 Live2D Agent
 
-![Runtime](https://img.shields.io/badge/runtime-Bun-f472b6?logo=bun&logoColor=white)
+![Runtime](https://img.shields.io/badge/runtime-Rust-dea584?logo=rust&logoColor=white)
 ![Bahasa](https://img.shields.io/badge/inti%20logika-TypeScript-3178c6?logo=typescript&logoColor=white)
 ![Live2D](https://img.shields.io/badge/Cubism-4%20%2F%205-1ca9c4)
-![Test](https://img.shields.io/badge/test-457%20unit%20%2B%20416%20guard-3fb950)
+![Test](https://img.shields.io/badge/test-549%20unit%20%2B%20416%20guard-3fb950)
 ![Portable](https://img.shields.io/badge/portable-Windows-0078d6?logo=windows11&logoColor=white)
 
 Karakter Live2D yang dikendalikan AI — ngobrol lewat teks atau suara, menjawab dengan gerak,
 ekspresi, dan suara (TTS), dan **tetap hidup saat kamu diam**: bicara sendiri saat idle,
-menyapa saat kamu pergi/balik, membaca mood dari webcam. Runtime **Bun** (zero-dep),
-inti logika **TypeScript**, renderer satu jalur **Pixi 8 + Cubism SDK 5-r.5** (Core 6.0.1,
-tanpa MOC-version-hack).
+menyapa saat kamu pergi/balik, membaca mood dari webcam. Runtime **Rust** — server +
+jendela jadi satu exe (`Companion.exe`, tanpa runtime eksternal), inti logika
+**TypeScript** (di WebView2), renderer satu jalur **Pixi 8 + Cubism SDK 5-r.5**
+(Core 6.0.1, tanpa MOC-version-hack). Bun hanya alat build/dev.
 
 > **Model-agnostic:** jalan dengan model Cubism 4/5 **apa pun** yang kamu impor — tanpa
 > hardcode nama model, id parameter, atau range. Aturannya mengikat dan dijaga guard
@@ -38,18 +39,18 @@ tanpa MOC-version-hack).
 - **Renderer tunggal + efek framework** — Pixi 8 + Cubism SDK 5-r.5 (Core 6.0.1) memutar
   motion/ekspresi/physics/pose dan efek blink/breath/gaze/lip-sync dengan gate konfigurasi
   per-model; slider keekspresivan per sendi (kepala/mata/badan) langsung terasa saat digeser.
-- **Teruji, bukan cukup jalan** — 457 unit test + 416 assertion guard yang menguji kontrak
+- **Teruji, bukan cukup jalan** — 549 unit test + 416 assertion guard yang menguji kontrak
   kode asli (bukan salinan), termasuk uji invariansi: rig yang sama dalam kosakata Inggris /
   Jepang / Mandarin harus resolve ke role yang sama.
-- **Distribusi rapi** — `bun run dist` menghasilkan folder portable (server di-compile ke
-  exe, shell WebView2 ±3 MB sebagai sidecar) atau installer Inno Setup ±32 MB tanpa admin.
+- **Distribusi rapi** — `bun run dist` menghasilkan folder portable (SATU exe:
+  shell + server satu proses) atau installer Inno Setup ±32 MB tanpa admin.
 
 ## 🚀 Mulai cepat
 
 ```bash
-bun install                   # hanya untuk dev (test / tsc)
+bun install                   # hanya untuk dev (test / tsc / bundle client)
 bun run build                 # WAJIB — unduh Cubism Core (sekali) + bundle client
-bun run src/server/index.ts   # default http://127.0.0.1:8310
+bun run dev                   # server Rust (cargo run -p live2d-core) di http://127.0.0.1:8310
 ```
 
 `bun run build` otomatis mengunduh **Cubism Core** dari CDN resmi Live2D bila belum ada
@@ -59,7 +60,7 @@ Bisa juga manual: unduh dari [halaman SDK Web Live2D](https://www.live2d.com/sdk
 lalu taruh `live2dcubismcore.min.js` di `static/js/`.
 
 `PORT=9000` untuk port lain · `HOST=0.0.0.0` untuk akses LAN (loopback default) ·
-`bun run dev` sebagai alias. Lewati `build` dan aplikasi jalan tapi **tanpa otak** — chat
+`bun run dev` sebagai alias (server Rust). Lewati `build` dan aplikasi jalan tapi **tanpa otak** — chat
 mati diam-diam karena `window.__agent` tidak terpasang (engine degrade gracefully, bukan crash).
 
 **Clone baru tanpa model?** Aset berlisensi tidak di-commit, jadi `data/model/` kosong —
@@ -67,7 +68,7 @@ aplikasi terbuka dengan **layar impor** (pilih folder model atau impor `.zip`). 
 terakhir diingat otomatis; menghapus model dari UI tidak menghapus sheet/preset/motion
 buatanmu — impor ulang dengan nama sama dan semuanya tersambung kembali.
 
-## 📦 Rilis portable (tanpa Bun/Rust di mesin user)
+## 📦 Rilis portable (tanpa toolchain di mesin user)
 
 ```bash
 bun run build:pet   # sekali — bangun cangkang Tauri (butuh Rust toolchain)
@@ -77,7 +78,7 @@ bun run dist        # rakit dist/Live2D-Agent/ — siap di-zip & dibagikan
 Pasang Inno Setup 6 (`winget install JRSoftware.InnoSetup`) dan `bun run dist` otomatis
 menghasilkan **`dist/Live2D-Agent-Setup.exe`** (±32 MB): installer per-user tanpa admin,
 deteksi WebView2, uninstall membiarkan data user utuh. Tanpa Inno Setup, alur zip tetap
-jalan. Server bisa di-cross-compile lintas OS (`bun run dist -- bun-linux-x64`).
+jalan. Cross-compile server per-OS dibangun di OS-nya masing-masing (biasanya via CI).
 
 ## 🧩 Arsitektur
 
@@ -88,11 +89,12 @@ flowchart LR
         BUNDLE["bundle.js — TypeScript<br/>Motion DSL · Registry · Runtime<br/>otak agent · i18n"]
         VIEW["live2d-view.mjs — Pixi 8 + Cubism 5-r.5<br/>efek framework: blink/breath/gaze/lip-sync"]
     end
-    subgraph server["Server Bun (loopback default)"]
-        API["index.ts — 40+ route API<br/>+ static + upload"]
-        AGENT["server/agent — agentic loop<br/>21 tool · permission gate<br/>planning · memory · subagent · browser CDP"]
-        MODES["vtuber.ts · assistant.ts · pet.ts"]
-        LLM["llm-client.ts — multi-provider<br/>role routing + fallback"]
+    subgraph app["Companion.exe — SATU exe SATU proses"]
+        API["core/src — server Rust in-process<br/>/api/* + static + upload (axum loopback)"]
+        AGENT["core/src/agent — agentic loop<br/>tool · permission gate<br/>planning · memory · subagent · browser CDP"]
+        MODES["vtuber · assistant · pet · mode"]
+        LLM["core/src/llm.rs — multi-provider<br/>role routing + fallback"]
+        WIN["WebView2 — jendela app + pet<br/>(tanpa IPC command)"]
     end
     PROVIDERS["OpenAI-compatible · Gemini · Groq<br/>Anthropic · ElevenLabs · Gradio · mock"]
     MODEL["data/model/&lt;nama&gt;/<br/>Cubism 4/5 + .exp3 + .motion3"]
@@ -102,6 +104,7 @@ flowchart LR
     API --> AGENT --> LLM
     API --> MODES
     API --> LLM --> PROVIDERS
+    APP -- "tampil di" --> WIN
     APP -- "pose komposisi jiwa (aditif)" --> VIEW
     BUNDLE -- "pilih motion · ekspresi" --> VIEW
     VIEW -- "Cubism Core 6.0.1" --> MODEL
@@ -117,12 +120,12 @@ __agent / __i18n`.
 
 | Lapisan | Lokasi | Karakter |
 |---|---|---|
-| Server — 40+ route, LLM proxy, static, upload | `src/server/index.ts` | TS penuh, teruji unit |
-| Otak agent — prompt, directive, proaktif | `src/client/agent/` + `src/server/agent/` | TS penuh, 21 tool + approval/memory/session/undo |
-| Browser agent — Edge/Chrome CDP nyata | `src/server/browser/` + `src/client/browser/` | AX/DOM inspect, trusted input, screenshot preview, policy origin |
+| Server — /api/*, LLM proxy, static, upload | `core/src` (Rust, in-process di shell) | Rust penuh, teruji cargo |
+| Otak agent — prompt, directive, proaktif | `src/client/agent/` + `core/src/agent/` | Rust + TS, tool + approval/memory/session/undo |
+| Browser agent — Edge/Chrome CDP nyata | `core/src/browser/` + `src/client/browser/` | AX/DOM inspect, trusted input, screenshot preview, policy origin |
 | Panel agent — workspace 4 kolom | `src/client/agent/panel/` + `src/client/shell/` | TASK/chat + Review/Terminal/Browser; TS penuh |
 | Motion core — DSL, registry, runtime, easing | `src/client/animation/*.ts` | TS penuh, teruji unit |
-| Mode system — VTuber / Assistant / Pet | `src/server/{vtuber,assistant,pet}.ts` | satu mode aktif, teardown sebelum pindah |
+| Mode system — VTuber / Assistant / Pet | `core/src/{vtuber,assistant,pet,mode}.rs` (`src/server/*.ts` arsip fixture test) | satu mode aktif, teardown sebelum pindah |
 | **Renderer — satu jalur render + efek framework** | `src/live2d/view/` + `src/live2d/` | TS penuh; Cubism 5-r.5 vendored + Core 6.0.1 |
 | Release portable — compile + rakit folder | `src/dist.ts` → `dist/Live2D-Agent/` | sidecar shell Tauri |
 | Driver karakter & UI — pose komposisi jiwa, konfigurasi, sheet | `static/js/app.js` (±8.900 baris) | dijaga guard |
@@ -148,7 +151,7 @@ native + user) → Runtime (priority + blend + watchdog rAF) → Live2D`.
 ## 🧪 Kualitas
 
 ```bash
-bun run test         # 457 unit test (bun test) + 416 guard legacy (10 suite)
+bun run test         # 549 unit test (bun test) + 416 guard legacy (8 suite)
 bun run test:unit    # hanya unit test TS
 bun run test:guards  # hanya guard legacy
 bunx tsc --noEmit    # type-check
@@ -163,8 +166,9 @@ LLM di-stub ke `mock`) atau menulis `data/config.json`. Detail filosofi: [`AGENT
 - `data/config.json` (apiKey plaintext) **tidak pernah disajikan** lewat HTTP statis — 403.
 - Path traversal (`../`) → 403; default bind **loopback**; body cap per endpoint (413).
 - `/api/*` tak dikenal → 404 JSON, bukan SPA fallback.
-- Inferensi kamera & STT **100% lokal di browser** (transformers.js) — frame/audio tidak
-  pernah di-upload.
+- Inferensi kamera **100% lokal di browser** (transformers.js) — frame webcam tidak
+  pernah di-upload. STT provider default `local` = Whisper in-process di server Rust;
+  provider `browser` = transformers.js dalam tab; cloud hanya bila user memilihnya sadar.
 - Tool agent pengubah (`write_file`, `run_command`, browser click/type/navigate, …)
   ditahan server sampai user menyetujui di kartu approval — di panel maupun REPL.
 - API localhost privileged menolak Origin asing; browser agent hanya HTTP(S),

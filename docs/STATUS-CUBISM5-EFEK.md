@@ -28,7 +28,7 @@ LLM → Motion/Behavior Director → app.js komposisi jiwa (ADITIF)
 - **Stack lama (Pixi 6 + pixi-live2d + MOC-hack) sudah DIHAPUS** — git
   history menyimpan semuanya. PixiJS 6 global tersisa hanya sebagai utilitas
   renderer overlay efek emosi (emotion-overlay.js, canvas terpisah).
-- **Gate**: 457 unit test + 416 guard (10 suite) + tsc — hijau penuh.
+- **Gate**: 549 unit test + 416 guard (8 suite) + tsc — hijau penuh.
 
 ### Belum teruji (konsolidasi — catatan untuk sesi berikutnya)
 
@@ -63,6 +63,351 @@ sudah selaras dengan arsitektur ini.
 4. Keputusan terbuka lama: branch usang `tes`/`feat/cubism-official-renderer`
    (user bilang hapus manual saat sudah stabil) + blocker Core di SHA lama
    GitHub (risiko sudah diterima user — jangan dibuka lagi).
+
+## UPDATE 2026-09-23 (78) — AUDIT KETERGANTUNGAN RUNTIME: purge Bun/Node/Python + dok selaras
+
+Permintaan user: cek apakah masih ada ketergantungan runtime selain Rust, lalu
+bersihkan file mati dan selaraskan dokumen. Hasil audit (grep sistematis
+`core/`, `agent-shell/`, `engine/`, `src/`, `static/`, test, config):
+
+**Runtime produk sudah 100% Rust + WebView2.** Semua `Command::new` produksi =
+`Companion.exe` sendiri (fallback pet), Chrome/Edge (overlay pet + browser agent
+CDP), powershell/cmd/sh (tool `run_command`), git, taskkill — nol bun/node/
+python. Engine TTS/STT = library in-process (`ort`, `whisper-rs`); bin sidecar
+`engine/src/main.rs` sudah dihapus sesi sebelumnya. Bun hanya alat build/dev
+(`src/build.ts`, `src/dist.ts`, `scripts/setup-core.mjs`, test) — sesuai kontrak.
+
+**Dihapus:**
+- `agent-shell/gen/` (untracked; schema Tauri hasil generate build) + entri
+  `.gitignore` baru supaya tidak muncul lagi sebagai clutter.
+- `playwright` dari devDependencies (`package.json` + lockfile) — nol pemakaian
+  terverifikasi repo-wide.
+
+**Dipertahankan dengan alasan (bukan usang):** `src/server/` (±30 file TS) masih
+fixture impor ±20 test — buangnya butuh migrasi test, keputusan terpisah.
+`static/js/pixi.6.5.10.min.js` dipakai `emotion-overlay.js` sebagai utilitas
+renderer global (bukan jalur Live2D — sudah dikomentari eksplisit di
+`index.html`). `ws`/`@types/ws` hidup hanya untuk arsip `src/server/` yang
+dites. `src/cli/agent.ts` REPL dev tools. Tidak ada file rongsokan (`*.tmp`,
+`*.log`, `*.bak`) sama sekali. Tiga kandidat orphan (`window-contract.ts`,
+`CapabilityAnalyzer.ts`, `browser-types.ts`) positif palsu — ketiganya ter-impor.
+
+**Dokumen diralat (kode yang benar — dok ikut):**
+- README: badge runtime Bun→Rust, tagline "Runtime Bun (zero-dep)" → runtime
+  Rust satu exe; tabel arsitektur baris "Mode system" menunjuk `src/server/`
+  → `core/src/*.rs` (server arsip ditandai); klaim "STT 100% di browser"
+  diselaraskan dgn aturan privasi revisi 2026-09-21 (local=in-process core,
+  browser=dalam tab, cloud=hanya pilihan sadar).
+- AGENTS.md + README + STATUS header + package.json description: angka gate
+  457→**549** unit (terukur hari ini), guard "10 suite"→**8 suite**, peta kode
+  "512 assertion, 11 suite"→"416 assertion, 8 suite"; dua rujukan "sidecar
+  native" (aturan STT + seksi Jangan) → "whisper in-process di core" — sidecar
+  exe sudah tidak ada.
+- Komentar `static/js/voice-input.js` (baris 5, 255, 310): "sidecar native" →
+  server Rust in-process.
+
+**Gate**: build bersih + tsc bersih + `bun run test` hijau (549 unit + 416
+guard, 8 suite, 0 fail). Branch `migration/pixi8-cubism`, belum di-push.
+
+**Untuk sesi berikutnya:** bila mau membuang arsip `src/server/` + dep `ws`
+sekalian, kerjakan sebagai satu commit migrasi test (test TS yang mengimpor
+fixture arsip dialihkan ke fixture inline/frozen di `test/fixtures/`), gate
+tetap harus hijau.
+
+## UPDATE 2026-09-22 (77) — PET SE-PROSES: window kedua dalam 1 PID, terbukti runtime
+
+User diskusi: pet terpisah tanpa manfaat isolasi nyata (mati induk = mati
+server = pet jadi halaman mati) — diputus GABUNG. Dieksekusi TANPA menyentuh
+core logic/agent/routes/frontend/capability:
+
+**Implementasi (bridge callback, arah dependensi tetap shell→core):**
+- `core/src/pet.rs` (+~40 baris): `PetHost {open, close}` + `PET_HOST:
+  OnceLock` + `register_pet_host()` + `notify_closed()` + flag
+  `in_process`. `launch()` coba host dulu (sukses → `how:"tauri-window
+  (in-process, satu PID)"`), fallback spawn/browser UTUH untuk dev tanpa
+  shell. `status/close` mengenali flag; routes & bentuk respons IDENTIK.
+- `agent-shell/src/main.rs`: `build_pet_window()` (konfig overlay persis
+  pindahan kode lama) didaftarkan di setup; `run()` meneruskan
+  `WindowEvent::Destroyed` label "pet" → `notify_closed()`. Mode CLI `pet`,
+  enum `Mode`, `query_model` DIHAPUS (pet via panel/API saja).
+- Docs: `MODES.md` + diagram `ARCHITECTURE` = window kedua se-proses.
+
+**Bukti runtime (release `Companion.exe`, port 8326):**
+- `POST /api/pet/launch` → `how:"tauri-window (in-process, satu PID)"`;
+  tasklist TETAP 1 `Companion.exe` (PID 8108) — sebelumnya 2 proses.
+- EnumWindows PID 8108: "Companion" 1294×838 + "Companion Pet" 434×648.
+- Screenshot pet: Lumine render di overlay transparan ("pet active").
+- Klik-tembus FUNGSIONAL di level OS: exstyle 262424 → 786744
+  (delta +LAYERED+TRANSPARENT persis) saat on; kembali 262424 saat off;
+  state API mengikuti. Transparansi: frameless (screenshot latar hitam =
+  tembus pandang), always-on-top native, skip-taskbar.
+- `POST /api/pet/close` → state bersih; taskkill → pohon mati total tanpa
+  yatim, port bebas.
+- Gate: cargo 84 + check companion bersih (2 warning lawas core).
+
+## UPDATE 2026-09-22 (76) — BUKTI RUNTIME: satu proses, IPC terbukti, bug pet-port
+
+User minta bukti produksi berjalan (bukan kertas): process tree + jalur
+frontend→Rust + jaminan src/server bukan dependensi internal. Dieksekusi
+langsung di `target/release/Companion.exe` (port uji 8325, dua putaran).
+
+**1. Satu proses, tanpa spawning backend — TERBUKTI:**
+- `Companion.exe` (PID 7576) → anak `msedgewebview2.exe` (6256,
+  `--webview-exe-name=Companion.exe`, user-data `com.live2d.companion`) →
+  cucu gpu/network/storage/renderer/crashpad. SEMUA di bawah satu pohon.
+- Listener `127.0.0.1:8325` dimiliki PID 7576 (= Companion itu sendiri).
+  Tanpa `live2d-core.exe`/exe backend lain di mana pun.
+- Statis: `rg Command:: agent-shell/src/main.rs` = kosong (shell tak spawn
+  apa pun); satu-satunya spawn ada di `core/src/pet.rs` (jendela pet,
+  by-design — butir 3).
+
+**2. IPC terbukti via perilaku (CDP remote-debug ditolak WebView2 embedded,
+jadi pembuktian lewat konsekuensi yang tak terbantahkan):**
+- Screenshot jendela: Lumine ter-render + panel chat menyapa ("Hi! I'm
+  lumine~"). Rantai yang wajib benar agar ini terjadi: halaman embed
+  (origin tauri.localhost) → `refreshApiBase()` via IPC `server_port` →
+  API=http://127.0.0.1:8325 → model + chat termuat.
+- Kuncinya PORT UJI 8325 (bukan default 8310): tanpa IPC yang mengembalikan
+  8325, `API` akan menunjuk origin embed/tautan mati dan aplikasi tampil
+  kosong (model 404, chat mati). Aplikasi tampil PENUH → invoke IPC
+  `server_port` BERHASIL saat runtime. Peta jalur per-domain: MODE +
+  version + port via IPC (`transport.modeGet/modeSet/coreVersion`,
+  jembatan HTTP ber-warn); ~70 rute sisanya HTTP loopback se-proses
+  (bridge transisi + adapter CLI/OBS) — bukan ke proses lain.
+- Batas: panggilan invoke per-fungsi tak diobservasi langsung (butuh
+  DevTools di WebView rilis); judul "· core native" belum tampil saat
+  dicek — kosmetik, misteri kecil, tak memengaruhi fungsi.
+
+**3. Pet = proses kedua (JUJUR — belum digabung, menunggu putusan user):**
+- `POST /api/pet/launch` → `Companion.exe pet ...` (PID anak proses utama),
+  `state.shell="tauri"`. Screenshot: Lumine di overlay transparan
+  ("pet active"). `POST /api/pet/close` + taskkill → pohon bersih total,
+  tanpa yatim, port bebas.
+- **BUG NYATA tertangkap saat verifikasi:** URL pet memakai port dari ENV
+  (`post_pet_launch` baca `PORT`/default 8310) BUKAN port aktual bind —
+  di port geser (8325) pet menunjuk `:8310` yang mati. Fix: `SERVER_PORT:
+  OnceLock<u16>` diisi `serve()`, dibaca peluncur (+ test
+  `server_port_fallback_env_tanpa_serve`); rebuild + verifikasi ulang:
+  URL pet = `:8325` ✓ + screenshot pet ✓.
+
+**4. src/server bukan dependensi internal produksi:**
+- Bundle prod (`src/client`, `src/live2d`) tidak mengimpor `src/server`
+  (hanya 2 komentar bentuk event). Server Bun tak dijalankan; HTTP yang
+  dipakai frontend = axum se-proses. `src/server/*` = fixture 20 file test.
+- Cleanup: semua instance + WebView dimatikan, port bebas, screenshot bukti
+  dihapus dari Temp.
+
+## UPDATE 2026-09-22 (75) — BERSIH-BERSIH: hapus yang mati, kunci yang hidup
+
+User: "apakah udah gada lagi yang terpisah? kalau gitu hapus semua yang udah
+ga dibutuhin." Audit + eksekusi:
+
+**DIHAPUS (verifikasi nol konsumen dulu):**
+- `engine/src/main.rs` (bin sidecar HTTP `live2d-engine.exe`, 253 baris) +
+  `[[bin]]` + dep `tiny_http` (dipakai bin itu saja) — satu-satunya perujuk
+  adalah `src/server/engine.ts` (arsip Bun, tak diimpor test mana pun).
+  Engine kini murni library in-process (`cargo test -p live2d-engine`: 6/6).
+- `agent-shell/Cargo.lock` (sarang — workspace memakai root lock).
+- Jejak `agent-shell/target/...` di skrip/docs — workspace memusatkan target
+  di root (binary nyata di `target/{release,debug}/Companion.exe`, BUKAN
+  `agent-shell/target/`): `dist.ts` SHELL_EXE, `start.bat` (2 titik),
+  `core/src/pet.rs` + `src/server/pet.ts` kandidat shell, `MODES.md`.
+  Ini bug laten: `dist.ts` lama menunjuk exe yang tak pernah ada di sana.
+- Komentar basi (`pick_port` "sidecar menyusul", header `engine/lib.rs`,
+  `core/src/main.rs`) + `.gitignore` dipadatkan + `engines/models/`
+  (ggml-base.bin 148MB hasil unduhan — runtime data) di-ignore.
+
+**DITAMBAH (kecil, menutup lubang):**
+- Fitur `engine-stt` terus ke Companion
+  (`agent-shell/Cargo.toml`: `engine-stt = ["live2d-core/engine-stt"]`;
+  `cargo check -p companion --features engine-stt` lolos — whisper compile
+  di mesin ini). Sebelumnya STT native TAK PERNAH bisa masuk Companion
+  (flag docs menunjuk target yang salah). `TROUBLESHOOTING.md` diluruskan.
+- Kandidat `target/debug/Companion.exe` di peluncur pet (dev tanpa build
+  release tetap bisa buka pet; fallback Chrome/Edge dipertahankan untuk
+  dev-browser tanpa shell).
+
+**DIPERTAHANKAN (dengan alasan, bukan sisa malas):**
+- `src/server/*` — 20 file test mengimpor fungsi murninya langsung;
+  menghapus = menulis ulang suite TS. Status tetap ARSIP + fixture
+  (sudah di AGENTS.md). Logika Rust-nya sudah punya 83 test sendiri.
+- Bin `live2d-core` (`cargo run -p live2d-core`) — host adapter HTTP untuk
+  dev browser/CLI/OBS; tak dikemas ke produksi (dist hanya Companion.exe).
+  Komentar main.rs dilabeli ulang dev/eksternal.
+- `src/cli/agent.ts` (REPL = konsumen adapter CLI), `engines/models/`
+  (data), fallback Chrome pet (dev tanpa shell), `pixi.6.5.10.min.js`
+  (masih dipakai overlay emosi).
+
+**Bonus tangkapan:** test `agent::bus::emit_read_reset` flaky (bus GLOBAL
+dibagi thread test — `reset()` dari test loop assistant di tengah baca;
+gagal 1× di run ini, lolos run sebelumnya). Dikunci via `BUS_TEST_LOCK`
+di bus + test assistant. Full suite hijau deterministik.
+
+**Gate:** cargo 83 + engine 6 + bun 549 + tsc bersih + check workspace +
+check companion+engine-stt. Guard 416 tak diulang (static/js tak tersentuh
+sesi ini; terakhir hijau entri 74).
+
+## UPDATE 2026-09-22 (74) — TARGET FINAL: frontend embed + IPC internal bertahap
+
+User (target final mengikat): single-binary & single-process BUKAN sekadar
+"hapus Bun" — `live2d-core` sebagai library in-process (bukan exe di-spawn),
+frontend di-embed, internal WebView↔Rust via IPC bertahap, HTTP/Axum hanya
+adapter eksternal opsional (CLI/OBS), tanpa rewrite besar, render loop tetap
+di WebView, bukti = release build nyata. Dieksekusi sebagai fondasi +
+domain pertama (aturan migrasi: selubung-tipis + helper-bernama + jembatan
+dicabut per-domain — detail di ARCHITECTURE §aturan-migrasi).
+
+**Fondasi embed (syarat IPC — menutup §6b permanen):**
+- `tauri.conf.json` `frontendDist: ../static` (di-embed ke binary saat
+  compile) + `WebviewUrl::App("index.html"/"pet.html")` (origin lokal →
+  command aplikasi diizinkan; dibuktikan via docs, tak perlu capability
+  khusus untuk app command) + `capabilities/default.json` (granular
+  core:window warisan Stage-1 dipertahankan; blok `remote` loopback yang
+  mati dibuang — origin kini lokal).
+- Command IPC (selubung tipis `live2d_core`, tanpa duplikat logika):
+  `core_version`, `server_port` (State u16), `pet_model` (State ?model=
+  peluncur — URL App tak bawa query), `get_mode`, `set_mode` (status<400).
+- `tower-http` CorsLayer::permissive di router core = jembatan transisi
+  (loopback saja): domain-belum-migrasi + CLI/OBS/dev tetap jalan lintas
+  origin sampai migrasinya tiba.
+
+**Frontend (tanpa rewrite — basis disamakan, call-site utuh):**
+- `transport/`: `isEmbedded/initLoopback/httpBase/invoke` + helper domain
+  `modeGet/modeSet/coreVersion` (IPC bila embedded + jembatan HTTP warn;
+  HTTP bila dev). `bundle-entry`: initLoopback + indikator via coreVersion.
+- `brain.ts`: const API DIHAPUS → `httpBase()` + `transport.modeGet()`
+  (single source di transport; guard brain dialihkan ke sini).
+- `app.js`: `let API` + `refreshApiBase()` (IPC server_port; fire-forget
+  eval + await di boot funnel) + loader absolut + settings.url berbasis API.
+- `mode-runtime.js`/`motion-editor.js`/`voice-input.js`/`pet.html`: basis
+  via helper (pet mandiri — tanpa bundle). `vtuber.html` SENGAJA utuh
+  (adapter eksternal OBS, same-origin HTTP — bukti HTTP eksternal hidup).
+- Guard `test-api-origin.js` diperbarui di commit yang sama (5 asersi
+  satu-exe baru); `transport.test.ts` 7→13 (embedded/port/IPC/permukaan).
+
+**Domain #1 — MODE (migrasi IPC penuh pertama):** 4 situs mode-runtime +
+1 brain via helper; server `set_mode`/`status` dipakai ulang oleh command
+dan handler HTTP (satu kebenaran). ~70 rute sisanya mengikuti pola yang
+sama sesi berikut (usulan: config → assistant events → pet → sisanya).
+
+**Bukti release NYATA (`cargo build --release -p companion`, perintah yang
+sama dipakai `bun run dist`):**
+- `target/release/Companion.exe` **31,9 MB**, 23 Sep 2026 01:26 — link sukses.
+- Frontend ter-embed TERBUKTI byte-level: 29/29 file `static/` dikompilasi
+  jadi aset brotli content-hash di `target/release/build/companion-*/out/
+  tauri-codegen-assets/` (mis. index.html 74.862 byte → 19 KB), dan blob
+  identik ditemukan di dalam `Companion.exe` pada offset 22486534
+  (full-asset identical: true). String-check mentah gagal sebelumnya justru
+  karena isinya terkompresi — bukan karena tak ada.
+- 5 command IPC ter-registrasi (`core_version`, `server_port`, `pet_model`,
+  `get_mode`, `set_mode`); `rg Command::spawn main.rs` = kosong (tanpa
+  proses kedua); command memanggil fungsi `live2d_core` yang sama dengan
+  handler HTTP (satu kebenaran).
+- Jalan memutar: build pertama OOM (`STATUS_STACK_BUFFER_OVERRUN`, RAM bebas
+  cuma 600MB/7,7GB) pada profil lama (`lto=thin`, `codegen-units=1`) —
+  profil release dilonggarkan (`lto=false`, `cu=16`, `opt=s`+strip tetap;
+  `Cargo.toml` + cara mengetatkan via env) + `CARGO_BUILD_JOBS=2` → lolos
+  15 mnt; rebuild incremental 2 mnt.
+- Gate: cargo 83 + bun 549 (+6 transport) + guard 416 + tsc bersih.
+- Batas jujur: klik-UI langsung (jendela terbuka, mode pindah via IPC,
+  capability penuh) tetap tangan user — headless tak bisa membuka WebView.
+  Yang terbukti di sini: satu binary berisi semuanya + kanal IPC terdaftar
+  + seluruh kapabilitas utama lolos gate tanpa regresi.
+
+## UPDATE 2026-09-22 (73) — Produk bernama Companion.exe (satu proses utama)
+
+User (dengan diagram): `Companion.exe` = SATU proses utama (Tauri → WebView2
+→ frontend JS + Rust Core → Agent/LLM/Memory/TTS/STT/Tools/Browser/
+Persistence), semuanya dalam satu proses OS. Dieksekusi sebagai rename
+produk — tanpa mengubah arsitektur proses yang sudah satu (entri 72):
+
+- `agent-shell/Cargo.toml` package `live2d-shell` → `companion` (binary
+  `target/release/Companion.exe`); `tauri.conf.json` productName → Companion,
+  identifier → `com.live2d.companion`.
+- `src/dist.ts` + `start.bat` + `installer.iss` (MyAppExeName) +
+  `core/src/pet.rs` + `src/server/pet.ts` (arsip): kandidat exe →
+  `Companion.exe`.
+- Docs: diagram `ARCHITECTURE` digambar ulang persis struktur user (Tauri →
+  WebView2 + Rust Core + 9 modul); `AGENTS.md`/`MODES.md`/`README` →
+  `Companion.exe`. Folder `dist/Live2D-Agent/` + nama setup + AppName
+  installer SENGAJA tak diganti (trivia kemasan, bukan proses).
+
+## UPDATE 2026-09-22 (72) — SATU EXE SATU PROSES: server pindah in-process ke shell
+
+User: "pokoknya jadi satu proses aja … file exe di klik dia udah jalanin
+semua dalam satu binary." Dieksekusi — sidecar dua-proses (shell + exe
+server terpisah) dibuang.
+
+**Yang berubah:**
+- `agent-shell/src/main.rs::ensure_server` — bila port masih kosong, server
+  Rust (`live2d_core::serve`) dinyalakan **in-process** di thread runtime
+  tokio sendiri (root dari lokasi exe / cwd dev). Bila port sudah dilayani
+  server milik kita (dobel-klik kedua / dev `cargo run -p live2d-core`),
+  menempel tanpa server baru; bila diduduki aplikasi asing, jendela tampil
+  apa adanya (perilaku lama). Blok spawn-`Command` + `server_child` +
+  kill-on-exit DIHAPUS; `run()` tanpa handler Exit.
+- `agent-shell/Cargo.toml` — dep `live2d-core` (path) + `tokio`
+  (rt-multi-thread/net/time/fs/macros/io-util/sync) kembali untuk host
+  in-process. Tanpa `invoke_handler` (tetap kosong), tanpa axum langsung di
+  shell (cukup `live2d_core::serve`).
+- `src/dist.ts` — kemas SATU exe: `[1/4]` bundle → `[2/4]`
+  `cargo build --release -p live2d-shell` → `[3/4]` salin `static/` +
+  `live2d-shell.exe` → `[4/4]` installer. `live2d-core.exe` tak lagi
+  dibangun/dikemas; `BACA-SAYA.txt` = "dobel-klik = server + jendela satu
+  proses". `core/src/paths.rs` komentar diselaraskan (akar = folder exe).
+- Docs: `ARCHITECTURE` status/diagram/roadmap → satu-exe-satu-proses;
+  `AGENTS.md` ringkasan + aturan + peta kode; `README` distro + diagram;
+  `MODES.md` sidecar → in-process.
+
+**Tidak tersentuh:** frontend (wire HTTP loopback identik — `transport/`
+HTTP-only tak berubah), seluruh `/api/*`, pet (jendela KEDUA tetap proses
+terpisah yang menempel ke server yang sama via URL eksplisit — satu server,
+dua jendela).
+
+## UPDATE 2026-09-22 (71) — SATU JALUR: paritas rute terakhir + babat dual-flow
+
+User: "apakah udah gada ketergantungan lagi ke bun? … kita cuman mau satu
+jalur, tidak ada kode yang ngebuat flow jadi dua/terpisah." Dieksekusi —
+sengaja melanggar bagian docs yang mengunci dual-flow (IPC-first,
+TauriTransport-vs-HttpTransport, compat-adapter-opsional, "Bun tetap untuk
+dev") karena keputusan satu-jalur lebih tinggi dari rencana lama.
+
+**Paritas rute (core kini 100% permukaan Bun):**
+- `POST /api/test` (baru di `core/src/lib.rs::post_test`) — port
+  `handleTestConnection`: kunci asli tersimpan menang atas mask form,
+  non-mock tanpa apiKey → 400, `call_llm` probe "Reply with just: OK",
+  tulis `testStatus`/`lastError` via `save_connections` (gagal test tak
+  menyetel cooldown). Tanpa ini tombol Test Connection mati di Rust-only.
+- `POST /api/motions` (baru `post_motions_h` + `motions::create_motion`) —
+  port `handleMotionsPost`: sanitize `motion_dsl` lalu tulis; 409 bila id
+  sudah ada ("Pakai nama lain atau Simpan (timpa)"); PUT tetap jalur timpa.
+- Bonus: `serve()` kini baca env `HOST` (default loopback; `HOST=0.0.0.0`
+  untuk LAN — kontrak lama dipertahankan di Rust).
+
+**Babat dual-flow (satu jalur HTTP Rust):**
+- `src/client/transport/` → HTTP-only: `hasTauri`/`tauriInvoke`/`appInfo`
+  DIHAPUS; `bundle-entry.ts` indikator core via `GET /api/version` HTTP
+  (bukan IPC); `test/transport.test.ts` 9→7 test + assertion tanpa-IPC.
+- `agent-shell`: command `app_info` + `invoke_handler` DIHAPUS; dep
+  `live2d-core` di shell DIHAPUS (shell = wadah jendela murni, backend via
+  HTTP sidecar). `window.__TAURI__` tersisa hanya untuk kontrol jendela
+  native (pet), bukan API.
+- Skrip: `package.json` dev/start = `cargo run -p live2d-core` (bukan
+  `bun run src/server/index.ts`); `start.bat` menyalakan live2d-core
+  (exe bila ada, else cargo); `src/dist.ts` tak lagi menyalin
+  `engines/live2d-engine.exe` (engine = lib in-process).
+- Docs: `ARCHITECTURE` status → DIEKSEKUSI-SATU-JALUR (§2/diagram/rantai/
+  §6b opsi A ditolak); `AGENTS.md` ringkasan→Backend Rust + Bun=build-tool,
+  peta kode `src/server/*`→ARSIP; `README` quickstart+diagram→Rust;
+  `MODES.md` sidecar→`live2d-core.exe`; `paths.ts` TS = dev/test saja
+  (produksi = `core/src/paths.rs`).
+- `src/server/` TIDAK dihapus (belasan test TS mengimpor fungsi murninya
+  langsung) — statusnya ARSIP referensi + fixture test; larangan: jangan
+  tambah rute/fitur di sana.
+
+**Sisa ketergantungan Bun (disengaja, build/dev saja):** `Bun.build`
+(`src/build.ts` 3 entry), `bun test`, `bunx tsc`, `bun run build/dist/agent`.
+Bukan runtime — produksi (`dist/`) tanpa Bun.
 
 ## UPDATE 2026-09-22 (70) — Motions generate + write (PUT) diport ke Rust (koreksi entri 69)
 
