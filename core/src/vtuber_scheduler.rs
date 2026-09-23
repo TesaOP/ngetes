@@ -494,4 +494,21 @@ mod tests {
         assert_eq!(estimate_speech_ms(&"x".repeat(1000)), 12000); // clamp
         assert_eq!(speak_ms("ab"), 500 + 2 * 62 + SPEAK_BUFFER_MS);
     }
+
+    #[test]
+    fn persona_diteruskan_ke_system_prompt() {
+        // Port vtuber-scheduler TS "persona diteruskan ke system prompt LLM":
+        // persona dari set_config masuk ke system_prompt() yang dipakai
+        // spawn_run saat merakit prompt balasan.
+        let mut s = Scheduler::new();
+        assert!(s.system_prompt().contains("ceria dan ramah"), "default harus ada");
+        s.set_config(ConfigPatch { persona: Some("dingin dan sinis".into()), ..Default::default() });
+        assert!(s.system_prompt().contains("dingin dan sinis"));
+        // whitespace-only persona ditolak — yang lama bertahan (guard trim).
+        s.set_config(ConfigPatch { persona: Some("   ".into()), ..Default::default() });
+        assert!(s.system_prompt().contains("dingin dan sinis"), "persona whitespace tak menimpa");
+        // persona panjang dipotong 800 char (guard cap) — tidak meledak.
+        s.set_config(ConfigPatch { persona: Some("x".repeat(1000)), ..Default::default() });
+        assert!(s.persona().chars().count() <= 800);
+    }
 }

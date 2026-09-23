@@ -3,7 +3,7 @@
 ![Runtime](https://img.shields.io/badge/runtime-Rust-dea584?logo=rust&logoColor=white)
 ![Bahasa](https://img.shields.io/badge/inti%20logika-TypeScript-3178c6?logo=typescript&logoColor=white)
 ![Live2D](https://img.shields.io/badge/Cubism-4%20%2F%205-1ca9c4)
-![Test](https://img.shields.io/badge/test-549%20unit%20%2B%20416%20guard-3fb950)
+![Test](https://img.shields.io/badge/test-420%20unit%20%2B%20351%20guard%20%2B%20115%20cargo-3fb950)
 ![Portable](https://img.shields.io/badge/portable-Windows-0078d6?logo=windows11&logoColor=white)
 
 Karakter Live2D yang dikendalikan AI — ngobrol lewat teks atau suara, menjawab dengan gerak,
@@ -39,7 +39,7 @@ jendela jadi satu exe (`Companion.exe`, tanpa runtime eksternal), inti logika
 - **Renderer tunggal + efek framework** — Pixi 8 + Cubism SDK 5-r.5 (Core 6.0.1) memutar
   motion/ekspresi/physics/pose dan efek blink/breath/gaze/lip-sync dengan gate konfigurasi
   per-model; slider keekspresivan per sendi (kepala/mata/badan) langsung terasa saat digeser.
-- **Teruji, bukan cukup jalan** — 549 unit test + 416 assertion guard yang menguji kontrak
+- **Teruji, bukan cukup jalan** — 420 unit test (Bun) + 351 assertion guard + 115 test Rust (cargo) yang menguji kontrak
   kode asli (bukan salinan), termasuk uji invariansi: rig yang sama dalam kosakata Inggris /
   Jepang / Mandarin harus resolve ke role yang sama.
 - **Distribusi rapi** — `bun run dist` menghasilkan folder portable (SATU exe:
@@ -125,7 +125,7 @@ __agent / __i18n`.
 | Browser agent — Edge/Chrome CDP nyata | `core/src/browser/` + `src/client/browser/` | AX/DOM inspect, trusted input, screenshot preview, policy origin |
 | Panel agent — workspace 4 kolom | `src/client/agent/panel/` + `src/client/shell/` | TASK/chat + Review/Terminal/Browser; TS penuh |
 | Motion core — DSL, registry, runtime, easing | `src/client/animation/*.ts` | TS penuh, teruji unit |
-| Mode system — VTuber / Assistant / Pet | `core/src/{vtuber,assistant,pet,mode}.rs` (`src/server/*.ts` arsip fixture test) | satu mode aktif, teardown sebelum pindah |
+| Mode system — VTuber / Assistant / Pet | `core/src/{vtuber,assistant,pet,mode}.rs` | satu mode aktif, teardown sebelum pindah |
 | **Renderer — satu jalur render + efek framework** | `src/live2d/view/` + `src/live2d/` | TS penuh; Cubism 5-r.5 vendored + Core 6.0.1 |
 | Release portable — compile + rakit folder | `src/dist.ts` → `dist/Live2D-Agent/` | sidecar shell Tauri |
 | Driver karakter & UI — pose komposisi jiwa, konfigurasi, sheet | `static/js/app.js` (±8.900 baris) | dijaga guard |
@@ -151,10 +151,11 @@ native + user) → Runtime (priority + blend + watchdog rAF) → Live2D`.
 ## 🧪 Kualitas
 
 ```bash
-bun run test         # 549 unit test (bun test) + 416 guard legacy (8 suite)
+bun run test         # 420 unit (bun) + 351 guard legacy (7 suite)
 bun run test:unit    # hanya unit test TS
 bun run test:guards  # hanya guard legacy
 bunx tsc --noEmit    # type-check
+cargo test --workspace  # backend Rust (115 test: core + engine)
 ```
 
 Guard legacy (`test/legacy/`) menguji **fungsi asli yang jalan di aplikasi** — diekstrak

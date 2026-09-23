@@ -10,7 +10,6 @@
  *   4. Prompt-split: prompt pembicara TANPA tabel parameter / userNote
  *      per-param, TAPI kosakata (emosi/gesture) + DAFTAR AKSESORIS tetap ada
  *      (ACC safeguard), dan catatan karakter (userNote top-level) tetap ada.
- *   5. formatParamNotes — sanitasi + batas 24 × 200.
  */
 import { describe, test, expect } from "bun:test";
 import {
@@ -21,7 +20,8 @@ import {
   llmWithFallback,
 } from "../src/shared/llm-client";
 import { AgentBrain } from "../src/client/agent/brain";
-import { formatParamNotes } from "../src/server/index";
+// formatParamNotes pindah ke Rust core (director.rs :: notes_cap_24_x_200 +
+// param_notes_dan_persona) bersama arsip src/server/ — Batch A 2026-09-23.
 
 const conn = (id: string, roles?: string[]) =>
   ({ id, name: id, provider: "mock", apiKey: "mock", roles } as any);
@@ -136,27 +136,3 @@ describe("prompt-split: prompt pembicara lean, kosakata + aksesoris tetap", () =
   });
 });
 
-describe("formatParamNotes", () => {
-  test("kosong / bentuk aneh → string kosong", () => {
-    expect(formatParamNotes(null)).toBe("");
-    expect(formatParamNotes("x")).toBe("");
-    expect(formatParamNotes([])).toBe("");
-    expect(formatParamNotes({})).toBe("");
-  });
-
-  test("sanitasi control char + trim", () => {
-    const out = formatParamNotes({ ParamRahang: "  buka\u0007rahang bawah  " });
-    expect(out).toBe('- "ParamRahang": bukarahang bawah');
-  });
-
-  test("batas keras: maks 24 entri, 200 char/entri, 60 char id", () => {
-    const many: Record<string, string> = {};
-    for (let i = 0; i < 40; i++) many["P" + i] = "n" + i;
-    expect(formatParamNotes(many).split("\n").length).toBe(24);
-    const long = formatParamNotes({ ParamX: "a".repeat(500) });
-    expect(long.length).toBeLessThanOrEqual('- "ParamX": '.length + 200);
-    const longId = formatParamNotes({ ["I".repeat(100)]: "catatan" });
-    expect(longId).toContain("I".repeat(60));
-    expect(longId).not.toContain("I".repeat(61));
-  });
-});

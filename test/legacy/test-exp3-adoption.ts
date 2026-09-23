@@ -1,25 +1,20 @@
-// test-exp3-adoption.ts — adopsi `.exp3` tak terdaftar, diuji in-process.
+// test-exp3-adoption.ts — adopsi `.exp3` tak terdaftar, bagian CLIENT.
 //
-// Desain (disengaja):
-//  - Bagian SERVER dijalankan IN-PROCESS lewat handleAPI() (dispatcher nyata,
-//    tanpa socket/spawn). Server membaca data/ lewat appRoot() (paths.ts),
-//    jadi model sintetis di-stage ke data/model/__exp3_* lalu DIHAPUS di
-//    finally. Endpoint discovery read-only.
-//  - Bagian CLIENT (vm-extract buildModelSettings dari app.js) menjalankan
-//    fungsi asli dari static/js/app.js.
-//  - Fetchability file ekspresi diverifikasi lewat serveStatic() (fallback DATA
-//    yang sama dipakai loader di browser), bukan HTTP socket.
+// Bagian SERVER (discovery via dispatcher in-process + fetchability static)
+// sudah DIHAPUS bersama arsip Bun `src/server/` (Batch A 2026-09-23) dan
+// kontraknya kini dijaga test Rust: core/src/expressions.rs
+// (nested/bom/cjk/file_relatif, params_edge, traversal_readonly) — jalankan
+// `cargo test -p live2d-core expressions`. Yang tersisa di sini: bagian
+// CLIENT murni (vm-extract buildModelSettings dari app.js ASLI) — fungsi
+// yang jalan di browser dan tak punya padanan Rust.
 //
-// Jalankan: bun test/legacy/test-exp3-adoption.ts
-import { handleAPI, serveStatic } from "../../src/server/index";
+// Jalankan: bun test/legacy/test-exp3-adoption.ts   (atau via run-guards)
 import * as fs from "fs";
 import * as path from "path";
 import * as vm from "vm";
 
 const ROOT = path.join(import.meta.dir, "..", "..");
-const MODEL_DIR = path.join(ROOT, "data", "model");
 const appSrc = fs.readFileSync(path.join(ROOT, "static", "js", "app.js"), "utf8");
-const serverSrc = fs.readFileSync(path.join(ROOT, "src", "server", "index.ts"), "utf8");
 
 let pass = 0, fail = 0;
 function ok(name: string, cond: boolean, detail?: string) {
@@ -41,121 +36,13 @@ function extractFn(src: string, name: string): string | null {
   return null;
 }
 
-// ── model sintetis di-stage di dalam data/model (dibersihkan di finally) ──────
-const staged: string[] = [];
-function stageModel(name: string, files: Record<string, string | object>) {
-  const base = path.join(MODEL_DIR, name);
-  staged.push(base);
-  for (const [rel, body] of Object.entries(files)) {
-    const full = path.join(base, rel);
-    fs.mkdirSync(path.dirname(full), { recursive: true });
-    fs.writeFileSync(full, typeof body === 'string' ? body : JSON.stringify(body, null, 1));
-  }
-  return name;
-}
-function cleanupStaged() {
-  for (const dir of staged) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }
-}
-
-const EXP_BODY = { Type: 'Live2D Expression', Parameters: [{ Id: 'ParamEX01', Value: 1, Blend: 'Add' }] };
 function model3(expressions: any[] | null) {
   const fr: any = { Moc: 'x.moc3', Textures: ['x.2048/texture_00.png'] };
   if (expressions) fr.Expressions = expressions;
   return { Version: 3, FileReferences: fr };
 }
 
-async function apiGet(p: string): Promise<{ status: number; body: string; json: any }> {
-  const res = await handleAPI(new Request("http://localhost" + p) as any);
-  if (!res) return { status: 404, body: "", json: null };
-  const body = await res.text();
-  let json: any = null;
-  try { json = JSON.parse(body); } catch {}
-  return { status: res.status, body, json };
-}
-
-// ═════════════════ PART 1 — server endpoint, dispatcher nyata ════════════════
-async function serverTests() {
-  // Tiga model sintetis yang menutup tiga keadaan yang penting (sama dengan v1).
-  const nOrphan = stageModel('__exp3_orphan_only', {
-    'nested/char.model3.json': model3(null),
-    'nested/expr/joy.exp3.json': EXP_BODY,
-    'nested/expr/rage.exp3.json': EXP_BODY,
-    'nested/deep/sub/wink.exp3.json': EXP_BODY,
-  });
-  const nDeclared = stageModel('__exp3_declared_all', {
-    'm.model3.json': model3([{ Name: 'a', File: 'a.exp3.json' }, { Name: 'b', File: 'b.exp3.json' }]),
-    'a.exp3.json': EXP_BODY,
-    'b.exp3.json': EXP_BODY,
-  });
-  const nPartial = stageModel('__exp3_partial', {
-    '\uFEFFsub/m.model3.json': '\uFEFF' + JSON.stringify(model3([{ Name: 'known', File: 'known.exp3.json' }])),
-    '\uFEFFsub/known.exp3.json': EXP_BODY,
-    '\uFEFFsub/\u5446\u732b.exp3.json': EXP_BODY,
-    'outside.exp3.json': EXP_BODY,
-  });
-  void nDeclared; void nPartial;
-
-  section('SERVER  GET /api/model/expressions');
-
-  const a = await apiGet('/api/model/expressions?name=' + nOrphan);
-  ok('orphan model: 200', a.status === 200, 'status ' + a.status);
-  ok('orphan model: finds all 3 .exp3 recursively',
-    a.json && a.json.expressions.length === 3,
-    a.json ? a.json.expressions.map((e: any) => e.Name).join(',') : '-');
-  ok('orphan model: declaredCount is 0', a.json && a.json.declaredCount === 0);
-  ok('orphan model: every entry flagged undeclared',
-    a.json && a.json.expressions.every((e: any) => e.declared === false));
-  ok('orphan model: orphanCount matches', a.json && a.json.orphanCount === 3);
-  // Path harus relatif terhadap DIR model3.json, bukan folder model — itu yang
-  // di-resolve loader Cubism.
-  ok('orphan model: File is relative to model3 dir (not model folder)',
-    a.json && a.json.expressions.some((e: any) => e.File === 'expr/joy.exp3.json'),
-    a.json ? a.json.expressions.map((e: any) => e.File).join(' ') : '-');
-  ok('orphan model: nested subdir path kept intact',
-    a.json && a.json.expressions.some((e: any) => e.File === 'deep/sub/wink.exp3.json'));
-  ok('orphan model: Name is filename without .exp3.json',
-    a.json && a.json.expressions.some((e: any) => e.Name === 'wink'));
-
-  const b = await apiGet('/api/model/expressions?name=__exp3_declared_all');
-  ok('complete manifest: orphanCount 0', b.json && b.json.orphanCount === 0,
-    b.json ? 'declared=' + b.json.declaredCount : '-');
-  ok('complete manifest: all flagged declared',
-    b.json && b.json.expressions.length === 2 && b.json.expressions.every((e: any) => e.declared === true));
-
-  const c = await apiGet('/api/model/expressions?name=__exp3_partial');
-  ok('BOM manifest still parsed (declaredCount 1, not 0)',
-    c.json && c.json.declaredCount === 1,
-    c.json ? 'declaredCount=' + c.json.declaredCount : '-');
-  ok('partial: known file flagged declared',
-    c.json && c.json.expressions.some((e: any) => e.Name === 'known' && e.declared === true));
-  ok('partial: CJK filename discovered as orphan',
-    c.json && c.json.expressions.some((e: any) => e.Name === '\u5446\u732b' && e.declared === false),
-    c.json ? c.json.expressions.map((e: any) => e.Name).join(',') : '-');
-  ok('partial: .exp3 ABOVE the model3 dir is skipped (unresolvable relative path)',
-    c.json && !c.json.expressions.some((e: any) => e.File.startsWith('..')),
-    c.json ? c.json.expressions.map((e: any) => e.File).join(' ') : '-');
-
-  section('SERVER  guards');
-  const t1 = await apiGet('/api/model/expressions?name=../..');
-  ok('traversal ../.. rejected', t1.status === 404, 'status ' + t1.status);
-  const t2 = await apiGet('/api/model/expressions?name=%2E%2E%2F%2E%2E');
-  ok('encoded traversal rejected', t2.status === 404, 'status ' + t2.status);
-  const t3 = await apiGet('/api/model/expressions?name=does_not_exist');
-  ok('unknown model 404s', t3.status === 404, 'status ' + t3.status);
-
-  section('SERVER  read-only guarantee');
-  // Inti adopsi in-memory: folder model user harus byte-identik sesudahnya.
-  const m3 = path.join(MODEL_DIR, nOrphan, 'nested', 'char.model3.json');
-  const before = fs.readFileSync(m3);
-  await apiGet('/api/model/expressions?name=' + nOrphan);
-  await apiGet('/api/model/expressions?name=' + nOrphan);
-  ok('manifest on disk unchanged after discovery',
-    Buffer.compare(before, fs.readFileSync(m3)) === 0);
-  ok('no .exp3 files created or deleted',
-    fs.readdirSync(path.join(MODEL_DIR, nOrphan, 'nested', 'expr')).length === 2);
-}
-
-// ═══════════ PART 2 — buildModelSettings(), body asli yang diekstrak ═════════
+// ═══════════ PART — buildModelSettings(), body asli yang diekstrak ═══════════
 async function clientTests() {
   section('CLIENT  buildModelSettings() merge logic');
 
@@ -257,68 +144,26 @@ async function clientTests() {
   section('CLIENT  model-agnostic guarantees');
   r = await run(model3(null), {
     expressions: [
-      { Name: '\u5446\u732b', File: '\u5446\u732b.exp3.json', declared: false },
+      { Name: '呆猫', File: '呆猫.exp3.json', declared: false },
       { Name: '01', File: 'numbered/01.exp3.json', declared: false },
       { Name: 'exp_angry', File: 'mothion/exp_angry.exp3.json', declared: false },
     ],
   });
   const names: string[] = r.out ? r.out.FileReferences.Expressions.map((e: any) => e.Name) : [];
   ok('CJK / numeric / snake_case names all preserved verbatim',
-    names.join(',') === '\u5446\u732b,01,exp_angry', names.join(','));
+    names.join(',') === '呆猫,01,exp_angry', names.join(','));
 
-  const banned = [/['"]lumine['"]/i, /\u795e\u5bab\u767d\u5b50/, /exp_angry/, /['"]mothion['"]/i, /\u5446\u732b/];
+  const banned = [/['"]lumine['"]/i, /神宫白子/, /exp_angry/, /['"]mothion['"]/i, /呆猫/];
   const hits = banned.filter(re => re.test(fnSrc));
   ok('buildModelSettings() hardcodes no model/expression/folder name',
     hits.length === 0, hits.length ? hits.map(String).join(' ') : 'clean');
-
-  // v2: guard server diarahkan ke src/server/index.ts — fungsi discovery asli.
-  const discServer = extractFn(serverSrc, 'discoverExpressions');
-  ok('discoverExpressions() found in src/server/index.ts', !!discServer);
-  const srvHits = banned.filter(re => re.test(discServer || ''));
-  ok('server discovery hardcodes no model name',
-    srvHits.length === 0, srvHits.length ? srvHits.map(String).join(' ') : 'clean');
 }
 
-// ═════════════════ PART 3 — model bawaan yang benar-benar ada ════════════════
-async function realModelTests() {
-  section('REAL MODELS  (whatever is actually in data/model/)');
-  const list = await apiGet('/api/models');
-  const models = (list.json && list.json.models) || [];
-  ok('server lists at least one real model', models.length > 0, models.join(', '));
-  for (const name of models) {
-    const r = await apiGet('/api/model/expressions?name=' + encodeURIComponent(name));
-    if (r.status !== 200) { ok(`${name}: endpoint 200`, false, 'status ' + r.status); continue; }
-    const d = r.json;
-    const orphans = d.expressions.filter((e: any) => !e.declared);
-    console.log(`  INFO  ${name}: ${d.expressions.length} .exp3 on disk, ` +
-                `${d.declaredCount} declared, ${orphans.length} orphaned`);
-    ok(`${name}: every File resolves inside the model3 dir`,
-      d.expressions.every((e: any) => !e.File.startsWith('..')));
-    ok(`${name}: orphanCount agrees with the flags`, d.orphanCount === orphans.length);
-    // Setiap File harus fetchable di path yang akan dibangun loader — kalau
-    // tidak, adopsi cuma menukar "diam tanpa ekspresi" dengan badai 404.
-    const base = d.model3.split('/').slice(0, -1).join('/');
-    for (const e of d.expressions.slice(0, 3)) {
-      const url = '/' + base + '/' + e.File;
-      const hit = serveStatic(url.split('/').map(encodeURIComponent).join('/').replace(/%2F/g, '/'));
-      ok(`${name}: ${e.Name} fetchable at loader path`, !!hit && hit.status === 200,
-        url + ' -> ' + (hit ? hit.status : 'null'));
-    }
-  }
-}
-
-(async () => {
-  try {
-    await serverTests();
-    await clientTests();
-    cleanupStaged();
-    await realModelTests();
-  } catch (e: any) {
-    fail++;
-    console.log('  FAIL  harness: ' + (e && e.message));
-  } finally {
-    cleanupStaged();
-  }
+clientTests().then(() => {
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
-})();
+}).catch((e: any) => {
+  console.log('  FAIL  harness: ' + (e && e.message));
+  console.log(`\n${pass} passed, ${fail + 1} failed`);
+  process.exit(1);
+});

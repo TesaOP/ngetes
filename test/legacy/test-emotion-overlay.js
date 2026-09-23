@@ -32,7 +32,9 @@ const ROOT = path.join(__dirname, '..', '..');
 const modSrc = fs.readFileSync(path.join(ROOT, 'static', 'js', 'emotion-overlay.js'), 'utf8');
 const appSrc = fs.readFileSync(path.join(ROOT, 'static', 'js', 'app.js'), 'utf8');
 const htmlSrc = fs.readFileSync(path.join(ROOT, 'static', 'index.html'), 'utf8');
-const serverSrc = fs.readFileSync(path.join(ROOT, 'src', 'server', 'index.ts'), 'utf8');
+// Server = Rust core (arsip Bun src/server dihapus Batch A 2026-09-23):
+// config overlay diteruskan ke client di core/src/config.rs.
+const serverSrc = fs.readFileSync(path.join(ROOT, 'core', 'src', 'config.rs'), 'utf8');
 
 let pass = 0, fail = 0;
 function ok(name, cond, detail) {
@@ -115,7 +117,7 @@ ok('inspectModel tidak menanam emosi sintetis ke sheet baru',
 ok('nama tak dikenal (mis. exp_heart) tetap memicu overlay setelah blok fallback sintetis',
   /const synth = state\.roleEmotions && state\.roleEmotions\[name\];[\s\S]*?\r?\n    fireOverlay\(name\);\r?\n  \}/.test(appSrc));
 ok('config.json "overlay" diteruskan server ke client',
-  serverSrc.includes('overlay:cfg.overlay||{}'));
+  /"overlay":\s*sect\("overlay"\)/.test(serverSrc));
 ok('app.js membaca config overlay',
   appSrc.includes('if (d.overlay) window.__overlayCfg'));
 

@@ -1,9 +1,9 @@
 //! Rute ekspresi — port `discoverExpressions` + adoption GET/POST dari
-//! `src/server/index.ts`. Guard `test-overlay-gate` menuntut tiap ekspresi
-//! membawa `params` (Id dari file .exp3.json) untuk gate overlay-vs-native.
-//!
-//! Gap sengaja (Stage 2): folder tanpa `.model3.json` (Auto-Rescue) belum
-//! ditangani → 404 seperti "no model3" (Bun pemilik selama transisi).
+//! `src/server/index.ts` (arsip Bun dihapus Batch A — Rust pemilik tunggal).
+//! Guard `test-overlay-gate` (bagian client) + test di bawah menuntut tiap
+//! ekspresi membawa `params` (Id dari file .exp3.json) untuk gate
+//! overlay-vs-native. Folder tanpa `.model3.json` memakai blueprint
+//! Auto-Rescue in-memory (padanan fallback TS — manifest user tak disentuh).
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -108,24 +108,38 @@ pub fn discover(model_dir: &Path, data_dir: &Path, name: &str) -> Result<Value, 
     if !dir.starts_with(model_dir) || !dir.exists() {
         return Err("not found".into());
     }
-    let model3 = find_model3(&dir, 0).ok_or_else(|| "no model3.json in folder".to_string())?;
-    let base_dir = model3.parent().unwrap_or(&dir).to_path_buf();
+    // Fallback Auto-Rescue (padanan TS): folder tanpa manifest → blueprint
+    // in-memory; file user di disk tak tersentuh. Base dir = folder model.
+    let (model3, base_dir, blueprint) = match find_model3(&dir, 0) {
+        Some(m3) => {
+            let base = m3.parent().unwrap_or(&dir).to_path_buf();
+            (m3, base, None)
+        }
+        None => {
+            let bp = crate::rescue::build_rescue_blueprint(&dir)
+                .ok_or_else(|| "no model3.json in folder".to_string())?;
+            (dir.join(crate::rescue::RESCUE_FILENAME), dir.clone(), Some(bp))
+        }
+    };
 
-    // declared expressions dari model3 (File → forward slash).
+    // declared expressions dari model3 (File → forward slash). Untuk jalur
+    // rescue, sumbernya blueprint di memori (File-nya relatif folder model).
     let mut declared: BTreeSet<String> = BTreeSet::new();
-    if let Ok(txt) = std::fs::read_to_string(&model3) {
-        let clean = txt.strip_prefix('\u{feff}').unwrap_or(&txt);
-        if let Ok(mj) = serde_json::from_str::<Value>(clean) {
-            if let Some(ex) = mj
-                .get("FileReferences")
-                .and_then(|f| f.get("Expressions"))
-                .and_then(|e| e.as_array())
-            {
-                for e in ex {
-                    if let Some(file) = e.get("File").and_then(|v| v.as_str()) {
-                        declared.insert(file.replace('\\', "/"));
-                    }
-                }
+    let fr = match &blueprint {
+        Some(bp) => bp.get("FileReferences").cloned().unwrap_or(Value::Null),
+        None => std::fs::read_to_string(&model3)
+            .ok()
+            .map(|txt| {
+                let clean = txt.strip_prefix('\u{feff}').unwrap_or(&txt);
+                serde_json::from_str::<Value>(clean).unwrap_or(Value::Null)
+            })
+            .and_then(|mj| mj.get("FileReferences").cloned())
+            .unwrap_or(Value::Null),
+    };
+    if let Some(ex) = fr.get("Expressions").and_then(|e| e.as_array()) {
+        for e in ex {
+            if let Some(file) = e.get("File").and_then(|v| v.as_str()) {
+                declared.insert(file.replace('\\', "/"));
             }
         }
     }
@@ -265,6 +279,138 @@ mod tests {
         assert_eq!(marah["enabled"], false);
         let senyum = exg.iter().find(|e| e["Name"] == "senyum").unwrap();
         assert_eq!(senyum["enabled"], true);
+
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn nested_bom_cjk_file_relatif_model3() {
+        // Port test-exp3-adoption TS (guard): model3 di SUBDIR + ber-BOM;
+        // declared File relatif ke DIR model3 (yang resolve loader), bukan
+        // folder model; nama CJK utuh; file di luar dir model3 tak ikut.
+        let data = std::env::temp_dir().join(format!("l2dexpn-{}-{}", std::process::id(), crate::config::base36_pub(now())));
+        let model_dir = data.join("model");
+        let sub = model_dir.join("char").join("nested");
+        std::fs::create_dir_all(sub.join("expr")).unwrap();
+        std::fs::create_dir_all(sub.join("deep").join("sub")).unwrap();
+        // BOM di awal model3.json
+        std::fs::write(
+            sub.join("m.model3.json"),
+            "\u{feff}{\"FileReferences\":{\"Expressions\":[{\"Name\":\"known\",\"File\":\"expr/known.exp3.json\"}]}}",
+        )
+        .unwrap();
+        std::fs::write(sub.join("expr").join("known.exp3.json"), r#"{"Parameters":[{"Id":"P1"}]}"#).unwrap();
+        std::fs::write(sub.join("expr").join("joy.exp3.json"), r#"{"Parameters":[]}"#).unwrap();
+        std::fs::write(sub.join("deep").join("sub").join("wink.exp3.json"), r#"{"Parameters":[]}"#).unwrap();
+        std::fs::write(sub.join("\u{5446}\u{732b}.exp3.json"), r#"{"Parameters":[]}"#).unwrap(); // 呆猫 CJK
+        // di LUAR dir model3 → tetap di-walk (dir=char) tapi File relatif base
+        // sub; file di luar folder model → tak tersentuh (di luar dir="char").
+        std::fs::write(model_dir.join("char").join("outside.exp3.json"), r#"{"Parameters":[]}"#).unwrap();
+
+        let info = discover(&model_dir, &data, "char").unwrap();
+        assert_eq!(info["model3"], "model/char/nested/m.model3.json", "BOM model3 ter-resolve");
+        let ex = info["expressions"].as_array().unwrap();
+        let names: Vec<&str> = ex.iter().map(|e| e["Name"].as_str().unwrap()).collect();
+        // rekursif dari folder model: joy + known + wink + 呆猫. File di LUAR
+        // dir model3.json (outside) dikecualikan — guard rel ".." (loader tak
+        // bisa resolve-nya), sama seperti TS.
+        assert_eq!(ex.len(), 4, "{names:?}");
+        assert!(names.iter().all(|n| *n != "outside"), "di luar dir model3 tak boleh ikut");
+        let by = |n: &str| ex.iter().find(|e| e["Name"] == n).unwrap();
+        // File relatif ke DIR model3.json: tanpa prefix nested/
+        assert_eq!(by("joy")["File"], "expr/joy.exp3.json");
+        assert_eq!(by("wink")["File"], "deep/sub/wink.exp3.json");
+        assert_eq!(by("known")["declared"], true);
+        assert_eq!(by("joy")["declared"], false);
+        assert_eq!(by("呆猫")["Name"], "呆猫"); // nama CJK utuh
+        assert_eq!(info["orphanCount"], 3);
+        assert_eq!(info["declaredCount"], 1);
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn params_edge_cases() {
+        // Port test-overlay-gate part-1: params per ekspresi — rusak → []
+        // (bukan error), tanpa Parameters → [], Id duplikat didedupe, field
+        // lama (Name/File/declared) utuh.
+        let data = std::env::temp_dir().join(format!("l2dexppe-{}-{}", std::process::id(), crate::config::base36_pub(now())));
+        let model_dir = data.join("model");
+        let m = model_dir.join("g");
+        std::fs::create_dir_all(&m).unwrap();
+        std::fs::write(m.join("m.model3.json"),
+            r#"{"FileReferences":{"Expressions":[{"Name":"known","File":"known.exp3.json"}]}}"#).unwrap();
+        std::fs::write(m.join("known.exp3.json"), r#"{"Parameters":[{"Id":"ParamEX04","Value":1},{"Id":"ParamEX08","Value":1}]}"#).unwrap();
+        std::fs::write(m.join("orph.exp3.json"), r#"{"Parameters":[{"Id":"Param91","Value":0.5}]}"#).unwrap();
+        std::fs::write(m.join("multi.exp3.json"), r#"{"Parameters":[{"Id":"A","Value":1},{"Id":"A","Value":2},{"Id":"B","Value":0}]}"#).unwrap();
+        std::fs::write(m.join("broken.exp3.json"), "{ ini bukan json").unwrap();
+        std::fs::write(m.join("noparams.exp3.json"), r#"{"Type":"Live2D Expression"}"#).unwrap();
+
+        let info = discover(&model_dir, &data, "g").unwrap();
+        let ex = info["expressions"].as_array().unwrap();
+        assert_eq!(ex.len(), 5);
+        let by = |n: &str| ex.iter().find(|e| e["Name"] == n).unwrap();
+        assert_eq!(by("known")["params"], json!(["ParamEX04", "ParamEX08"]));
+        assert_eq!(by("orph")["declared"], false);
+        assert_eq!(by("orph")["params"], json!(["Param91"]));
+        assert_eq!(by("multi")["params"], json!(["A", "B"]), "Id duplikat didedupe");
+        assert_eq!(by("broken")["params"], json!([]), "rusak → [] bukan error");
+        assert_eq!(by("noparams")["params"], json!([]));
+        assert!(by("known").get("File").is_some() && by("known").get("declared").is_some());
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn traversal_readonly_dan_terulang() {
+        // Port guard exp3-adoption "SERVER guards" + "read-only guarantee":
+        // ".." ditolak, nama tak ada → Err, discovery TIDAK menulis disk dan
+        // idempoten (dipanggil dua kali → hasil identik).
+        let data = std::env::temp_dir().join(format!("l2dexpr-{}-{}", std::process::id(), crate::config::base36_pub(now())));
+        let model_dir = data.join("model");
+        let m = model_dir.join("r");
+        std::fs::create_dir_all(m.join("expr")).unwrap();
+        std::fs::write(m.join("r.model3.json"), r#"{"FileReferences":{"Moc":"r.moc3","Textures":[]}}"#).unwrap();
+        std::fs::write(m.join("r.moc3"), "M").unwrap();
+        std::fs::write(m.join("expr/e.exp3.json"), r#"{"Parameters":[{"Id":"X"}]}"#).unwrap();
+
+        assert!(discover(&model_dir, &data, "..").is_err());
+        assert!(discover(&model_dir, &data, "../..").is_err());
+        assert!(discover(&model_dir, &data, "tidak_ada").is_err());
+
+        let before = std::fs::read(m.join("r.model3.json")).unwrap();
+        let n = std::fs::read_dir(&m).unwrap().count();
+        let first = discover(&model_dir, &data, "r").unwrap();
+        let second = discover(&model_dir, &data, "r").unwrap();
+        assert_eq!(first, second, "read-only + idempoten");
+        assert_eq!(std::fs::read(m.join("r.model3.json")).unwrap(), before);
+        assert_eq!(std::fs::read_dir(&m).unwrap().count(), n, "tak ada file dibuat/dihapus");
+
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn folder_tanpa_manifest_pakai_blueprint_rescue() {
+        // Padanan fallback TS pasca-Batch A: folder tanpa .model3.json →
+        // discover tetap jalan lewat blueprint in-memory (bukan 404), semua
+        // ekspresi blueprint dianggap declared, model3 = __rescue__.
+        let data = std::env::temp_dir().join(format!("l2dexprz-{}-{}", std::process::id(), crate::config::base36_pub(now())));
+        let model_dir = data.join("model");
+        let m = model_dir.join("raw");
+        std::fs::create_dir_all(m.join("fx")).unwrap();
+        std::fs::write(m.join("karakter.moc3"), "MOC3").unwrap();
+        std::fs::write(m.join("fx").join("happy.exp3.json"), r#"{"Parameters":[{"Id":"P1"}]}"#).unwrap();
+
+        let info = discover(&model_dir, &data, "raw").unwrap();
+        assert_eq!(info["model3"], "model/raw/__rescue__.model3.json");
+        let ex = info["expressions"].as_array().unwrap();
+        assert_eq!(ex.len(), 1);
+        assert_eq!(ex[0]["declared"], true, "blueprint mendeklarasikan semua .exp3");
+        assert_eq!(ex[0]["params"], json!(["P1"]));
+        assert_eq!(info["orphanCount"], 0);
+
+        // folder tanpa manifest DAN tanpa moc3 → tetap Err (bukan blueprint kosong)
+        let bare = model_dir.join("bare");
+        std::fs::create_dir_all(&bare).unwrap();
+        assert!(discover(&model_dir, &data, "bare").is_err());
 
         let _ = std::fs::remove_dir_all(&data);
     }

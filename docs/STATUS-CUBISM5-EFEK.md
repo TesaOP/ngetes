@@ -64,6 +64,62 @@ sudah selaras dengan arsitektur ini.
    (user bilang hapus manual saat sudah stabil) + blocker Core di SHA lama
    GitHub (risiko sudah diterima user — jangan dibuka lagi).
 
+## UPDATE 2026-09-23 (79) — BATCH A: arsip `src/server/` DIHAPUS (verified cleanup, bukan deletion-by-assumption)
+
+Lanjutan entri 78. Permintaan user: hapus arsip Bun `src/server/` + 141 test TS
+yang bergantung padanya, TAPI sebagai cleanup terverifikasi — audit tiap file
+dulu (redundan vs Rust? live import? shared yang masih hidup?), port coverage
+yang belum ada ke Rust SEBELUM menghapus, lalu jalankan semua gate + smoke.
+
+**Audit (temuan):** 16 test TS + 4 guard `test/legacy` menyentuh `src/server/`.
+Nol live import produksi dari `src/client`/`src/live2d` ke arsip (dikonfirmasi
+grep). Coverage 141 test itu sebagian sudah punya padanan Rust, sebagian belum.
+
+**Port coverage ke Rust SEBELUM hapus (core 90→115 test):**
+- `agent/assistant.rs`: status-shape panel, undo snapshot/revert (edit/write/
+  delete + dedup rekaman-asli + cap FIFO), cancel kooperatif. Sekalian
+  perbaiki `record_undo`: dedup path belum-reverted + cap MAX_UNDO 50→**20**
+  (kontrak MODES.md) + cap notes 30; id undo pakai seq (unik walau ms sama).
+- `agent/sessions.rs`: cap 20 FIFO bukan-aktif + round-trip disk + migrasi .bak.
+- `speech_lang.rs`: gagal-LLM degrade, strip kutip, speech_lang_of map.
+- `director.rs`: sanitizePersonaText (newline/tab hidup, ctrl mati, cap) +
+  formatParamNotes cap 24×200 (port animate-persona + llm-roles).
+- `browser/cdp.rs`: echo-server WS lokal → korelasi id, error-forward, timeout,
+  close menolak. `browser/mod.rs`: choose_page_target, engine_of, public_args
+  (redaksi teks ketikan). `expressions.rs`: nested/BOM/CJK/file-relatif,
+  params edge (dedup/rusak→[]), traversal+read-only, **fallback Auto-Rescue**
+  (folder tanpa manifest → blueprint in-memory; kontrak TS dipertahankan).
+- `rescue.rs`: atlas-dulu/icon-dibuang/hint-vtube/dedup-nama. `model.rs`:
+  folder rescue-able ikut list_models + path __rescue__. `lib.rs`: tabel 38
+  rute klien "ter-klaim router" + bentuk konkret (config/models/expr/browser/
+  assistant) + rescue virtual manifest (port server-integration 44 test).
+
+**Dihapus:** `src/server/` (seluruh arsip), 16 test TS
+(server-integration, browser-*, agent-cancel/sessions/undo, vtuber-*,
+tts-speech, worker-tasks, animate-persona, llm-roles→formatParamNotes dicabut),
+`test/legacy/test-auto-rescue.js` (100% terport ke rescue.rs+model.rs+lib.rs),
+`src/shared/paths.ts` (yatim setelah arsip pergi), dep `ws` + `@types/ws`.
+
+**Guard di-retarget (kontrak sama, sumber Rust):** test-api-origin (env PORT →
+`core/src/main.rs`+`lib.rs`), test-exp3-adoption (bagian server dibuang → Rust;
+sisa CLIENT buildModelSettings via vm tetap), test-overlay-gate (params →
+`expressions.rs`; wiring app.js tetap), test-param-notes-ui (`[grup:]` →
+`sheet_ai.rs`), test-emotion-overlay (overlay passthrough → `config.rs`).
+
+**Gate (semua hijau):** `bunx tsc` bersih · `bun run build` bersih ·
+`bun test` **420** unit (dari 549 — 129 test arsip pergi) · guard **351**
+(7 suite, dari 416/8 — test-auto-rescue dihapus) · `cargo test --workspace`
+**115** (dari 90 — +25 port). Smoke `live2d-core.exe` release @8399:
+/health ok, /api/version rust-in-process, /api/models 3 model, /api/model/
+expressions?name=lumine 200, /api/config 200, /api/browser/status 200,
+/api/assistant/status shape panel, index.html 200, config.json **403**,
+/api/nope **404**.
+
+**Hasil:** repo tak lagi punya zona abu-abu "server TS yang kelihatan hidup".
+Rust diuji cargo, JS frontend diuji Bun, guard mengekstrak app.js asli — tak
+ada test yang mengimpor kode mati. Bun murni alat build/test (bundle +
+runner), bukan bagian produk.
+
 ## UPDATE 2026-09-23 (78) — AUDIT KETERGANTUNGAN RUNTIME: purge Bun/Node/Python + dok selaras
 
 Permintaan user: cek apakah masih ada ketergantungan runtime selain Rust, lalu

@@ -17,7 +17,9 @@ use crate::llm::{self, ChatMessage};
 
 const MAX_ITERATIONS: usize = 25;
 const MAX_HISTORY: usize = 60;
-const MAX_UNDO: usize = 50;
+// Kontrak MODES.md: cap 20 FIFO (padanan MAX_UNDO TS yang di-guard).
+const MAX_UNDO: usize = 20;
+const MAX_NOTES: usize = 30;
 
 /// Rekaman undo satu mutasi file (snapshot isi SEBELUM tool write/edit/delete).
 #[derive(Clone)]
@@ -44,6 +46,7 @@ pub struct Runtime {
     cancel: bool,              // cancel kooperatif antar-langkah
     active_task: Option<Value>, // {taskId, prompt, status} — untuk status panel
     next_task_seq: u64,        // penomor taskId
+    undo_seq: u64,             // penomor id undo (id unik walau ms sama)
 }
 
 fn rt() -> &'static Mutex<Runtime> {
@@ -441,16 +444,28 @@ fn snapshot_before(work_dir: &Path, name: &str, args: &Value) -> Option<(String,
     Some((rel, abs, prev))
 }
 
-/// Catat rekaman undo + tandai file tersentuh (notes). Cap MAX_UNDO.
+/// Catat rekaman undo + tandai file tersentuh (notes). Cap MAX_UNDO (FIFO).
+/// Dedup: path dengan rekaman belum-reverted TIDAK dicatat ulang — rekaman
+/// pertama = kondisi ASLI sebelum rantai mutasi, satu-satunya revert yang
+/// bermakna (padanan execTool TS; tanpa ini revert pasca-mutasi-kedua
+/// mengembalikan state antara, bukan state asli).
 fn record_undo(r: &mut Runtime, rel: String, abs: PathBuf, prev: Option<String>) {
-    let id = format!("un_{}", crate::config::base36_pub(now_ms() as u128));
-    r.undo.push(UndoRec { id, rel_path: rel.clone(), abs_path: abs, prev_content: prev, ts: now_ms(), reverted: false });
-    if r.undo.len() > MAX_UNDO {
-        let drop = r.undo.len() - MAX_UNDO;
-        r.undo.drain(0..drop);
+    let dup = r.undo.iter().any(|u| u.abs_path == abs && !u.reverted);
+    if !dup {
+        r.undo_seq += 1;
+        let id = format!("un_{}_{}", crate::config::base36_pub(now_ms() as u128), r.undo_seq);
+        r.undo.push(UndoRec { id, rel_path: rel.clone(), abs_path: abs, prev_content: prev, ts: now_ms(), reverted: false });
+        if r.undo.len() > MAX_UNDO {
+            let drop = r.undo.len() - MAX_UNDO;
+            r.undo.drain(0..drop);
+        }
     }
     if !r.notes_files.contains(&rel) {
         r.notes_files.push(rel);
+        if r.notes_files.len() > MAX_NOTES {
+            let drop = r.notes_files.len() - MAX_NOTES;
+            r.notes_files.drain(0..drop);
+        }
     }
 }
 
@@ -567,15 +582,25 @@ pub async fn approve(config_path: &Path, root: &Path, id: &str, approve_it: bool
 mod tests {
     use super::*;
 
+    fn tmp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("l2d{}-{}-{}", tag, std::process::id(), now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn mock_config(dir: &Path) -> PathBuf {
+        let f = dir.join("config.json");
+        std::fs::write(&f, r#"{"activeId":"m","connections":[{"id":"m","provider":"mock"}]}"#).unwrap();
+        f
+    }
+
     #[tokio::test]
     async fn ask_no_tool_final_dgn_mock() {
         // Kunci bus global (lihat BUS_TEST_LOCK) — loop emit ke bus bersama.
         let _g = bus::BUS_TEST_LOCK.lock().unwrap();
         // mock LLM (echo) tak emit "TOOL:" → loop langsung final.
-        let dir = std::env::temp_dir().join(format!("l2das-{}-{}", std::process::id(), now_ms()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let f = dir.join("config.json");
-        std::fs::write(&f, r#"{"activeId":"m","connections":[{"id":"m","provider":"mock"}]}"#).unwrap();
+        let dir = tmp_dir("as");
+        let f = mock_config(&dir);
         start("/tmp/work").await;
         let res = ask(&f, &dir, "halo agent").await;
         assert!(res.ok);
@@ -583,6 +608,181 @@ mod tests {
         assert!(res.reply.to_lowercase().contains("halo"));
         stop().await;
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn status_shape_panel() {
+        // Padanan server-integration "/api/assistant/status selalu berisi shape
+        // panel" — kunci field yang dibaca panel/probe.
+        let _g = bus::BUS_TEST_LOCK.lock().unwrap();
+        stop().await;
+        let s = status().await;
+        for k in ["running", "busy", "workDir", "historyCount", "pendingApprovals", "plan", "notes", "lastEvent", "tools", "activeTask", "parkedTasks"] {
+            assert!(s.get(k).is_some(), "field hilang: {k}");
+        }
+        assert!(s["notes"]["filesTouched"].is_array());
+        let tools = s["tools"].as_array().unwrap();
+        assert!(tools.len() >= 21, "registry tool < 21: {}", tools.len());
+        let wf = tools.iter().find(|t| t["name"] == "write_file").unwrap();
+        assert_eq!(wf["level"], "mutating");
+        let rf = tools.iter().find(|t| t["name"] == "read_file").unwrap();
+        assert_eq!(rf["level"], "safe");
+        assert_eq!(s["lastEvent"], Value::Null); // runtime mati → null
+    }
+
+    /// Jalur approval sintetis (padanan agentRunApproved TS): push satu
+    /// approval lalu approve(id, true) → exec_tool + snapshot/rekaman undo.
+    async fn run_approved_tool(wd: &Path, name: &str, args: Value) {
+        let id = format!("ap_test_{}", crate::config::base36_pub(now_ms() as u128));
+        {
+            let mut r = rt().lock().await;
+            r.running = true;
+            r.busy = true;
+            r.work_dir = wd.to_string_lossy().to_string();
+            r.approvals.push(json!({ "id": id, "tool": name, "args": args, "ts": now_ms() }));
+        }
+        let cfg = mock_config(wd);
+        let res = approve(&cfg, wd, &id, true).await;
+        assert!(res.ok);
+    }
+
+    #[tokio::test]
+    async fn undo_snapshot_revert_mutation_paths() {
+        // Port agent-undo.test.ts: edit/write/delete pada workDir temp →
+        // rekaman + revert memulihkan kondisi asli.
+        let _g = bus::BUS_TEST_LOCK.lock().unwrap();
+        let wd = tmp_dir("undo");
+        start(&wd.to_string_lossy()).await;
+
+        // (1) edit_file file lama → kind modified; revert memulihkan.
+        std::fs::create_dir_all(wd.join("src")).unwrap();
+        std::fs::write(wd.join("src").join("a.txt"), "kondisi asli\n").unwrap();
+        run_approved_tool(&wd, "edit_file", json!({ "path": "src/a.txt", "old": "asli", "new": "diubah agent" })).await;
+        assert!(std::fs::read_to_string(wd.join("src").join("a.txt")).unwrap().contains("diubah agent"));
+        let list = undo_list().await;
+        assert_eq!(list.as_array().unwrap().len(), 1);
+        assert_eq!(list[0]["path"], "src/a.txt");
+        assert_eq!(list[0]["kind"], "modified");
+        let msg = revert(list[0]["id"].as_str().unwrap()).await.unwrap();
+        assert!(msg.contains("Dikembalikan"));
+        assert_eq!(std::fs::read_to_string(wd.join("src").join("a.txt")).unwrap(), "kondisi asli\n");
+
+        // (2) write_file file BARU → kind created; revert menghapus file.
+        run_approved_tool(&wd, "write_file", json!({ "path": "new/b.txt", "content": "baru" })).await;
+        assert!(wd.join("new").join("b.txt").exists());
+        let list = undo_list().await;
+        let rec = list.as_array().unwrap().iter().find(|u| u["path"] == "new/b.txt").unwrap();
+        assert_eq!(rec["kind"], "created");
+        revert(rec["id"].as_str().unwrap()).await.unwrap();
+        assert!(!wd.join("new").join("b.txt").exists());
+
+        // (3) delete_file file lama → revert mengembalikan isi.
+        std::fs::write(wd.join("c.txt"), "jangan hilang").unwrap();
+        run_approved_tool(&wd, "delete_file", json!({ "path": "c.txt" })).await;
+        assert!(!wd.join("c.txt").exists());
+        let list = undo_list().await;
+        let rec = list.as_array().unwrap().iter().find(|u| u["path"] == "c.txt").unwrap();
+        assert_eq!(rec["kind"], "modified");
+        revert(rec["id"].as_str().unwrap()).await.unwrap();
+        assert_eq!(std::fs::read_to_string(wd.join("c.txt")).unwrap(), "jangan hilang");
+
+        // (4) revert ganda → Err; id asing → Err; path di luar workDir tak tercatat.
+        std::fs::write(wd.join("d.txt"), "x").unwrap();
+        run_approved_tool(&wd, "write_file", json!({ "path": "d.txt", "content": "y" })).await;
+        let list = undo_list().await;
+        let rec = list.as_array().unwrap().iter().find(|u| u["path"] == "d.txt").unwrap();
+        revert(rec["id"].as_str().unwrap()).await.unwrap();
+        assert!(revert(rec["id"].as_str().unwrap()).await.is_err());
+        assert!(revert("un_tidak_ada").await.is_err());
+        run_approved_tool(&wd, "write_file", json!({ "path": "../outside.txt", "content": "no" })).await;
+        let list = undo_list().await;
+        assert!(list.as_array().unwrap().iter().all(|u| !u["path"].as_str().unwrap_or("").contains("outside.txt")));
+        assert!(!wd.parent().unwrap().join("outside.txt").exists());
+
+        stop().await;
+        let _ = std::fs::remove_dir_all(&wd);
+    }
+
+    #[tokio::test]
+    async fn undo_dedup_keeps_original_condition() {
+        // Padanan guard "dua mutasi beruntun pada path sama → SATU rekaman":
+        // rekaman pertama = kondisi ASLI sebelum rantai; revert mengembalikan
+        // state paling awal, bukan state antara.
+        let _g = bus::BUS_TEST_LOCK.lock().unwrap();
+        let wd = tmp_dir("unedup");
+        start(&wd.to_string_lossy()).await;
+        std::fs::write(wd.join("e.txt"), "asli-e").unwrap();
+        run_approved_tool(&wd, "write_file", json!({ "path": "e.txt", "content": "v1" })).await;
+        run_approved_tool(&wd, "write_file", json!({ "path": "e.txt", "content": "v2" })).await;
+        let list = undo_list().await;
+        let recs: Vec<_> = list.as_array().unwrap().iter().filter(|u| u["path"] == "e.txt").collect();
+        assert_eq!(recs.len(), 1, "rantai mutasi path sama harus satu rekaman");
+        revert(recs[0]["id"].as_str().unwrap()).await.unwrap();
+        assert_eq!(std::fs::read_to_string(wd.join("e.txt")).unwrap(), "asli-e");
+        stop().await;
+        let _ = std::fs::remove_dir_all(&wd);
+    }
+
+    #[tokio::test]
+    async fn undo_cap_fifo() {
+        // Cap MAX_UNDO (20, kontrak MODES.md): rekaman terlama dibuang.
+        let _g = bus::BUS_TEST_LOCK.lock().unwrap();
+        let wd = tmp_dir("uncap");
+        start(&wd.to_string_lossy()).await;
+        for i in 0..25 {
+            run_approved_tool(&wd, "write_file", json!({ "path": format!("cap/f{i}.txt"), "content": format!("x{i}") })).await;
+        }
+        let r = rt().lock().await;
+        assert_eq!(r.undo.len(), MAX_UNDO);
+        assert_eq!(r.undo[0].rel_path, "cap/f5.txt"); // f0..f4 terbuang
+        drop(r);
+        stop().await;
+        let _ = std::fs::remove_dir_all(&wd);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cancel_kooperatif() {
+        // Port agent-cancel.test.ts: (1) ask me-reset flag sisa → tak bocor
+        // antar tugas; (2) cancel saat ask berjalan → reply "Dibatalkan",
+        // runtime TETAP hidup (beda dgn stop); (3) accepted saat busy,
+        // ditolak saat idle.
+        let _g = bus::BUS_TEST_LOCK.lock().unwrap();
+        let wd = tmp_dir("canc");
+        let cfg = mock_config(&wd);
+        start(&wd.to_string_lossy()).await;
+
+        // (1) flag sisa dibuang ask baru — jawaban bukan "Dibatalkan".
+        { rt().lock().await.cancel = true; }
+        let r = ask(&cfg, &wd, "tugas segar").await;
+        assert!(r.ok);
+        assert_ne!(r.reply, "Dibatalkan oleh user.");
+        assert!(!rt().lock().await.cancel);
+
+        // (2) cancel di tengah ask (mock delay 300 ms): flag dibaca antar-turn —
+        // mock final di turn 0, jadi ask tetap selesai normal; yang dikunci:
+        // runtime HIDUP & busy lepas (padanan semantik agent-cancel TS).
+        let (cp, root) = (cfg.clone(), wd.clone());
+        let h = tokio::spawn(async move { ask(&cp, &root, "tugas yang dicancl di tengah").await });
+        for _ in 0..100 {
+            if rt().lock().await.busy { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let c = cancel().await;
+        assert_eq!(c["accepted"], true);
+        let r = h.await.unwrap();
+        assert!(r.ok);
+        {
+            let r2 = rt().lock().await;
+            assert!(r2.running, "cancel tidak mematikan runtime (beda dgn stop)");
+            assert!(!r2.busy);
+        }
+
+        // (3) saat idle → accepted false.
+        let idle = cancel().await;
+        assert_eq!(idle["accepted"], false);
+        stop().await;
+        assert_eq!(cancel().await["accepted"], false, "runtime mati → ditolak");
+        let _ = std::fs::remove_dir_all(&wd);
     }
 
     #[test]

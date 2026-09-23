@@ -20,11 +20,9 @@
     "bun": ">=1.0"
   },
   "devDependencies": {
-    "@types/ws": "^8.18.1",
     "bun-types": "^1.4.0"
   },
   "dependencies": {
-    "pixi.js": "8.20.1",
-    "ws": "^8.21.3"
+    "pixi.js": "8.20.1"
   }
 }

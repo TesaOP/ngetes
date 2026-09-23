@@ -20,7 +20,10 @@ const ROOT = path.join(__dirname, '..', '..');
 const appSrc = fs.readFileSync(path.join(ROOT, 'static', 'js', 'app.js'), 'utf8');
 const htmlSrc = fs.readFileSync(path.join(ROOT, 'static', 'index.html'), 'utf8');
 const cssSrc = fs.readFileSync(path.join(ROOT, 'static', 'css', 'app.css'), 'utf8');
-const serverSrc = fs.readFileSync(path.join(ROOT, 'src', 'server', 'index.ts'), 'utf8');
+// Server = Rust core (arsip Bun src/server dihapus Batch A 2026-09-23). Prompt
+// saran preset dirakit di core/src/sheet_ai.rs — kontrak "[grup: …]" dijaga di
+// sana (cargo test) DAN sumber-levelnya di-guard di bawah.
+const serverSrc = fs.readFileSync(path.join(ROOT, 'core', 'src', 'sheet_ai.rs'), 'utf8');
 
 let pass = 0, fail = 0;
 function ok(name, cond, detail) {
@@ -76,9 +79,9 @@ section('payload saran preset AI membawa grup');
 ok('allParams menyertakan group hasil resolveParamGroup',
   /\.map\(p => \(\{ id: p\.id, min: p\.min, max: p\.max, def: p\.def, label: p\.label \|\| '',[\s\S]{0,200}group: resolveParamGroup\(sheet, p\.id, p\.group\) \}\)\)/.test(appSrc));
 ok('server menulis [grup: …] ke baris param prompt',
-  /\[grup: \$\{p\.group\.trim\(\)\.slice\(0, ?40\)\}\]/.test(serverSrc));
+  /format!\(" \[grup: \{\}\]", s\.chars\(\)\.take\(40\)/.test(serverSrc));
 ok('server tetap memvalidasi tipe group (string sebelum dipakai)',
-  /typeof p\.group==="string"&&p\.group\.trim\(\)/.test(serverSrc));
+  /get\("group"\)\.and_then\(\|v\| v\.as_str\(\)\)\.map\(\|s\| s\.trim\(\)\)\.filter\(\|s\| !s\.is_empty\(\)\)/.test(serverSrc));
 
 // ── 5. pose preset bisa dibatalkan + tes ekspresi teradopsi ─────────────────
 section('reset pose preset & tes ekspresi');

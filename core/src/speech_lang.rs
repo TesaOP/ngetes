@@ -144,6 +144,9 @@ mod tests {
         assert!(!tts_lang_is_fixed("auto"));
         assert!(!tts_lang_is_fixed("Japanese"));
         assert_eq!(speech_lang_of("ja-JP"), "ja");
+        assert_eq!(speech_lang_of("en-US"), "en");
+        assert_eq!(speech_lang_of("auto"), "auto");
+        assert_eq!(speech_lang_of(""), "");
     }
 
     #[tokio::test]
@@ -154,5 +157,24 @@ mod tests {
         assert_eq!(out, "aku suka kamu dan dia");
         // ttsLang tidak fixed → dipakai pemanggil, tapi target kosong tetap aman:
         assert_eq!(translate_for_speech(p, "halo", "").await, "halo");
+    }
+
+    #[tokio::test]
+    async fn gagal_llm_degrade_ke_teks_asli() {
+        // Port tts-speech TS: LLM gagal (config tanpa provider aktif) → teks
+        // asli balik, TANPA panic — jalur suara tidak pernah mati karena terjemah.
+        let p = std::path::Path::new("/tmp/none-config.json");
+        let out = translate_for_speech(p, "hello there friend", "ja-JP").await;
+        assert_eq!(out, "hello there friend");
+        // kosong → kosong, tanpa LLM
+        assert_eq!(translate_for_speech(p, "   ", "ja-JP").await, "");
+    }
+
+    #[test]
+    fn strip_kutip_hasil_terjemahan() {
+        // Padanan TS "kutip pembuka/penutup dibuang" (output LLM dikutip).
+        assert_eq!(strip_quotes("  \u{201c}Halo semua\u{201d} "), "Halo semua");
+        assert_eq!(strip_quotes("\"hi\""), "hi");
+        assert_eq!(strip_quotes("tanpa kutip"), "tanpa kutip");
     }
 }

@@ -48,7 +48,7 @@ Riwayat sesi bernama di `data/assistant-sessions.json`
 (`{active, sessions: [{id, name, workDir, ts, messages}]}`, cap 20 sesi,
 migrasi sekali dari `assistant-history.json` lama + arsip `.bak`):
 
-- Store: `src/server/agent/sessions.ts` (`makeSessionsStore(appRoot)` —
+- Store: `core/src/agent/sessions.rs` (`sessions::load/create/switch_to/remove` —
   path injectable untuk test). Auto-nama sesi = pesan user pertama
   (40 char), fallback tanggal. Tulis atomic tmp→rename.
 - API: `GET /api/assistant/sessions`, `POST /api/assistant/sessions/new
@@ -105,7 +105,7 @@ additive `lastEvent: {type,label}|null`; `projek.ts` menampilkan
 `#stage-agent-chip` hanya saat busy/approval (`Bekerja — write_file …`) dan
 menyembunyikannya saat idle. Akting ekspresi/pose tetap dari `actor.ts`.
 
-## AI VTuber (`src/server/vtuber.ts`)
+## AI VTuber (`core/src/vtuber.rs`)
 
 | Provider | Kredensial | Sumber event |
 |---|---|---|
@@ -118,7 +118,7 @@ Endpoint: `POST /api/vtuber/start|stop`, `GET /api/vtuber/events?since=<id>`
 `POST /api/vtuber/config` (persona/cooldown/flag respond live tanpa restart),
 `POST /api/vtuber/operator` (instruksi streamer → antrean operator §7).
 
-Behavior engine (`src/server/vtuber-scheduler.ts`, §7 ARSITEKTUR-TARGET):
+Behavior engine (`core/src/vtuber_scheduler.rs`, §7 ARSITEKTUR-TARGET):
 SATU scheduler di server — audience chat = suppression (dedup 30 dtk +
 cooldown `#vt-cooldown`), donasi = antrean FIFO-20 (penuh → item baru
 DITOLAK dengan feedback feed, tidak silent-evict), operator = antrean
@@ -131,7 +131,7 @@ app utama memutar balasan via `window.__debugSpeak` (kelas speech
 → `overlay:true`); `vtuber.html` (overlay, stack render baru Pixi 8 +
 Cubism 5) memutar sendiri versinya saat on-air.
 
-## AI Assistant (`src/server/assistant.ts`)
+## AI Assistant (`core/src/agent/assistant.rs`)
 
 - Runtime: `{workDir, history (maks 60), approvals Map, activeTask, parkedTasks,
   pendingReplacement, busy}`.
@@ -147,7 +147,7 @@ Cubism 5) memutar sendiri versinya saat on-air.
   (aktif → cancel kooperatif + pendingReplacement; paused → langsung;
   antrean → in-place). Slot kosong → drain otomatis (replacement dulu,
   lalu antrean FIFO). Status mengekspos `activeTask`/`parkedTasks`.
-- Tools (registry di `src/server/agent/tools/index.ts`, **21 tool**; level = data,
+- Tools (registry di `core/src/agent/loop_.rs` (TOOLS), **21 tool**; level = data,
   bukan if-else di loop): 12 tool coding (`list_dir`, `read_file`, `search_code`,
   `git_diff`, `write_file`, `edit_file`, `delete_file`, `run_command`,
   `update_plan`, `remember`, `recall`, `spawn_subagent`) + 9 tool browser CDP

@@ -232,6 +232,39 @@ mod tests {
     }
 
     #[test]
+    fn cap_20_sesi_bukan_yang_aktif() {
+        // Port agent-sessions.test.ts "cap 20 sesi": sesi ke-21 → yang dibuang
+        // bukan yang aktif; sesi aktif bertahan & persist di disk.
+        let data = std::env::temp_dir().join(format!("l2dsesscap-{}-{}", std::process::id(), now_ms()));
+        std::fs::create_dir_all(&data).unwrap();
+        let first = create(&data, "/p/first");
+        let first_id = first["id"].as_str().unwrap().to_string();
+        for i in 0..19 {
+            create(&data, &format!("/p/{i}"));
+        }
+        let active = create(&data, "/p/active");
+        let active_id = active["id"].as_str().unwrap().to_string();
+        let f = list(&data);
+        let sessions = f["sessions"].as_array().unwrap();
+        assert_eq!(sessions.len(), MAX_SESSIONS);
+        assert_eq!(f["active"], json!(active_id));
+        assert!(sessions.iter().any(|s| s["id"] == json!(active_id)), "aktif tidak boleh terbuang");
+        // FIFO: yang terbuang = yang TERTUA di depan (sesi pertama non-aktif).
+        assert!(sessions.iter().all(|s| s["id"] != json!(first_id)), "korban cap harus sesi tertua");
+        // round-trip disk: store dibaca ulang dari file yang ditulis (load≠list)
+        assert_eq!(load(&data)["active"], json!(active_id));
+        // hapus non-aktif → daftar menyusut, aktif tak berubah
+        let non_active = sessions.iter().find(|s| s["id"] != json!(active_id)).unwrap();
+        let victim = non_active["id"].as_str().unwrap().to_string();
+        let (ok, new_active) = remove(&data, &victim);
+        assert!(ok);
+        assert_eq!(new_active, active_id, "hapus non-aktif tidak mengubah sesi aktif");
+        assert_eq!(list(&data)["active"], json!(active_id));
+        assert!(list(&data)["sessions"].as_array().unwrap().len() == MAX_SESSIONS - 1);
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
     fn migrasi_legacy() {
         let data = std::env::temp_dir().join(format!("l2dsessleg-{}-{}", std::process::id(), now_ms()));
         std::fs::create_dir_all(&data).unwrap();
@@ -240,6 +273,9 @@ mod tests {
         assert_eq!(f["sessions"].as_array().unwrap().len(), 1);
         assert_eq!(f["sessions"][0]["name"], "halo dunia");
         assert!(store_path(&data).exists());
+        // padanan agent-sessions TS: file lama dipindah ke .bak (bukan dihapus)
+        assert!(!legacy_path(&data).exists());
+        assert!(legacy_path(&data).with_extension("json.bak").exists());
         let _ = std::fs::remove_dir_all(&data);
     }
 }

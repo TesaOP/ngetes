@@ -2,10 +2,11 @@
 /**
  * src/cli/agent.ts — CLI untuk mode AI Assistant.
  *
- * Otak agent hidup di server Bun (src/server/assistant.ts); CLI ini cuma
- * layar lain yang memanggil API yang sama dengan panel di browser. Jadi
- * riwayat, approval, dan folder kerja dipegang server — CLI boleh dibuka-
- * tutup kapan saja tanpa kehilangan sesi.
+ * Otak agent hidup di server Rust core (in-process di Companion.exe, atau
+ * `cargo run -p live2d-core` saat dev); CLI ini cuma layar lain yang memanggil
+ * API yang sama dengan panel di browser. Jadi riwayat, approval, dan folder
+ * kerja dipegang server — CLI boleh dibuka-tutup kapan saja tanpa kehilangan
+ * sesi.
  *
  * Pakai (server harus sudah jalan: start.bat / bun run dev):
  *   bun run agent                        → folder kerja = cwd saat ini

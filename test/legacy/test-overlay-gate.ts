@@ -13,24 +13,27 @@
 // dobel seperti sebelum fix, bukan efek yang hilang).
 //
 // KONTRAK yang di-guard:
-//   1. SERVER: GET /api/model/expressions menyertakan `params` per ekspresi
-//      (Id dari isi file .exp3.json); file rusak → [] (bukan error).
-//   2. CLIENT (vm-extract overlayGateSuppress dari app.js): keputusan murni
+//   1. CLIENT (vm-extract overlayGateSuppress dari app.js): keputusan murni
 //      fail-open pada semua keadaan tanpa bukti (tanpa kalibrasi, tanpa
 //      bindings, alias emosi universal), menekan HANYA saat minimal satu
 //      param bindings terukur hidup; prefix preset 'user:' ditangani;
 //      model-agnostic (nama/id arbitrer m_001 tak meledak).
-//   3. Wiring level sumber: fireOverlay memanggil gate sebelum onExpression,
-//      loadModel prefetch bindings, client membaca `params` dari endpoint.
+//   2. Wiring level sumber (app.js): fireOverlay memanggil gate sebelum
+//      onExpression, loadModel prefetch bindings, client membaca `params`
+//      dari endpoint, cache bindings dibuang saat model ganti.
+//
+// Bagian SERVER (kontrak `params` per ekspresi — dulu in-process lewat
+// handleAPI) DIHAPUS bersama arsip Bun `src/server/` (Batch A 2026-09-23);
+// fixture-nya kini dijaga identik oleh test Rust:
+// core/src/expressions.rs :: params_edge_cases — `cargo test -p
+// live2d-core expressions`.
 //
 // Run: bun test/legacy/test-overlay-gate.ts
-import { handleAPI } from "../../src/server/index";
 import * as fs from "fs";
 import * as path from "path";
 import * as vm from "vm";
 
 const ROOT = path.join(import.meta.dir, "..", "..");
-const MODEL_DIR = path.join(ROOT, "data", "model");
 const appSrc = fs.readFileSync(path.join(ROOT, "static", "js", "app.js"), "utf8");
 
 let pass = 0, fail = 0;
@@ -51,67 +54,7 @@ function extractFn(src: string, name: string): string | null {
   return null;
 }
 
-const staged: string[] = [];
-function stageModel(name: string, files: Record<string, string | object>) {
-  const base = path.join(MODEL_DIR, name);
-  staged.push(base);
-  for (const [rel, body] of Object.entries(files)) {
-    const full = path.join(base, rel);
-    fs.mkdirSync(path.dirname(full), { recursive: true });
-    fs.writeFileSync(full, typeof body === 'string' ? body : JSON.stringify(body, null, 1));
-  }
-  return name;
-}
-function cleanupStaged() {
-  for (const dir of staged) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} }
-}
-
-async function apiGet(p: string): Promise<{ status: number; json: any }> {
-  const res = await handleAPI(new Request("http://localhost" + p) as any);
-  if (!res) return { status: 404, json: null };
-  const body = await res.text();
-  let json: any = null;
-  try { json = JSON.parse(body); } catch {}
-  return { status: res.status, json };
-}
-
-// ═════════════════ PART 1 — server menyertakan bindings param ════════════════
-async function serverTests() {
-  const n = stageModel('__gate_bindings', {
-    'm.model3.json': { Version: 3, FileReferences: { Moc: 'x.moc3', Textures: ['t.png'], Expressions: [{ Name: 'known', File: 'known.exp3.json' }] } },
-    'known.exp3.json': { Type: 'Live2D Expression', Parameters: [{ Id: 'ParamEX04', Value: 1 }, { Id: 'ParamEX08', Value: 1 }] },
-    'orph.exp3.json': { Type: 'Live2D Expression', Parameters: [{ Id: 'Param91', Value: 0.5 }] },
-    'multi.exp3.json': { Type: 'Live2D Expression', Parameters: [{ Id: 'A', Value: 1 }, { Id: 'A', Value: 2 }, { Id: 'B', Value: 0 }] },
-    'broken.exp3.json': '{ ini bukan json',
-    'noparams.exp3.json': { Type: 'Live2D Expression' },
-  });
-
-  section('SERVER  GET /api/model/expressions menyertakan params');
-  const res = await apiGet('/api/model/expressions?name=' + n);
-  ok('endpoint 200', res.status === 200, 'status ' + res.status);
-  const list = (res.json && Array.isArray(res.json.expressions)) ? res.json.expressions : [];
-  ok('semua file .exp3 terlaporkan', list.length === 5, JSON.stringify(list.map((e: any) => e.Name)));
-  const by = (nm: string) => list.find((e: any) => e && e.Name === nm);
-
-  ok('known → params dari isi file', JSON.stringify(by('known') && by('known').params) === '["ParamEX04","ParamEX08"]',
-    JSON.stringify(by('known')));
-  ok('orphan tetap terdeteksi + params', by('orph') && !by('orph').declared && JSON.stringify(by('orph').params) === '["Param91"]',
-    JSON.stringify(by('orph')));
-  ok('Id duplikat didedupe', JSON.stringify(by('multi') && by('multi').params) === '["A","B"]',
-    JSON.stringify(by('multi')));
-  ok('file rusak → params [] (bukan error)', by('broken') && Array.isArray(by('broken').params) && by('broken').params.length === 0,
-    JSON.stringify(by('broken')));
-  ok('tanpa Parameters → params []', by('noparams') && Array.isArray(by('noparams').params) && by('noparams').params.length === 0,
-    JSON.stringify(by('noparams')));
-  ok('field lama (Name/File/declared) tetap ada',
-    !!by('known').File && typeof by('known').declared === 'boolean');
-
-  // id bernomor DI SINI sah: ini ISI deklarasi rigger yang dibaca, bukan tabel
-  // universal yang menebak makna — guard model-agnostic melarang TABEL id
-  // bernomor, bukan melaporkan apa yang rigger tulis.
-}
-
-// ═════════════════ PART 2 — keputusan murni di app.js (vm) ═══════════════════
+// ═════════════════ PART 1 — keputusan murni di app.js (vm) ═══════════════════
 function clientTests() {
   section('CLIENT  overlayGateSuppress (vm-extract)');
   const src = extractFn(appSrc, 'overlayGateSuppress');
@@ -157,9 +100,13 @@ function clientTests() {
   ok('input aneh (null/nomor) tidak meledak',
     gate(null as any, opaque, visfxAlive, resolveHeart) === false &&
     gate(7 as any, opaque, visfxAlive, resolveHeart) === false);
+
+  // id bernomor DI SINI sah: ini ISI deklarasi rigger yang dibaca, bukan tabel
+  // universal yang menebak makna — guard model-agnostic melarang TABEL id
+  // bernomor, bukan melaporkan apa yang rigger tulis.
 }
 
-// ═════════════════ PART 3 — wiring level sumber ══════════════════════════════
+// ═════════════════ PART 2 — wiring level sumber ══════════════════════════════
 function wiringTests() {
   section('WIRING  app.js level sumber');
   ok('fireOverlay memanggil gate SEBELUM onExpression',
@@ -172,14 +119,11 @@ function wiringTests() {
     appSrc.includes('Array.isArray(e.params)'));
   ok('cache bindings dibuang saat model ganti (guard modelPath)',
     /overlayGateModelPath !== \(state\.modelPath \|\| ''\)/.test(appSrc));
-  ok('server discoverExpressions membaca isi file .exp3',
-    /readFileSync\(full,\s*"utf8"\)[\s\S]{0,120}\.Parameters/.test(fs.readFileSync(path.join(ROOT, 'src', 'server', 'index.ts'), 'utf8')));
+  ok('server (Rust core) membaca isi file .exp3 untuk params',
+    /read_to_string\(&full\)[\s\S]{0,200}"Parameters"/.test(fs.readFileSync(path.join(ROOT, 'core', 'src', 'expressions.rs'), 'utf8')));
 }
 
-(async () => {
-  try { await serverTests(); } finally { cleanupStaged(); }
-  clientTests();
-  wiringTests();
-  console.log(`\n${pass} passed, ${fail} failed`);
-  process.exit(fail ? 1 : 0);
-})();
+clientTests();
+wiringTests();
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);

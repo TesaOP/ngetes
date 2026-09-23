@@ -313,6 +313,56 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn atlas_dulu_icon_dibuang_hint_vtube_ekspresi_dedup() {
+        // Port test-auto-rescue.js: tekstur atlas (.8192) menang atas png liar,
+        // "icon" dikecualikan, idle dari pola nama + hint vtube.json, ekspresi
+        // tabrakan nama dapat suffix, tanpa .moc3 → None.
+        let dir = std::env::temp_dir().join(format!("l2dresc2-{}-{}", std::process::id(), now()));
+        std::fs::create_dir_all(dir.join("lumine.8192")).unwrap();
+        std::fs::create_dir_all(dir.join("mothion")).unwrap();
+        std::fs::create_dir_all(dir.join("nested")).unwrap();
+        std::fs::write(dir.join("lumine.moc3"), "MOC3-fake").unwrap();
+        std::fs::write(dir.join("lumine.8192/texture_01.png"), "p1").unwrap();
+        std::fs::write(dir.join("lumine.8192/texture_00.png"), "p0").unwrap();
+        std::fs::write(dir.join("lumine_icon.png"), "icon").unwrap(); // harus dibuang
+        std::fs::write(dir.join("stray.png"), "liar").unwrap(); // kalah oleh atlas
+        std::fs::write(dir.join("lumine.physics3.json"), "{}").unwrap();
+        std::fs::write(dir.join("lumine.cdi3.json"), "{}").unwrap();
+        std::fs::write(dir.join("mothion/idle.motion3.json"), "{\"Meta\":{}}").unwrap();
+        std::fs::write(dir.join("mothion/wave.motion3.json"), "{\"Meta\":{}}").unwrap();
+        std::fs::write(dir.join("exp_heart.exp3.json"), "{\"Parameters\":[]}").unwrap();
+        std::fs::write(dir.join("nested/exp_heart.exp3.json"), "{\"Parameters\":[]}").unwrap();
+        // vtube.json: IdleAnimation → wave masuk grup Idle (mengalahkan pola nama)
+        std::fs::write(dir.join("lumine.vtube.json"), r#"{"FileReferences":{"IdleAnimation":"mothion/wave.motion3.json"}}"#).unwrap();
+
+        let bp = build_rescue_blueprint(&dir).unwrap();
+        let tex = bp["FileReferences"]["Textures"].as_array().unwrap();
+        assert_eq!(tex.len(), 2, "icon & stray tidak boleh ikut: {tex:?}");
+        assert_eq!(tex[0], "lumine.8192/texture_00.png");
+        assert_eq!(tex[1], "lumine.8192/texture_01.png");
+        assert_eq!(bp["FileReferences"]["Physics"], "lumine.physics3.json");
+        assert_eq!(bp["FileReferences"]["DisplayInfo"], "lumine.cdi3.json");
+        // hint vtube: wave masuk Idle (nama file mengandung "idle" juga ikut
+        // Idle oleh pola nama — keduanya sah, yang penting wave TIDAK dibuang)
+        let idle_grp = bp["FileReferences"]["Motions"]["Idle"].as_array().unwrap();
+        assert!(idle_grp.iter().any(|m| m["File"] == "mothion/wave.motion3.json"), "{idle_grp:?}");
+        // ekspresi tabrakan nama → dedup suffix
+        let ex = bp["FileReferences"]["Expressions"].as_array().unwrap();
+        let names: Vec<&str> = ex.iter().map(|e| e["Name"].as_str().unwrap()).collect();
+        assert!(names.contains(&"exp_heart"));
+        assert!(names.iter().any(|n| n.starts_with("exp_heart ")), "{names:?}");
+
+        // tanpa .moc3 → None (bukan rescue)
+        let empty = std::env::temp_dir().join(format!("l2dresc3-{}-{}", std::process::id(), now()));
+        std::fs::create_dir_all(&empty).unwrap();
+        std::fs::write(empty.join("a.png"), "x").unwrap();
+        assert!(build_rescue_blueprint(&empty).is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&empty);
+    }
+
     fn now() -> u128 {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
     }

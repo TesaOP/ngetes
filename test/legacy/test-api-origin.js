@@ -129,12 +129,13 @@ try {
 } catch (e) { threw = true; }
 ok('derivation never throws on a headless context', !threw);
 
-// ── 3. server side actually honours PORT ─────────────────────────────────────
-section('server side of the contract (src/server/index.ts)');
-const srvSrc = fs.readFileSync(path.join(ROOT, 'src', 'server', 'index.ts'), 'utf8');
-ok('server reads process.env.PORT', /Number\(process\.env\.PORT\)\s*\|\|\s*8310/.test(srvSrc));
-ok('server default is still 8310 (no behaviour change for normal use)',
-  /\|\|\s*8310/.test(srvSrc));
+// ── 3. server side actually honours PORT (Rust core — Bun server dihapus) ───
+section('server side of the contract (core/src — Rust)');
+const srvSrc = fs.readFileSync(path.join(ROOT, 'core', 'src', 'main.rs'), 'utf8')
+  + fs.readFileSync(path.join(ROOT, 'core', 'src', 'lib.rs'), 'utf8');
+ok('core reads env PORT', /env::var\("PORT"\)/.test(srvSrc));
+ok('core default is still 8310 (no behaviour change for normal use)',
+  /unwrap_or\(8310\)/.test(srvSrc));
 
 // ── 4. satu-exe: app.js memuat refresh IPC + loader absolut ────────────────
 section('satu-exe wiring (static/js/app.js)');

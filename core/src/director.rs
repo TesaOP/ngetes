@@ -181,6 +181,44 @@ mod tests {
         assert_eq!(sanitize_persona_text(&json!("Lumine\u{0007} ceria"), 60), "Lumine ceria");
     }
 
+    // ── Port `test/animate-persona.test.ts` (arsip Bun dihapus, Batch A) ──────
+
+    #[test]
+    fn persona_bukan_string_kosong() {
+        // Padanan animate-persona TS: bukan string / kosong / whitespace → "".
+        assert_eq!(sanitize_persona_text(&Value::Null, 800), "");
+        assert_eq!(sanitize_persona_text(&json!(42), 800), "");
+        assert_eq!(sanitize_persona_text(&json!({}), 800), "");
+        assert_eq!(sanitize_persona_text(&json!(""), 800), "");
+        assert_eq!(sanitize_persona_text(&json!("   "), 800), "");
+    }
+
+    #[test]
+    fn persona_newline_tab_dipertahankan_ctrl_dibuang() {
+        // Kontrak: newline & tab HIDUP (persona multi-baris sah), control char
+        // mati, trim pinggir, cap keras — sama persis paritas sanitizeUserNote.
+        assert_eq!(sanitize_persona_text(&json!("dia pemalu\r\n\tsuka anime\u{0007}"), 60), "dia pemalu\r\n\tsuka anime");
+        assert_eq!(sanitize_persona_text(&json!("baris1\nbaris2"), 800), "baris1\nbaris2");
+        assert_eq!(sanitize_persona_text(&json!("  hai  "), 800), "hai");
+        let long: String = "a".repeat(900);
+        assert_eq!(sanitize_persona_text(&json!(long), 800).chars().count(), 800);
+    }
+
+    #[test]
+    fn notes_cap_24_x_200() {
+        // Batas keras: maks 24 baris, tiap nilai 200 char, id 60 char.
+        let mut obj = serde_json::Map::new();
+        for i in 0..30 {
+            obj.insert(format!("P{i}"), json!("x".repeat(300)));
+        }
+        let out = format_param_notes(&Value::Object(obj));
+        assert_eq!(out.lines().count(), 24);
+        // tiap baris: "- \"id\": nilai" → prefix ~8 + id≤60 + newline 200, beri margin.
+        assert!(out.lines().all(|l| l.chars().count() <= 280));
+        // nilai bukan-string & id kosong dilewati
+        assert_eq!(format_param_notes(&json!({ "": "x", "a": 5, "b": "ok" })), "- \"b\": ok");
+    }
+
     #[tokio::test]
     async fn animate_text_fallback_dan_validasi() {
         let dir = std::env::temp_dir().join(format!("l2ddir-{}-{}", std::process::id(), now()));

@@ -358,7 +358,7 @@ mod tests {
         let hana = model_dir.join("hana");
         std::fs::create_dir_all(&hana).unwrap();
         std::fs::write(hana.join("hana.model3.json"), "{}").unwrap();
-        // folder tanpa model3 tidak masuk daftar
+        // folder tanpa model3 DAN tanpa .moc3 → tidak terdaftar, path None
         std::fs::create_dir_all(model_dir.join("kosong")).unwrap();
 
         assert!(find_model3(&hana, 0).is_some());
@@ -368,6 +368,16 @@ mod tests {
         assert_eq!(rel, "model/hana/hana.model3.json");
         assert_eq!(model_path_rel(&data, &model_dir, "kosong"), None);
         assert_eq!(model_path_rel(&data, &model_dir, "../etc"), None);
+
+        // padanan wiring guard test-auto-rescue (arsip JS dihapus Batch A):
+        // folder tanpa manifest tapi rescue-able (ber-.moc3) ikut terdaftar
+        // dan model_path menunjuk manifest virtual __rescue__.
+        std::fs::write(model_dir.join("kosong").join("a.moc3"), "M").unwrap();
+        assert_eq!(list_models(&model_dir), vec!["hana".to_string(), "kosong".to_string()]);
+        assert_eq!(
+            model_path_rel(&data, &model_dir, "kosong").as_deref(),
+            Some("model/kosong/__rescue__.model3.json")
+        );
 
         let _ = std::fs::remove_dir_all(&data);
     }

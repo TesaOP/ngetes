@@ -1275,6 +1275,7 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
+    use serde_json::{json, Value};
     use tower::ServiceExt; // oneshot
 
     fn app() -> Router {
@@ -1361,5 +1362,169 @@ mod tests {
             Some(v) => std::env::set_var("PORT", v),
             None => std::env::remove_var("PORT"),
         }
+    }
+
+    // ── Port `test/server-integration.test.ts` (arsip Bun dihapus, Batch A) ──
+    // Kontrak: SEMUA rute klien yang dipakai app.js/panel/overlay ter-klaim
+    // router — respons bukan penanda rute-unknown (`404 {"error":"not found"}`
+    // dari fallback static_handler). Config mock di akar temp → rute LLM tidak
+    // pernah menyentuh jaringan / data/ user.
+
+    fn tmp_root(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("l2drt-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("data/model/m1")).unwrap();
+        std::fs::create_dir_all(dir.join("data/model/m1/exp")).unwrap();
+        std::fs::write(
+            dir.join("data/model/m1/m1.model3.json"),
+            r#"{"Version":3,"FileReferences":{"Moc":"m1.moc3","Textures":["t.png"],"Expressions":[{"Name":"senyum","File":"exp/s.exp3.json"}]}}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("data/model/m1/exp/s.exp3.json"), r#"{"Parameters":[{"Id":"ParamX"}]}"#).unwrap();
+        std::fs::write(dir.join("data/model/m1/m1.moc3"), "MOC3fake").unwrap();
+        std::fs::write(dir.join("data/model/m1/t.png"), "png").unwrap();
+        std::fs::write(
+            dir.join("data/config.json"),
+            r#"{"activeId":"m","connections":[{"id":"m","provider":"mock","apiKey":"mock"}]}"#,
+        )
+        .unwrap();
+        dir
+    }
+
+    async fn call(method: &str, path: &str, body: Option<serde_json::Value>) -> (StatusCode, serde_json::Value) {
+        let body = match body {
+            Some(v) => Body::from(v.to_string()),
+            None => Body::empty(),
+        };
+        let req = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(body)
+            .unwrap();
+        let resp = router(AppPaths::from_root(tmp_root("x"))).oneshot(req).await.unwrap();
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+        let json = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        (status, json)
+    }
+
+    fn is_unknown_marker(status: StatusCode, json: &Value) -> bool {
+        status == StatusCode::NOT_FOUND && json.get("error").and_then(|e| e.as_str()) == Some("not found")
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn parity_rute_klien_terklaim() {
+        // Padanan "is handled by the dispatcher" (44 test TS) — satu tabel,
+        // tiap rute klien harus dikenali router (bukan penanda unknown).
+        let cases: Vec<(&str, &str, Option<Value>)> = vec![
+            ("POST", "/api/chat", Some(json!({"messages":[{"role":"user","content":"hai"}]}))),
+            ("POST", "/api/tts", Some(json!({"text":""}))),
+            ("GET", "/api/config", None),
+            ("POST", "/api/config", Some(json!({"action":"saveI18n","i18n":{"lang":"id"}}))),
+            ("POST", "/api/test", Some(json!({}))),
+            ("POST", "/api/model/classify-params", Some(json!({"model":"m1"}))),
+            ("POST", "/api/model/analyze-sheet", Some(json!({"model":"m1"}))),
+            ("POST", "/api/animate-text", Some(json!({"text":""}))),
+            ("POST", "/api/motions/analyze", Some(json!({"motion":{}}))),
+            ("POST", "/api/motions/generate", Some(json!({"prompt":""}))),
+            ("GET", "/api/sheet?name=m1", None),
+            ("POST", "/api/sheet", Some(json!({"name":"m1"}))),
+            ("GET", "/api/models", None),
+            ("GET", "/api/model/path?name=m1", None),
+            ("GET", "/api/model/expressions?name=m1", None),
+            ("GET", "/api/model/expressions-adoption?name=m1", None),
+            ("POST", "/api/model/expressions-adoption", Some(json!({"name":"m1","disabled":[]}))),
+            ("GET", "/api/model/files?name=m1", None),
+            ("GET", "/api/model/motion-taxonomy?name=m1", None),
+            ("POST", "/api/model/import-zip", Some(json!({"b64":"!!!not-zip"}))),
+            ("POST", "/api/model/upload", Some(json!({}))),
+            ("DELETE", "/api/model/__no_such_model_test__", None),
+            ("GET", "/api/motions?model=m1", None),
+            ("POST", "/api/motions", Some(json!({"model":"m1"}))),
+            // GET/DELETE /api/motions/:id sengaja TIDAK di sini: not-found-nya
+            // ber-body sama persis dgn penanda rute-unknown → tak terbedakan
+            // lewat dispatch. Rutenya tetap teruji lewat core/src/motions.rs.
+            ("PUT", "/api/motions/some-id", Some(json!({"model":"m1","motion":{"id":"x","tracks":[]}}))),
+            ("GET", "/api/mode", None),
+            ("POST", "/api/mode", Some(json!({"mode":"stage"}))),
+            ("GET", "/api/pet/state", None),
+            ("GET", "/api/browser/status", None),
+            ("GET", "/api/assistant/status", None),
+            ("GET", "/api/assistant/history", None),
+            ("GET", "/api/assistant/events?since=0", None),
+            ("GET", "/api/assistant/undo", None),
+            ("GET", "/api/assistant/sessions", None),
+            ("GET", "/api/assistant/memory", None),
+            ("POST", "/api/assistant/start", Some(json!({"workDir":""}))),
+            ("POST", "/api/stt", Some(json!([]))),
+        ];
+        for (method, path, body) in cases {
+            let (status, json) = call(method, path, body).await;
+            assert!(!is_unknown_marker(status, &json), "rute tidak ter-klaim router: {method} {path} → {status} {json}");
+        }
+    }
+
+    #[tokio::test]
+    async fn bentuk_rute_klien_konkret() {
+        // Beberapa rute diuji BENTUK responsnya (padanan assertion TS yang
+        // lebih spesifik dari sekadar "ter-klaim").
+        let root = tmp_root("shape");
+        let app = router(AppPaths::from_root(&root));
+        let get = |uri: &'static str, app: Router| async move {
+            let resp = app.oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap()).await.unwrap();
+            let status = resp.status();
+            let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+            (status, serde_json::from_slice::<Value>(&bytes).unwrap())
+        };
+        let (st, cfg) = get("/api/config", app.clone()).await;
+        assert_eq!(st, StatusCode::OK);
+        assert!(cfg["connections"].is_array());
+        let (st, models) = get("/api/models", app.clone()).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(models["models"].as_array().unwrap().len(), 1);
+        let (st, expr) = get("/api/model/expressions?name=m1", app.clone()).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(expr["expressions"][0]["params"], json!(["ParamX"]));
+        let (st, bstat) = get("/api/browser/status", app.clone()).await;
+        assert_eq!(st, StatusCode::OK);
+        for k in ["available", "running", "connected", "engine", "url", "canBack", "canForward", "originGranted"] {
+            assert!(bstat.get(k).is_some(), "browser/status field hilang: {k}");
+        }
+        let (st, astat) = get("/api/assistant/status", app).await;
+        assert_eq!(st, StatusCode::OK);
+        assert!(astat["tools"].is_array() && astat["pendingApprovals"].is_array());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn rescue_virtual_manifest_terpasang() {
+        // Padanan wiring guard test-auto-rescue (arsip JS dihapus): route
+        // /model/<folder>/__rescue__.model3.json dirakit di memori — folder
+        // dengan manifest asli → 404 (tak ada yang di-rescue), tanpa manifest
+        // tapi ber-.moc3 → 200 blueprint.
+        let root = tmp_root("resc");
+        std::fs::create_dir_all(root.join("data/model/pure")).unwrap();
+        std::fs::write(root.join("data/model/pure/a.moc3"), "M").unwrap();
+        let app = router(AppPaths::from_root(&root));
+        let hit = |uri: String, app: Router| async move {
+            let resp = app.oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap()).await.unwrap();
+            resp.status()
+        };
+        assert_eq!(
+            hit("/model/pure/__rescue__.model3.json".into(), app.clone()).await,
+            StatusCode::OK,
+            "folder tanpa manifest → blueprint virtual"
+        );
+        assert_eq!(
+            hit("/model/m1/__rescue__.model3.json".into(), app.clone()).await,
+            StatusCode::NOT_FOUND,
+            "punya manifest asli → tak ada rescue"
+        );
+        assert_eq!(
+            hit("/model/../secrets/__rescue__.model3.json".into(), app).await,
+            StatusCode::FORBIDDEN
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

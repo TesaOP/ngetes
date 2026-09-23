@@ -617,3 +617,44 @@ pub fn public_args(name: &str, args: &Value) -> Value {
     }
     args.clone()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pilih_target_page() {
+        let t = |typ: &str, url: &str, ws: bool| json!({
+            "type": typ, "url": url,
+            "webSocketDebuggerUrl": if ws { json!("ws://x") } else { Value::Null },
+        });
+        // tanpa kandidat page → None
+        assert!(choose_page_target(&[t("other", "x", true)]).is_none());
+        // page tanpa webSocketDebuggerUrl diabaikan
+        assert!(choose_page_target(&[t("page", "about:blank", false)]).is_none());
+        // about:blank menang walau datang belakangan
+        let targets = vec![t("page", "https://a.test", true), t("page", "about:blank", true)];
+        assert_eq!(choose_page_target(&targets).unwrap()["url"], "about:blank");
+        // tanpa about:blank → page pertama
+        let targets = vec![t("page", "https://a.test", true), t("page", "https://b.test", true)];
+        assert_eq!(choose_page_target(&targets).unwrap()["url"], "https://a.test");
+    }
+
+    #[test]
+    fn engine_dari_nama_exe() {
+        assert_eq!(engine_of(&Some(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe".into())), Some("edge"));
+        assert_eq!(engine_of(&Some("google-chrome-stable".into())), Some("chrome"));
+        assert_eq!(engine_of(&Some("firefox".into())), None);
+        assert_eq!(engine_of(&None), None);
+    }
+
+    #[test]
+    fn arg_publik_meredaksi_teks_ketikan() {
+        // kontrak kartu approval: browser_type TIDAK pernah membocorkan teks.
+        let red = public_args("browser_type", &json!({ "snapshotId": "s1", "ref": "r2", "text": "rahasia!", "submit": true }));
+        assert_eq!(red, json!({ "snapshotId": "s1", "ref": "r2", "chars": 8, "submit": true }));
+        assert!(red.get("text").is_none());
+        // tool lain lolos utuh
+        assert_eq!(public_args("browser_click", &json!({ "ref": "r1" })), json!({ "ref": "r1" }));
+    }
+}

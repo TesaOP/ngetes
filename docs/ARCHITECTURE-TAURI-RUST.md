@@ -12,7 +12,8 @@
 > HANYA sebagai adapter eksternal (CLI, OBS `vtuber.html`, dev browser) +
 > jembatan transisi domain yang belum migrasi (CORS permisif, loopback saja).
 > Render loop Live2D/PixiJS tetap 100% di WebView — tanpa IPC per-frame.
-> Server Bun (`src/server/`) arsip + fixture test; Bun = alat build/dev.
+> Server Bun (`src/server/`) DIHAPUS (Batch A 2026-09-23) — backend penuh di
+> `core/src/` (Rust); Bun = alat build/dev saja.
 >
 > Sumber niat: arah "Tauri + Rust Application Core + TypeScript/Live2D Frontend"
 > yang disetujui user. Prinsip inti:
@@ -144,14 +145,14 @@ LLM → Agent/Decision (Rust) → Companion Directive → HTTP loopback → Fron
   relatif (loader Cubism di `live2d-view.mjs`).
 - **Klien HTTP mandiri (mudah terlupa):** `vtuber.html` (OBS overlay),
   `pet.html`, `src/cli/agent.ts` (SSE + fallback JSON).
-- **Kopling server→client:** `src/server/index.ts` meng-import
-  `sanitizeMotionAsset` (`../client/animation/motion-dsl`) & `MotionTaxonomy`
-  (`../client/engine/motion-taxonomy`). Handler motions yang pindah ke Rust
-  harus mem-port keduanya.
-- **`appRoot()`** (`src/shared/paths.ts`) = choke point tunggal semua path data:
-  `data/config.json`, `data/assistant-sessions.json`,
-  `.agent-memory/memory.json` (di akar app, BUKAN `data/`), `data/sheets/*`,
-  `data/motions/*`, `data/browser/profile`, model engine.
+- **Kopling motion-dsl (mudah terlupa):** sanitasi motion + taxonomy hidup di
+  TS client (`src/client/animation/motion-dsl`, `src/client/engine/motion-taxonomy`)
+  DAN diport ke Rust (`core/src/motion_dsl.rs`, `core/src/motion_taxonomy.rs`) —
+  dua sisi harus tetap sepadan bila salah satu berubah.
+- **`appRoot()` (dev/test)** = `import.meta.dir` di TS test; produksi memakai
+  `core/src/paths.rs :: AppPaths::detect`. Choke point path data: `data/config.json`,
+  `data/assistant-sessions.json`, `.agent-memory/memory.json` (di akar app,
+  BUKAN `data/`), `data/sheets/*`, `data/motions/*`, `data/browser/profile`.
 - Sudah native/Rust: `agent-shell/` (Tauri) + `engine/` (crate live2d-engine,
   TTS `ort` + STT `whisper-rs`, port 8330).
 

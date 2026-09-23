@@ -22,7 +22,7 @@ build/dev saja** (bundle, test, tsc) — bukan runtime. Renderer satu jalur:
 (Pixi 6 + pixi-live2d) sudah dipensiunkan (entri 27–40 STATUS).
 
 Produk ini juga membawa **agent-nya sendiri** sebagai fitur (loop + 21 tool +
-permission gate di `src/server/agent/`) — jangan tertukar: itu kode produk,
+permission gate di `core/src/agent/`) — jangan tertukar: itu kode produk,
 bukan instruksi untukmu.
 
 ## Urutan baca wajib (mengikat)
@@ -41,13 +41,15 @@ bukan instruksi untukmu.
 
 ```bash
 bun run build          # WAJIB sebelum run — static/js/bundle.js di-gitignore
-bun run test           # SEMUA: 549 unit test (bun test) + 416 guard (8 suite)
+bun run test           # SEMUA TS: 420 unit (bun) + 351 guard (7 suite)
 bun run test:unit      # hanya unit test TS
 bun run test:guards    # hanya guard legacy
 bunx tsc --noEmit      # type-check (harus bersih)
+cargo test --workspace # backend Rust (115 test: core + engine) — bagian gate
 ```
 
-**Selesai** = build bersih + `tsc` bersih + `bun run test` hijau.
+**Selesai** = build bersih + `tsc` bersih + `bun run test` hijau + `cargo test
+--workspace` hijau.
 Tidak ada test yang memanggil jaringan (endpoint LLM di-stub ke provider
 `mock`) dan tidak ada test yang menulis `data/config.json` — pertahankan.
 
@@ -90,8 +92,8 @@ Tidak ada test yang memanggil jaringan (endpoint LLM di-stub ke provider
   `live2d_core` + helper bernama di `transport/` + jembatan dicabut
   per-domain). HTTP loopback = adapter EKSTERNAL (CLI/OBS/dev) + jembatan
   transisi — jangan jadikan jalur internal baru. Render loop/per-frame tidak
-  pernah lewat IPC. `src/server/` adalah arsip — jangan tambah rute/fitur di
-  sana; port ke `core/src/` bila perlu.
+  pernah lewat IPC. `src/server/` sudah **DIHAPUS** (Batch A 2026-09-23) —
+  seluruh backend di `core/src/`; tambah rute/fitur di sana.
 
 - **Satu jalur render** — stack lama (Pixi 6 + pixi-live2d) sudah dipensiunkan;
   jangan menambah cabang dual-stack. Kepemilikan gerak: framework memutar
@@ -135,18 +137,13 @@ Tidak ada test yang memanggil jaringan (endpoint LLM di-stub ke provider
 ## Peta kode
 
 ```text
-src/server/index.ts          ARSIP referensi — BUKAN server produksi (server = core/).
-                             Hanya fixture unit test TS; jangan tambah rute/fitur di sini.
 core/                        server HTTP Rust (axum, loopback) — SATU-SATUNYA backend
+                             (src/server/ dihapus Batch A 2026-09-23; logika + testnya
+                             semua di core/src/)
 agent-shell/                 SATU exe SATU proses: host server Rust in-process
                              (`ensure_server`) + jendela (tanpa IPC command)
 src/client/transport/        seam HTTP-only (apiBase/apiUrl/apiFetch/getJson/postJson)
-src/server/{vtuber,assistant,pet}.ts   ARSIP (logika sudah diport ke core/src/)
-src/server/agent/            ARSIP (loop, plan, bus, memory, subagent, tools/,
-                             sessions, undo) — sudah diport ke core/src/agent/
-src/server/browser/          ARSIP (Edge/Chrome CDP) — sudah diport ke core/src/browser/
-src/server/persona/          ARSIP (persona narrator) — sudah diport (speech_lang)
-src/shared/                  types, config, llm-client (role routing), paths
+src/shared/                  types, config, llm-client (role routing)
 src/client/animation/        easing, motion-dsl, motion-registry, motion-runtime
 src/client/engine/           motion-taxonomy (klasifikasi klip .motion3.json)
 src/client/agent/            brain + directive-parser → window.__agent
@@ -167,8 +164,8 @@ static/js/app.js             driver karakter & UI (±8.900 baris) — dijaga gua
 static/js/mode-runtime.js    switcher mode — panel assistant tinggal bridge
                              window.__agentPanel
 static/js/{voice-input,emotion-overlay,motion-editor,camera-presence}.js
-test/                        bun test (unit) — termasuk server-parity & integration
-test/legacy/                 guard legacy — 416 assertion, 8 suite
+test/                        bun test (unit) — frontend TS (motion/i18n/transport/brain)
+test/legacy/                 guard legacy — mengekstrak fungsi app.js via vm
 data/                        data user — TIDAK di-commit
 ```
 
