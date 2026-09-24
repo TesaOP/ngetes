@@ -27,19 +27,42 @@ engines/models/
 # state CLI lokal (rencana sesi, artifact)
 .zcode/
 
-# Tauri build artifacts (schemas regenerated saat build)
-agent-shell/gen/
-
 # Rust workspace — build artifacts only; sources & Cargo.lock di-track.
 # Target terpusat di root (workspace).
 /target/
-
-# Cargo.lock milik crate member itu redundan: di workspace, Cargo hanya membaca
-# lock root. Root /Cargo.lock tetap di-track; lock member (engine/, core/,
-# agent-shell/) diabaikan supaya tidak basi dan bikin bingung.
-/*/Cargo.lock
 
 # lain-lain
 *.tmp
 *.log
 .DS_Store
+
+# ===== ↑ 以上同步自 .gitignore（「从 .gitignore 同步」只重写以上部分）=====
+.git/
+.hg/
+.svn/
+bower_components/
+jspm_packages/
+__pycache__/
+site-packages/
+venv/
+coverage/
+htmlcov/
+lcov-report/
+cmakefiles/
+cmake-build-*/
+bazel-*/
+pods/
+deriveddata/
+storybook-static/
+playwright-report/
+test-results/
+allure-results/
+allure-report/
+cdk.out/
+*.egg-info/
+*.dist-info/
+eggs/
+pip-wheel-metadata/
+wheels/
+# ----- ↑ 以上为 ZCode 默认排除规则（自定义规则请写在本行下方，不会被同步/恢复改动）-----
+# 自定义规则写在下方（本行提示可删除）
