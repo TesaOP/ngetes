@@ -1,4 +1,4 @@
-/* emotion-overlay.js — efek emosi app-level (overlay visual) ─────────────
+/* emotion-overlay.js — efek emosi app-level (overlay visual, Canvas 2D) ────
  *
  * KENAPA ADA
  * Sebagian efek rig hanya hidup di proyek Cubism Editor — di moc3 hasil
@@ -7,21 +7,27 @@
  * mengonfirmasi semuanya efek overlay; kalibrasi efek mengukurnya
  * 0 piksel — identik di rig v4.2, hasil import web, maupun salinan
  * langsung rig sumber v5.0, dengan core 4.2 maupun resmi 5.1). Modul
- * ini menggambar efeknya sendiri di atas stage saat ekspresi/emosi
- * yang cocok dipasang, sehingga ekspresi tetap TERLIHAT tanpa
- * memodifikasi rig.
+ * ini menggambar efeknya sendiri di kanvas 2D terpisah di atas panggung
+ * saat ekspresi/emosi yang cocok dipasang, sehingga ekspresi tetap
+ * TERLIHAT tanpa memodifikasi rig.
+ *
+ * RENDERER
+ * Canvas 2D murni (tanpa Pixi). Satu <canvas> overlay ditumpuk tepat di
+ * atas #live2d-canvas (transparan, pointer-events:none); partikel emoji
+ * digambar via fillText, blush via ellipse. Live2D sendiri tetap Pixi 8 —
+ * overlay ini BUKAN bagian renderer model dan tak menyentuh parameter rig.
  *
  * MODEL-AGNOSTIC
  * Dicocokkan dari NAMA ekspresi/emosi (kanonik + alias Indonesia),
- * bukan id parameter; posisi mengikuti kepala model dari bounds layar
- * (kepala ≈ 16% tinggi model) — bukan dari nama/range parameter
- * tertentu. Tidak ada satu pun id rig yang di-hardcode.
+ * bukan id parameter; posisi mengikuti kepala model dari bounds panggung
+ * (kepala ≈ 16% tinggi model) — bukan dari nama/range parameter tertentu.
+ * Tidak ada satu pun id rig yang di-hardcode.
  *
  * API: window.__emotionOverlay
  *   .onExpression(name) — cocokkan nama & nyalakan efek (app.js memanggil
  *     ini di titik ekspresi dipasang; 'user:' prefix ditangani)
  *   .clear()            — hentikan semua efek (resetEmotion memanggil)
- *   ._status()          — debug: { active, key, particles }
+ *   ._status()          — debug: { active, key, particles, attached }
  *   ._tick(now)         — loop animasi; diekspos agar pengujian headless
  *                         bisa memompa manual (rAF hanya jalan saat aktif)
  *
@@ -35,7 +41,7 @@
 
   // ── Tabel efek ──────────────────────────────────────────────────
   // emoji: daftar karakter yang diputar untuk partikel (null = digambar
-  // Graphics). dur: lama efek aktif (ms). spawnEvery: interval spawn
+  // bentuk vektor). dur: lama efek aktif (ms). spawnEvery: interval spawn
   // partikel (0 = sekali di awal).
   var EFFECTS = {
     heart:   { emoji: ['💗', '💜', '💖', '💙'], dur: 3600, spawnEvery: 380 },
@@ -47,7 +53,6 @@
     anger:   { emoji: ['💢'],                    dur: 2000, spawnEvery: 0 },
     shock:   { emoji: ['❗'],                    dur: 1500, spawnEvery: 0 },
   };
-
   // ── Pemetaan nama → efek (kanonik + alias, pakai contains) ──────
   // Urutan = prioritas pencocokan. Nama datang dari banyak sumber:
   // emosi bawaan ('malu','senang',…), file .exp3 rigger ('exp_heart',…),
@@ -64,7 +69,7 @@
     ['shock',   ['kaget', 'shock', 'terkejut', 'gaspet']],
   ];
 
-  // MURNI — dipakai guard test (vm), tidak menyentuh DOM/PIXI.
+  // MURNI — dipakai guard test (vm), tidak menyentuh DOM.
   function resolveEmotionFx(name) {
     if (!name || typeof name !== 'string') return null;
     var n = String(name).toLowerCase().replace(/^user:/, '').trim();
@@ -79,149 +84,102 @@
   }
 
   // ── State ───────────────────────────────────────────────────────
-  var container = null;        // PIXI.Container di stage
-  var particles = [];          // { obj, kind, born, dur, x, y, vx, vy, seed, emojiIdx }
-  var current = null;          // { key, until, lastSpawn }
+  var ocanvas = null;          // <canvas> overlay (Canvas 2D)
+  var octx = null;             // CanvasRenderingContext2D
+  var particles = [];          // { kind, born, seed, x, y, vx, vy, glyph, baseFont, r, rx, ry, alpha, scale }
+  var current = null;          // { key, until, lastSpawn, dur }
   var rafId = null;
-  var cfg = function () {
+
+  function cfg() {
     var o = window.__overlayCfg || {};
     return {
       enabled: o.enabled !== false,
       alpha: (typeof o.alpha === 'number') ? o.alpha : 0.9,
       size: (typeof o.size === 'number') ? o.size : 1,
     };
-  };
-
-  function stage() {
-    var st = window.__l2dDebug && window.__l2dDebug.state;
-    var m = st && st.model;
-    return (m && m.parent) ? m.parent : null;
   }
+
   function model() {
     var st = window.__l2dDebug && window.__l2dDebug.state;
     return (st && st.model) ? st.model : null;
   }
-  // Anchor kepala DIUKUR dari framebuffer, bukan dari bounds — bounds tekstur
-  // sering memuat area kosong besar di atas kepala (padding texture atlas +
-  // framing upper-body), sehingga fraksi tinggi bounds mendarat di ruang
-  // hampa (terbukti: hati melayang ~250px di atas kepala lumine). Yang
-  // diukur: baris piksel ter-atas yang benar-benar tergambar = puncak rambut;
-  // cx = pusat massa piksel pada pita atas itu; tinggi konten terlihat
-  // (bawah-atas) dipakai sebagai satuan h. Hasil di-cache per aktivasi —
-  // satu kali render kecil per fire ekspresi, bukan per partikel.
-  var _anchorCache = null;   // { cx, headY, h, w, at, path }
-  function measureHead() {
-    var st = window.__l2dDebug && window.__l2dDebug.state;
-    var m = st && st.model;
-    if (!m) return null;
-    // Prefer renderer utama aplikasi (diekspos via __l2dDebug.renderer);
-    // fallback __r2 (lab/uji) atau buat renderer kecil pada context canvas.
-    var renderer = (st && st.model && window.__l2dDebug && window.__l2dDebug.renderer) ||
-                   window.__r2 || null;
-    if (!renderer) {
-      var c = document.getElementById('live2d-canvas');
-      if (!c) return null;
-      var glc = c.getContext('webgl') || c.getContext('webgl2');
-      if (!glc || !window.PIXI || !PIXI.Renderer) return null;
-      renderer = window.__overlayRendererRef = new PIXI.Renderer({
-        view: c, context: glc, width: c.width, height: c.height, backgroundColor: 0,
-      });
-    }
-    var W = Math.min(renderer.width, 857), H = Math.min(renderer.height, 691);
-    var rt = PIXI.RenderTexture.create({ width: W, height: H });
-    renderer.render(m, { renderTexture: rt });
-    var cv = renderer.plugins.extract.canvas(rt);
-    var d = cv.getContext('2d').getImageData(0, 0, W, H).data;
-      var top = -1, bottom = -1, minX = W, maxX = -1;
-      for (var y = 0; y < H && top < 0; y++) {
-        for (var x = 0; x < W; x += 2) {
-          if (d[(y * W + x) * 4 + 3] > 10) { top = y; break; }
-        }
-      }
-      if (top < 0) { rt.destroy(true); return null; }
-      for (var y2 = H - 1; y2 > top && bottom < 0; y2--) {
-        for (var x2 = 0; x2 < W; x2 += 2) {
-          if (d[(y2 * W + x2) * 4 + 3] > 10) { bottom = y2; break; }
-        }
-      }
-      // lebar model = rentang x piksel yang tergambar (bukan lebar canvas!)
-      for (var y3 = top; y3 <= bottom; y3 += 3) {
-        for (var x3 = 0; x3 < W; x3 += 2) {
-          if (d[(y3 * W + x3) * 4 + 3] > 10) {
-            if (x3 < minX) minX = x3;
-            if (x3 > maxX) maxX = x3;
-          }
-        }
-      }
-      // pusat massa pita atas (puncak kepala + sedikit ke bawah)
-      var band = Math.max(2, Math.round((bottom - top) * 0.06));
-      var sx = 0, sn = 0;
-      for (var yy = top; yy < Math.min(H, top + band); yy++) {
-        for (var xx = 0; xx < W; xx += 2) {
-          if (d[(yy * W + xx) * 4 + 3] > 10) { sx += xx; sn++; }
-        }
-      }
-      rt.destroy(true);
-      if (!sn || maxX <= minX) return null;
-      // koordinat canvas == koordinat stage di aplikasi ini (stage di 0,0)
-      return {
-        cx: sx / sn, headY: top,
-        h: Math.max(64, bottom - top),
-        w: Math.max(64, maxX - minX),
-      };
-  }
+  // Anchor kepala dari bounds panggung model (kepala ≈ 16% dari atas). Koordinat
+  // panggung = piksel CSS dari pojok kiri-atas #live2d-canvas (stage di 0,0),
+  // jadi identik dengan sistem koordinat kanvas overlay. Dibaca tiap frame agar
+  // efek ikut saat model bergerak / viewport berubah.
   function headAnchor() {
     try {
-      var now = performance.now();
-      if (_anchorCache && now - _anchorCache.at < 5000 && _anchorCache.path === (window.__l2dDebug.state.modelPath || '')) {
-        return _anchorCache;
-      }
-      var a = measureHead();
-      if (!a) {
-        // fallback lama (bounds) bila pengukuran gagal — lebih baik sedikit
-        // meleset daripada tidak ada efek sama sekali.
-        var m = model();
-        if (!m) return null;
-        a = { cx: m.x + m.width * 0.5, headY: m.y + m.height * 0.16, h: m.height, w: m.width };
-      }
-      a = { cx: a.cx, headY: a.headY, h: a.h, w: a.w, at: now, path: (window.__l2dDebug.state.modelPath || '') };
-      _anchorCache = a;
-      return a;
+      var m = model();
+      if (!m) return null;
+      return {
+        cx: m.x + m.width * 0.5,
+        headY: m.y + m.height * 0.16,
+        h: m.height,
+        w: m.width,
+      };
     } catch (e) { return null; }
   }
 
-  function makeSprite(kind, i, cfgv, a) {
-    var def = EFFECTS[kind];
-    var obj;
-    if (def.emoji) {
-      var idx = (i + Math.floor(Math.random() * def.emoji.length)) % def.emoji.length;
-      obj = new PIXI.Text(def.emoji[idx], {
-        fontSize: Math.max(18, Math.round(a.w * 0.05 * cfgv.size)),
-        fill: 0xffffff,
-      });
-    } else {
-      obj = new PIXI.Graphics();
-      var pink = 0xff9ec2;
-      if (kind === 'blush') {
-        var r = Math.max(8, a.w * 0.032 * cfgv.size);
-        obj.beginFill(pink, 0.55);
-        obj.drawEllipse(0, 0, r * 1.35, r * 0.75);
-        obj.endFill();
-      }
+  // Buat / selaraskan kanvas overlay. Hanya saat model hidup (app jalan) —
+  // tanpa model (mis. sandbox guard) langsung null, tak menyentuh DOM.
+  function ensureCanvas() {
+    if (!model()) return null;
+    if (typeof document === 'undefined' || typeof document.getElementById !== 'function') return null;
+    var live = document.getElementById('live2d-canvas');
+    if (!live || !live.parentNode) return null;
+    if (!ocanvas) {
+      ocanvas = document.createElement('canvas');
+      ocanvas.id = 'emotion-overlay-canvas';
+      ocanvas.setAttribute('aria-hidden', 'true');
+      var s = ocanvas.style;
+      s.position = 'absolute';
+      s.pointerEvents = 'none';   // jangan menangkap klik — panggung di bawahnya
+      s.zIndex = '5';             // di atas #live2d-canvas, di bawah panel UI
     }
-    obj.alpha = 0;
-    container.addChild(obj);
-    return obj;
+    if (ocanvas.parentNode !== live.parentNode) live.parentNode.appendChild(ocanvas);
+    if (!octx) octx = ocanvas.getContext('2d');
+    if (!octx) return null;
+    syncCanvasBox(live);
+    return octx;
   }
 
+  // Samakan kotak & resolusi kanvas overlay dengan #live2d-canvas (DPR di-cap 2,
+  // sama dengan renderer.resolution Pixi 8). Transform 1 unit = 1 px CSS supaya
+  // koordinat partikel (koordinat panggung) langsung dipakai.
+  function syncCanvasBox(live) {
+    if (!ocanvas || !octx) return;
+    live = live || (typeof document !== 'undefined' && document.getElementById && document.getElementById('live2d-canvas'));
+    if (!live) return;
+    var dpr = Math.min((typeof window !== 'undefined' && window.devicePixelRatio) || 1, 2);
+    var w = live.clientWidth || parseInt(live.style && live.style.width) || live.width || 0;
+    var h = live.clientHeight || parseInt(live.style && live.style.height) || live.height || 0;
+    var st = ocanvas.style;
+    st.left = (live.offsetLeft || 0) + 'px';
+    st.top = (live.offsetTop || 0) + 'px';
+    st.width = w + 'px';
+    st.height = h + 'px';
+    var bw = Math.max(1, Math.round(w * dpr)), bh = Math.max(1, Math.round(h * dpr));
+    if (ocanvas.width !== bw || ocanvas.height !== bh) { ocanvas.width = bw; ocanvas.height = bh; }
+    octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
   function spawnParticle(kind, i, cfgv) {
     var a = headAnchor();
     if (!a) return;
-    var obj = makeSprite(kind, i, cfgv, a);
+    var def = EFFECTS[kind];
+    var glyph = null, baseFont = 0, r = 0;
+    if (def.emoji) {
+      var idx = (i + Math.floor(Math.random() * def.emoji.length)) % def.emoji.length;
+      glyph = def.emoji[idx];
+      baseFont = Math.max(18, Math.round(a.w * 0.05 * cfgv.size));
+    } else if (kind === 'blush') {
+      r = Math.max(8, a.w * 0.032 * cfgv.size);
+    }
     var p = {
-      obj: obj, kind: kind, born: performance.now(),
+      kind: kind, born: performance.now(),
       seed: Math.random() * Math.PI * 2, emojiIdx: i,
       x: a.cx, y: a.headY, vx: 0, vy: 0,
+      glyph: glyph, baseFont: baseFont, r: r,
+      rx: a.cx, ry: a.headY, alpha: 0, scale: 1,
     };
     if (kind === 'heart') {
       p.x = a.cx + (Math.random() - 0.5) * a.w * 0.24;
@@ -249,18 +207,13 @@
       p.x = a.cx + (Math.random() - 0.5) * a.w * 0.1;
       p.y = a.headY - a.h * 0.09;
     }
-    p.obj.x = p.x; p.obj.y = p.y;
+    p.rx = p.x; p.ry = p.y;
     particles.push(p);
   }
 
-  // Satu frame animasi. now = performance.now(). Dipanggil dari rAF
-  // internal (saat efek aktif) atau manual (pengujian headless).
-  function tick(now) {
-    if (!container) return;
-    var cfgv = cfg();
-    if (!cfgv.enabled) return;
-    var a = headAnchor();
-    if (!a) return;
+  // Perbarui transform render tiap partikel (rx/ry/alpha/scale).
+  // now = performance.now().
+  function updateParticles(now, a, cfgv) {
     var dead = [];
     for (var i = 0; i < particles.length; i++) {
       var p = particles[i];
@@ -268,44 +221,87 @@
       var prog = Math.min(1, (now - p.born) / (current ? current.dur : 2200));
       var k = p.kind;
       if (k === 'heart') {
-        p.obj.y = p.y + p.vy * t;
-        p.obj.x = p.x + Math.sin(t * 2.2 + p.seed) * a.w * 0.02;
-        p.obj.alpha = (prog < 0.15 ? prog / 0.15 : 1 - (prog - 0.15) / 0.85) * cfgv.alpha;
-        p.obj.scale.set(cfgv.size * (0.85 + 0.15 * Math.sin(t * 3 + p.seed)));
+        p.ry = p.y + p.vy * t;
+        p.rx = p.x + Math.sin(t * 2.2 + p.seed) * a.w * 0.02;
+        p.alpha = (prog < 0.15 ? prog / 0.15 : 1 - (prog - 0.15) / 0.85) * cfgv.alpha;
+        p.scale = cfgv.size * (0.85 + 0.15 * Math.sin(t * 3 + p.seed));
       } else if (k === 'blush') {
-        p.obj.alpha = (prog < 0.1 ? prog / 0.1 : prog > 0.8 ? (1 - prog) / 0.2 : 1) * cfgv.alpha * 0.9;
+        p.alpha = (prog < 0.1 ? prog / 0.1 : prog > 0.8 ? (1 - prog) / 0.2 : 1) * cfgv.alpha * 0.9;
       } else if (k === 'sparkle') {
-        p.obj.x = p.x + Math.sin(t * 1.6 + p.seed) * a.w * 0.015;
-        p.obj.y = p.y + Math.cos(t * 1.3 + p.seed) * a.h * 0.012;
-        p.obj.alpha = Math.max(0, Math.sin(t * 4 + p.seed)) * cfgv.alpha;
-        p.obj.scale.set(cfgv.size * (0.7 + 0.3 * Math.sin(t * 5 + p.seed)));
+        p.rx = p.x + Math.sin(t * 1.6 + p.seed) * a.w * 0.015;
+        p.ry = p.y + Math.cos(t * 1.3 + p.seed) * a.h * 0.012;
+        p.alpha = Math.max(0, Math.sin(t * 4 + p.seed)) * cfgv.alpha;
+        p.scale = cfgv.size * (0.7 + 0.3 * Math.sin(t * 5 + p.seed));
       } else if (k === 'tear') {
         p.vy += a.h * 0.0007 * 1000 * 0.016 * 60 * 0.016; // gravitasi lembut
-        p.obj.y = p.y + p.vy * t + 0.5 * a.h * 0.35 * t * t;
-        p.obj.x = p.x;
-        p.obj.alpha = (1 - prog) * cfgv.alpha;
+        p.ry = p.y + p.vy * t + 0.5 * a.h * 0.35 * t * t;
+        p.rx = p.x;
+        p.alpha = (1 - prog) * cfgv.alpha;
       } else if (k === 'sweat') {
-        p.obj.y = p.y + p.vy * t * t * 2.2;
-        p.obj.alpha = (1 - prog) * cfgv.alpha;
-        p.obj.scale.set(cfgv.size * (1 + 0.4 * prog));
+        p.ry = p.y + p.vy * t * t * 2.2;
+        p.alpha = (1 - prog) * cfgv.alpha;
+        p.scale = cfgv.size * (1 + 0.4 * prog);
       } else if (k === 'dizzy') {
         var orb = t * 2.6 + p.seed;
-        p.obj.x = a.cx + Math.cos(orb) * a.w * 0.13;
-        p.obj.y = a.headY - a.h * 0.05 + Math.sin(orb * 2) * a.h * 0.02;
-        p.obj.alpha = (1 - prog) * cfgv.alpha;
+        p.rx = a.cx + Math.cos(orb) * a.w * 0.13;
+        p.ry = a.headY - a.h * 0.05 + Math.sin(orb * 2) * a.h * 0.02;
+        p.alpha = (1 - prog) * cfgv.alpha;
       } else if (k === 'anger' || k === 'shock') {
         var pop = Math.min(1, t / 0.18);
-        p.obj.scale.set(cfgv.size * (0.4 + 0.6 * (1 + 0.25 * Math.sin(pop * Math.PI)) * pop));
-        p.obj.alpha = (1 - prog) * cfgv.alpha;
+        p.scale = cfgv.size * (0.4 + 0.6 * (1 + 0.25 * Math.sin(pop * Math.PI)) * pop);
+        p.alpha = (1 - prog) * cfgv.alpha;
       }
       if (prog >= 1) dead.push(i);
     }
-    for (var d = dead.length - 1; d >= 0; d--) {
-      var idx = dead[d];
-      var q = particles[idx];
-      if (q.obj.destroy) q.obj.destroy();
-      particles.splice(idx, 1);
+    for (var d = dead.length - 1; d >= 0; d--) particles.splice(dead[d], 1);
+  }
+  function clearCanvas() {
+    if (!octx || !ocanvas) return;
+    octx.save();
+    octx.setTransform(1, 0, 0, 1, 0, 0);
+    octx.clearRect(0, 0, ocanvas.width, ocanvas.height);
+    octx.restore();
+  }
+
+  function draw() {
+    if (!octx || !ocanvas) return;
+    clearCanvas();
+    for (var i = 0; i < particles.length; i++) {
+      var p = particles[i];
+      var alpha = p.alpha < 0 ? 0 : (p.alpha > 1 ? 1 : p.alpha);
+      if (alpha <= 0) continue;
+      octx.save();
+      octx.globalAlpha = alpha;
+      octx.translate(p.rx, p.ry);
+      if (p.scale && p.scale !== 1) octx.scale(p.scale, p.scale);
+      if (p.glyph) {
+        // Emoji: jangkar kiri-atas (textAlign left / baseline top); skala
+        // tumbuh dari titik jangkar itu.
+        octx.font = p.baseFont + 'px sans-serif';
+        octx.textAlign = 'left';
+        octx.textBaseline = 'top';
+        octx.fillStyle = '#ffffff';
+        octx.fillText(p.glyph, 0, 0);
+      } else if (p.kind === 'blush') {
+        // Blush: ellipse pink lembut (fill rgba 255,158,194 @ 0.55).
+        octx.fillStyle = 'rgba(255, 158, 194, 0.55)';
+        octx.beginPath();
+        octx.ellipse(0, 0, p.r * 1.35, p.r * 0.75, 0, 0, Math.PI * 2);
+        octx.fill();
+      }
+      octx.restore();
     }
+  }
+
+  // Satu frame animasi. now = performance.now(). Dipanggil dari rAF internal
+  // (saat efek aktif) atau manual (pengujian headless).
+  function tick(now) {
+    var cfgv = cfg();
+    if (!cfgv.enabled) return;
+    var a = headAnchor();
+    if (!a) return;
+    if (octx) syncCanvasBox();
+    updateParticles(now, a, cfgv);
     // spawn lanjutan selama efek masih aktif
     if (current && now < current.until) {
       var def = EFFECTS[current.key];
@@ -314,10 +310,11 @@
         spawnParticle(current.key, Math.floor(Math.random() * 4), cfgv);
       }
     }
+    draw();
     // selesai: semua partikel mati & window habis
     if (!particles.length && (!current || now >= current.until + 400)) {
-      container.removeChildren();
       current = null;
+      clearCanvas();
       if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
     }
   }
@@ -325,16 +322,6 @@
   function loop() {
     tick(performance.now());
     if (rafId !== null) rafId = requestAnimationFrame(loop);
-  }
-
-  function attach() {
-    var s = stage();
-    if (!s || container) return container;
-    if (typeof PIXI === 'undefined' || !PIXI.Container) return null;
-    container = new PIXI.Container();
-    container.zIndex = 100;              // di atas model (model zIndex 0)
-    s.addChild(container);
-    return container;
   }
 
   // ── API publik ──────────────────────────────────────────────────
@@ -347,8 +334,7 @@
       var fx = resolveEmotionFx(name);
       var now = performance.now();
       if (!fx) { this.clear(); return; }
-      if (!container) attach();
-      if (!container) return;
+      if (!ensureCanvas()) return;
       var def = EFFECTS[fx.key];
       if (current && current.key === fx.key) {
         current.until = now + def.dur;      // perpanjang, jangan numpuk
@@ -362,19 +348,19 @@
     },
     clear: function () {
       current = null;
-      for (var i = 0; i < particles.length; i++) {
-        if (particles[i].obj.destroy) particles[i].obj.destroy();
-      }
       particles = [];
-      if (container) container.removeChildren();
+      clearCanvas();
       if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
     },
     _status: function () {
-      return { active: !!current, key: current ? current.key : null, particles: particles.length, attached: !!container };
+      return { active: !!current, key: current ? current.key : null, particles: particles.length, attached: !!octx };
     },
     _tick: function (now) { tick(now || performance.now()); },
     _resolve: resolveEmotionFx,          // ekspos untuk guard test
   };
 
-  console.log('emotion-overlay: siap (efek app-level untuk ekspresi yang rig-nya tidak mengikat art)');
+  console.log('emotion-overlay: siap (Canvas 2D — efek app-level untuk ekspresi yang rig-nya tidak mengikat art)');
 })();
+
+
+

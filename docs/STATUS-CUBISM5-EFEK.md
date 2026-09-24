@@ -26,9 +26,12 @@ LLM → Motion/Behavior Director → app.js komposisi jiwa (ADITIF)
   `setLookTarget` (CubismTargetPoint). Slider keekspresivan per grup sendi
   (kepala/mata/badan, 0–2×) di panel konfigurasi, persist per-model.
 - **Stack lama (Pixi 6 + pixi-live2d + MOC-hack) sudah DIHAPUS** — git
-  history menyimpan semuanya. PixiJS 6 global tersisa hanya sebagai utilitas
-  renderer overlay efek emosi (emotion-overlay.js, canvas terpisah).
-- **Gate**: 549 unit test + 416 guard (8 suite) + tsc — hijau penuh.
+  history menyimpan semuanya. Pixi 6 kini HILANG TOTAL dari runtime:
+  `emotion-overlay.js` diport ke Canvas 2D murni (2026-09-23), `static/js/
+  pixi.6.5.10.min.js` dihapus, dan `index.html` tak lagi memuatnya. Satu-satunya
+  Pixi di app = Pixi 8 (renderer Live2D, importmap pixi8.mjs).
+- **Gate**: 420 unit test (bun) + 362 guard (7 suite) + 115 cargo test
+  (`--workspace`) + tsc — hijau penuh (terverifikasi 2026-09-23).
 
 ### Belum teruji (konsolidasi — catatan untuk sesi berikutnya)
 

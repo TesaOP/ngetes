@@ -6,7 +6,7 @@
  * ekspor binding-nya tidak ada (lumine: 'heart eye','blush','tear',
  * 'Sparkling eye','sweat','dizzy'; kalibrasi mengukurnya 0 piksel, dan
  * identik di rig v4.2/hasil import/rig sumber v5.0, core 4.2 maupun 5.1).
- * emotion-overlay.js menggambar efeknya sendiri (sprite di atas stage)
+ * emotion-overlay.js menggambar efeknya sendiri (Canvas 2D di atas panggung)
  * saat ekspresi yang cocok dipasang — jadi ekspresi tetap TERLIHAT.
  *
  * KONTRAK yang di-guard:
@@ -18,7 +18,11 @@
  *   2. Wiring level sumber: modul dimuat index.html, app.js menyalakan
  *      overlay di TIGA jalur pemasangan ekspresi (native universal, .exp3,
  *      synthetic) dan memadamkan di resetEmotion, config 'overlay' dibaca.
- *   3. Tanpa PIXI/model, modul tetap aman dimuat & onExpression tak melempar.
+ *   3. Tanpa Canvas/model, modul tetap aman dimuat & onExpression tak melempar.
+ *   4. Renderer = Canvas 2D murni (getContext('2d') + fillText), TANPA Pixi 6:
+ *      modul tak mereferensikan PIXI, index.html tak memuat pixi.6.5.10.
+ *   5. Kontrak perilaku: dengan model + kanvas palsu, efek benar-benar
+ *      spawn → update → render (fillText/ellipse) dan padam saat clear().
  *
  * Run: node test/legacy/test-emotion-overlay.js
  */
@@ -43,14 +47,14 @@ function ok(name, cond, detail) {
 }
 function section(t) { console.log(`\n${t}`); }
 
-// Jalankan modul utuh dalam sandbox: tanpa PIXI & tanpa model — modul harus
-// tetap aman dimuat dan API-nya tetap tersedia.
+// Jalankan modul utuh dalam sandbox: tanpa model & tanpa DOM live — modul
+// harus tetap aman dimuat (tak menyentuh DOM tanpa model) dan API-nya tersedia.
 const sandbox = {
   window: {}, console,
   performance: { now: () => 0 },
   requestAnimationFrame: () => 0,
   cancelAnimationFrame: () => {},
-  // PIXI Container/Text/Graphics tidak dipakai selama belum ada model
+  // Tanpa model: ensureCanvas() harus keluar lebih dulu, tak menyentuh document.
   document: { createElement: () => ({ getContext: () => null }) },
 };
 sandbox.window = sandbox;             // modul menulis window.__emotionOverlay
@@ -58,7 +62,7 @@ vm.createContext(sandbox);
 let modOk = true;
 try { vm.runInContext(modSrc, sandbox); } catch (e) { modOk = false; console.error(e.message); }
 
-section('modul aman dimuat tanpa PIXI/model');
+section('modul aman dimuat tanpa Canvas/model');
 ok('modul dieksekusi tanpa throw', modOk);
 ok('window.__emotionOverlay terpasang', !!sandbox.__emotionOverlay);
 ok('onExpression tanpa model tidak melempar', (() => {
@@ -120,6 +124,65 @@ ok('config.json "overlay" diteruskan server ke client',
   /"overlay":\s*sect\("overlay"\)/.test(serverSrc));
 ok('app.js membaca config overlay',
   appSrc.includes('if (d.overlay) window.__overlayCfg'));
+
+section('renderer Canvas 2D & tanpa Pixi 6');
+ok('modul TIDAK mereferensikan global PIXI', !/PIXI/.test(modSrc));
+ok('modul memakai Canvas 2D (getContext 2d)', /getContext\(\s*['"]2d['"]\s*\)/.test(modSrc));
+ok('modul menggambar teks/emoji via fillText', /\.fillText\(/.test(modSrc));
+ok('modul menggambar blush via ellipse (path vektor)', /\.ellipse\(/.test(modSrc));
+ok('index.html tidak lagi memuat pixi.6.5.10', htmlSrc.indexOf('pixi.6.5.10') === -1);
+ok('index.html tetap memuat emotion-overlay.js', htmlSrc.indexOf('emotion-overlay.js') !== -1);
+
+section('kontrak perilaku (model + kanvas palsu): spawn → update → render');
+(function behavioral() {
+  const calls = { fillText: 0, ellipse: 0, clearRect: 0 };
+  const ctxInst = {
+    globalAlpha: 1, font: '', fillStyle: '', textAlign: '', textBaseline: '',
+    save() {}, restore() {}, setTransform() {}, translate() {}, scale() {},
+    beginPath() {}, fill() {},
+    clearRect() { calls.clearRect++; },
+    ellipse() { calls.ellipse++; },
+    fillText() { calls.fillText++; },
+  };
+  const fakeCanvas = { width: 0, height: 0, style: {}, setAttribute() {}, getContext() { return ctxInst; } };
+  const live = {
+    clientWidth: 400, clientHeight: 600, offsetLeft: 0, offsetTop: 0,
+    width: 800, height: 1200, style: {}, parentNode: { appendChild() {} },
+  };
+  const clock = { t: 0 };
+  const sb = {
+    console,
+    performance: { now: () => clock.t },
+    requestAnimationFrame: () => 1,
+    cancelAnimationFrame: () => {},
+    devicePixelRatio: 2,
+    document: {
+      createElement: (tag) => (tag === 'canvas' ? fakeCanvas : { style: {}, setAttribute() {} }),
+      getElementById: (id) => (id === 'live2d-canvas' ? live : null),
+    },
+  };
+  sb.window = sb;
+  sb.window.__l2dDebug = { state: { model: { x: 50, y: 40, width: 200, height: 300 } } };
+  vm.createContext(sb);
+  vm.runInContext(modSrc, sb);
+  const ov = sb.__emotionOverlay;
+
+  clock.t = 0; ov.onExpression('heart');   // spawn 3 hati
+  clock.t = 30; ov._tick(30);
+  clock.t = 120; ov._tick(120);
+  const st = ov._status();
+  ok('efek aktif setelah onExpression("heart")', st.active === true && st.key === 'heart');
+  ok('partikel ter-spawn (>0)', st.particles > 0, 'particles=' + st.particles);
+  ok('kanvas ter-attach & fillText terpanggil (render emoji)', st.attached === true && calls.fillText > 0);
+
+  ov.onExpression('malu');                 // ganti ke blush (vektor)
+  clock.t = 140; ov._tick(140);
+  ok('blush menggambar ellipse', calls.ellipse > 0);
+
+  ov.clear();
+  const sc = ov._status();
+  ok('clear() memadamkan efek (active=false, particles=0)', sc.active === false && sc.particles === 0);
+})();
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

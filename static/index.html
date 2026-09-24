@@ -995,14 +995,10 @@
   <!-- Floating Toast Notification Container -->
   <div id="toast-container" class="toast-container" aria-live="polite"></div>
 
-  <!-- Scripts: PixiJS v6 global DIPERTAHANKAN hanya sebagai utilitas
-       overlay efek emosi (renderer overlay emoji pada canvas terpisah) —
-       bukan lagi renderer Live2D. Stack Live2D lama (pixi-live2d-display)
-       sudah dipensiunkan. -->
-  <script src="js/pixi.6.5.10.min.js"></script>
-  <!-- View Pixi 8 (DEFAULT sejak Fase B): module ESM, pixi.js diresolve
-       importmap ke ./js/pixi8.mjs — instance ESM terpisah, tidak menyentuh
-       global PIXI v6. Dibangun dari src/live2d/view/ oleh `bun run build`. -->
+  <!-- View Pixi 8 (satu-satunya Pixi di app): module ESM, pixi.js diresolve
+       importmap ke ./js/pixi8.mjs. Efek overlay emosi kini Canvas 2D murni —
+       Pixi 6 sudah dihapus total. Dibangun dari src/live2d/view/ oleh
+       `bun run build`. -->
   <script type="importmap">{"imports":{"pixi.js":"./js/pixi8.mjs"}}</script>
   <script type="module" src="js/live2d-view.mjs"></script>
   <!-- TS client core: Taxonomy → DSL → Registry → Runtime + brain + i18n, terpasang sebagai
