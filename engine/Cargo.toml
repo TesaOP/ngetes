@@ -1,4 +1,4 @@
-# live2d-engine — library inferensi native (STT + TTS) untuk Live2D Agent.
+# live2d-engine: library inferensi native (STT + TTS) untuk Lumimi.
 #
 # Dipakai IN-PROCESS oleh Rust core (bukan sidecar/exe): TTS SuperTonic
 # (4 ONNX via `ort`) + STT Whisper via `whisper-rs` (binding whisper.cpp).
@@ -7,7 +7,7 @@
 [package]
 name = "live2d-engine"
 version = "0.1.0"
-description = "Library inferensi native (SuperTonic TTS + Whisper STT) untuk Live2D Agent — dipakai in-process oleh Rust core"
+description = "Library inferensi native (SuperTonic TTS + Whisper STT) untuk Lumimi, dipakai in-process oleh Rust core"
 edition = "2021"
 rust-version = "1.77"
 

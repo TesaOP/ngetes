@@ -1,13 +1,13 @@
 [package]
-name = "companion"
+name = "lumimi"
 version = "0.1.0"
-description = "Companion — satu exe satu proses: shell Tauri (WebView2) + server Rust in-process untuk Live2D Agent"
+description = "Lumimi — satu exe satu proses: shell Tauri (WebView2) + server Rust in-process"
 edition = "2021"
 rust-version = "1.77"
 
-# Nama binary = Companion.exe (huruf kapital, sesuai produk).
+# Nama binary = Lumimi.exe (huruf kapital, sesuai produk).
 [[bin]]
-name = "Companion"
+name = "Lumimi"
 path = "src/main.rs"
 
 # Binary statis kecil; WebView2 diambil dari runtime bawaan Windows.
@@ -26,7 +26,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "fs", "ma
 [features]
 default = []
 # STT native in-process (butuh cmake + LLVM/libclang saat build):
-#   cargo build --release -p companion --features engine-stt
+#   cargo build --release -p lumimi --features engine-stt
 engine-stt = ["live2d-core/engine-stt"]
 
 # Profil release dipindah ke workspace root (Cargo mengabaikan profil member

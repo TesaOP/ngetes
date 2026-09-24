@@ -1,5 +1,5 @@
 /**
- * client/i18n — penerjemah UI ringan (zero-dep) untuk Live2D Agent.
+ * client/i18n — penerjemah UI ringan (zero-dep) untuk Lumimi.
  *
  * Prinsip:
  *  - Bahasa "id" adalah IDENTITY/fallback: kunci tidak ketemu di kamus bahasa

@@ -2,7 +2,7 @@
 //!
 //! Menyediakan **server HTTP in-process** (axum) yang, di dalam Tauri, melayani
 //! `/api/*` + aset statis menggantikan server Bun rute demi rute — jalur menuju
-//! SATU exe (`Companion.exe`) tanpa proses Bun terpisah. Wire tetap HTTP
+//! SATU exe (`Lumimi.exe`) tanpa proses Bun terpisah. Wire tetap HTTP
 //! loopback, jadi frontend & klien mandiri (CLI/OBS/HP) tak perlu berubah.
 //!
 //! Renderer Live2D/PixiJS TETAP di frontend TypeScript. Lihat

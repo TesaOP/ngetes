@@ -9,7 +9,7 @@ const DEFAULT_CONFIG: Config = {
   activeId: null,
   overlay: { enabled: true, alpha: 0.9, size: 1 },
   connections: [],
-  // TTS default: SuperTonic native (sidecar Rust lokal, model on-demand).
+  // TTS default: SuperTonic native (in-process di core Rust, model on-demand).
   // Provider lain (browser/gradio/openai/elevenlabs/gemini/custom) tetap bisa
   // dipilih user; hanya default install baru yang native.
   tts: { provider: "supertonic", endpoint: "", voice: "F1" },
@@ -41,7 +41,7 @@ const DEFAULT_CONFIG: Config = {
   // STT dua arah (push-to-talk, Whisper lokal di browser — audio tidak di-upload).
   // device "" = auto (webgpu bila ada, lalu wasm); language "auto" = deteksi sendiri.
   stt: {
-    provider: "local",          // sidecar native (Whisper via whisper-rs)
+    provider: "local",          // in-process native (Whisper via whisper-rs di core)
     engineModel: "base",         // model GGML native (setara whisper-base browser)
     model: "Xenova/whisper-base", // dipakai bila provider "browser"
     language: "indonesian",

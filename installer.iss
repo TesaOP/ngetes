@@ -1,7 +1,7 @@
-; installer.iss — Inno Setup untuk Live2D Agent (Windows).
+; installer.iss — Inno Setup untuk Lumimi (Windows).
 ;
-; Membungkus isi dist/Live2D-Agent/ (hasil `bun run dist`) menjadi SATU file
-; setup: dist/Live2D-Agent-Setup.exe — user download, dobel-klik, selesai.
+; Membungkus isi dist/Lumimi/ (hasil `bun run dist`) menjadi SATU file
+; setup: dist/Lumimi-Setup.exe — user download, dobel-klik, selesai.
 ;
 ; Build manual:
 ;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
@@ -9,7 +9,7 @@
 ;
 ; Keputusan penting:
 ;   - PrivilegesRequired=lowest → {autopf} memetakan ke
-;     %LOCALAPPDATA%\Programs\Live2D-Agent (per-user, tanpa UAC, pasti
+;     %LOCALAPPDATA%\Programs\Lumimi (per-user, tanpa UAC, pasti
 ;     writable) sehingga kontrak "data/ di samping exe" tetap berlaku tanpa
 ;     mengubah kode. Sengaja TIDAK pakai PrivilegesRequiredOverridesAllowed —
 ;     instalasi ke Program Files akan mematikan penulisan data/config.json.
@@ -19,8 +19,8 @@
 ;   - WebView2 sudah bawaan Windows 10/11; installer hanya memperingatkan
 ;     (dan menawarkan membuka halaman unduhan) bila runtime tidak ditemukan.
 
-#define MyAppName "Live2D Agent"
-#define MyAppExeName "Companion.exe"
+#define MyAppName "Lumimi"
+#define MyAppExeName "Lumimi.exe"
 
 #ifndef APP_VERSION
   #define APP_VERSION "2.0.0"
@@ -30,13 +30,13 @@
 AppId={{B7F4A2E9-3C8D-4E61-9F5B-2A7D1C0E8F34}
 AppName={#MyAppName}
 AppVersion={#APP_VERSION}
-AppPublisher=Live2D Agent
-DefaultDirName={autopf}\Live2D-Agent
+AppPublisher=Lumimi
+DefaultDirName={autopf}\Lumimi
 PrivilegesRequired=lowest
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=dist
-OutputBaseFilename=Live2D-Agent-Setup
+OutputBaseFilename=Lumimi-Setup
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -51,8 +51,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-; Satu baris wildcard — isi dist/Live2D-Agent/ utuh: exe + static/ + BACA-SAYA.txt
-Source: "dist\Live2D-Agent\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Satu baris wildcard — isi dist/Lumimi/ utuh: exe + static/ + BACA-SAYA.txt
+Source: "dist\Lumimi\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
@@ -86,7 +86,7 @@ begin
   begin
     if MsgBox(
       'Windows WebView2 runtime tidak ditemukan di komputer ini.' + #13#10 +
-      'Live2D Agent membutuhkannya untuk menampilkan jendela aplikasi' + #13#10 +
+      'Lumimi membutuhkannya untuk menampilkan jendela aplikasi' + #13#10 +
       '(biasanya sudah bawaan Windows 10/11).' + #13#10#13#10 +
       'Lanjutkan instalasi dan buka halaman unduhan WebView2 sekarang?',
       mbConfirmation, MB_YESNO) = IDYES then

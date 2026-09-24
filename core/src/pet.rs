@@ -1,13 +1,13 @@
 //! pet.rs — Peluncur jendela overlay Desktop Pet.
 //! Web tak bisa menembus batas browser, jadi pet jalan di jendela terpisah
 //! always-on-top + transparan. Urutan peluncur:
-//!   1. Window Tauri in-process (didaftarkan shell Companion via
+//!   1. Window Tauri in-process (didaftarkan shell Lumimi via
 //!      register_pet_host) — jendela kedua dalam PID yang sama, transparan +
 //!      klik-tembus. JALUR PRODUKSI.
-//!   2. Companion.exe "pet" (spawn proses) — fallback bila core jalan TANPA
+//!   2. Lumimi.exe "pet" (spawn proses) — fallback bila core jalan TANPA
 //!      shell (dev `cargo run -p live2d-core` + browser).
 //!   3. Chrome/Edge --app (opaque, always-on-top via PowerShell) — fallback
-//!      terakhir bila exe Companion tak ditemukan.
+//!      terakhir bila exe Lumimi tak ditemukan.
 //!
 //! HTTP routes & state TIDAK BERUBAH (status/clickthrough/close sama persis);
 //! yang diganti hanya TRANSPORT peluncuran #1 (callback, bukan spawn).
@@ -68,9 +68,9 @@ fn state() -> &'static Mutex<PetState> {
 fn shell_candidates(root: &Path) -> Vec<std::path::PathBuf> {
     // Workspace Cargo: target terpusat di root (bukan agent-shell/target).
     vec![
-        root.join("Companion.exe"),
-        root.join("target").join("release").join("Companion.exe"),
-        root.join("target").join("debug").join("Companion.exe"),
+        root.join("Lumimi.exe"),
+        root.join("target").join("release").join("Lumimi.exe"),
+        root.join("target").join("debug").join("Lumimi.exe"),
     ]
 }
 
@@ -154,7 +154,7 @@ pub fn launch(root: &Path, port: u16) -> Value {
     }
     let url = format!("http://127.0.0.1:{port}/pet.html");
 
-    // Jalur 2: spawn Companion.exe "pet" (dev core tanpa shell).
+    // Jalur 2: spawn Lumimi.exe "pet" (dev core tanpa shell).
     if let Some(shell) = find_shell_exe(root) {
         match std::process::Command::new(&shell).args(["pet", &url]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn() {
             Ok(child) => {

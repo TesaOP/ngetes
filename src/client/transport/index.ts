@@ -2,7 +2,7 @@
  * client/transport — SEAM TUNGGAL komunikasi frontend↔backend.
  *
  * Arsitektur (satu binary, satu proses):
- * - Produksi: halaman di-embed di Companion.exe (origin lokal tauri.localhost).
+ * - Produksi: halaman di-embed di Lumimi.exe (origin lokal tauri.localhost).
  *   Domain yang SUDAH migrasi → perintah IPC (`invoke`) langsung ke logika
  *   `live2d_core` dalam proses yang sama (tanpa HTTP). Domain yang BELUM →
  *   HTTP loopback proses-sendiri (adapter yang sama melayani CLI/OBS/dev).
@@ -29,7 +29,7 @@ export function apiBase(): string {
 let loopPort: number | null = null;
 let loopInit: Promise<number | null> | null = null;
 
-/** True bila berjalan di dalam shell Companion (withGlobalTauri). */
+/** True bila berjalan di dalam shell Lumimi (withGlobalTauri). */
 export function isEmbedded(): boolean {
   return typeof (globalThis as any).__TAURI__ !== "undefined";
 }

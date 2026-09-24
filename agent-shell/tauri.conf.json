@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Companion",
+  "productName": "Lumimi",
   "version": "0.1.0",
-  "identifier": "com.live2d.companion",
+  "identifier": "com.lumimi.app",
   "build": {
     "frontendDist": "../static"
   },

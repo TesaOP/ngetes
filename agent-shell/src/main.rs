@@ -1,6 +1,6 @@
-// Cangkang jendela Companion — SATU exe, SATU proses.
+// Cangkang jendela Lumimi — SATU exe, SATU proses.
 //
-//   Companion.exe [main <url>|<url>] → jendela utama (port dari URL eksplisit
+//   Lumimi.exe [main <url>|<url>] → jendela utama (port dari URL eksplisit
 //                                     atau dipilih sendiri).
 //   Dobel-klik exe = semuanya nyala: server HTTP Rust (live2d-core) berjalan
 // IN-PROCESS di thread runtime tokio sendiri — jendela WebView me-load
@@ -9,11 +9,11 @@
 // Jendela PET (overlay transparan selalu-di-atas) adalah window Tauri KEDUA
 // dalam proses yang SAMA — dibuka/tutup lewat /api/pet/* (server in-process
 // memanggil balik pembuka yang didaftarkan di setup). Tak ada lagi mode
-// proses-pet (`Companion.exe pet …`); argumen itu kini diabaikan (jendela
+// proses-pet (`Lumimi.exe pet …`); argumen itu kini diabaikan (jendela
 // utama yang dibuka, pet via panel).
 //
 // URL diterima dari argumen supaya ikut PORT yang sebenarnya. Sebelum jendela
-// menunggu port server terbuka (maks 15 dtk): start.bat menyalakan shell dan
+// menunggu port server terbuka (maks 15 dtk): Lumimi.exe menyalakan shell dan
 // server hampir bersamaan, dan WebView tidak punya retry — tanpa menunggu,
 // jendela bisa menampilkan halaman error. Kalau 15 dtk tidak cukup (mesin
 // lambat / server gagal boot sesaat), jendela tetap dibuat dan thread
@@ -28,7 +28,7 @@
 // dasar 8310 dipakai bila kosong ATAU sudah dipakai server milik kita sendiri
 // (probe /api/mode — dobel-klik kedua menempel ke instance pertama, tanpa
 // server baru). Bila port diduduki aplikasi ASING, shell bergeser ke
-// 8311..8319. URL argumen eksplisit (start.bat / pet yang diluncurkan server)
+// 8311..8319. URL argumen eksplisit (Lumimi.exe / pet yang diluncurkan server)
 // selalu dihormati apa adanya.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -83,11 +83,11 @@ fn set_mode(mode: String) -> Result<serde_json::Value, String> {
 
 const FALLBACK_PORT: u16 = 8310;
 /** Batas pemulihan: kalau server belum juga naik dalam 2 menit, menyerah —
- *  user tinggal menutup jendela dan menjalankan start.bat lagi. */
+ *  user tinggal menutup jendela dan menjalankan Lumimi.exe lagi. */
 const RECOVER_SECS: u64 = 120;
 
 struct Launch {
-    /// URL eksplisit (start.bat / dev) — port-nya dihormati; HALAMAN selalu
+    /// URL eksplisit (Lumimi.exe / dev) — port-nya dihormati; HALAMAN selalu
     /// dari aset ter-embed (origin lokal → IPC hidup). Tanpa argumen → shell
     /// memilih port sendiri (pick_port). Argumen "pet" lama diabaikan: pet
     /// kini window kedua se-proses (via /api/pet/*), bukan proses terpisah.
@@ -112,7 +112,7 @@ fn build_pet_window(app: &tauri::AppHandle) -> tauri::Result<()> {
         return Ok(());
     }
     WebviewWindowBuilder::new(app, "pet", WebviewUrl::App("pet.html".into()))
-        .title("Companion Pet")
+        .title("Lumimi Pet")
         .inner_size(420.0, 640.0)
         .position(40.0, 40.0)
         .decorations(false) // tanpa frame — murni overlay
@@ -284,7 +284,7 @@ fn main() {
                 label,
                 WebviewUrl::App("index.html".into()),
             )
-            .title("Companion");
+            .title("Lumimi");
             // Jendela utama: aplikasi biasa — berdekorasi, bisa diresize.
             builder
                 .inner_size(1280.0, 800.0)

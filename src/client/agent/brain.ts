@@ -1138,5 +1138,5 @@ if (typeof window !== "undefined") {
     _pickSupportedEmotion: (p: string[]) => brain._pickSupportedEmotion(p),
   };
   (window as any).Live2DAgentBrain = AgentBrain;
-  console.log("🎭 Live2D Agent v2 brain (TS) initialized");
+  console.log("🎭 Lumimi brain (TS) initialized");
 }

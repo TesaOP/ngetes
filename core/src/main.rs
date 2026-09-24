@@ -1,5 +1,5 @@
 //! live2d-core (bin) — host DEV/EKSTERNAL adapter HTTP, bukan produksi.
-//! Produksi = in-process di dalam Companion.exe. Binary ini untuk: dev
+//! Produksi = in-process di dalam Lumimi.exe. Binary ini untuk: dev
 //! browser (`cargo run -p live2d-core` / `bun run dev`), CLI, dan integrasi
 //! eksternal (OBS). Wire & logika identik (router yang sama).
 //!

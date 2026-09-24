@@ -78,5 +78,5 @@ if (typeof window !== "undefined") {
   // Mount ada setelah panel Assistant membangun halaman teknis; panel memanggil
   // start ulang saat tab Browser tersedia.
   i18n.init();
-  console.log("🎭 Live2D Agent v2 — TS core installed (MotionDSL/Registry/Runtime/Taxonomy/LipSync + brain + i18n)");
+  console.log("🎭 Lumimi: TS core installed (MotionDSL/Registry/Runtime/Taxonomy/LipSync + brain + i18n)");
 }

@@ -2,7 +2,9 @@
 <html lang="id">
 <head>
 <meta charset="utf-8" />
-<title>Desktop Pet — Live2D Agent</title>
+<title>Lumimi Desktop Pet</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml" />
+<link rel="icon" href="favicon.ico" sizes="any" />
 <style>
   /* Overlay desktop di jendela Chrome --app: body transparan, semua kontrol
      mengambang. Palet & anggaran render sama dengan app utama (static/css/app.css):
@@ -66,7 +68,7 @@
 <script>
 (function () {
   // Basis HTTP: dev/browser → origin halaman (same-origin); embedded
-  // (Companion, origin tauri.localhost) → loopback proses-sendiri, port via
+  // (Lumimi, origin tauri.localhost) → loopback proses-sendiri, port via
   // IPC `server_port` (async sekali, di-cache). Halaman pet tidak memuat
   // bundle.js → logika ini mandiri di sini (cermin transport/index.ts).
   let API = location.origin;

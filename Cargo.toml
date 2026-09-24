@@ -1,10 +1,11 @@
-# Workspace Rust — Live2D Agent (migrasi backend → Rust core, Tauri IPC-first).
-# Lihat docs/ARCHITECTURE-TAURI-RUST.md untuk arah & roadmap.
+# Workspace Rust untuk Lumimi. Produk = SATU exe SATU proses (Lumimi.exe):
+# shell Tauri meng-host core Rust in-process. Lihat docs/ARCHITECTURE-TAURI-RUST.md.
 #
 # Anggota:
-#   agent-shell  — cangkang Tauri (jendela app + pet). Jadi host utama migrasi.
-#   engine       — lib+bin inferensi native (TTS SuperTonic + STT Whisper).
-#   core         — application core (skeleton; diisi bertahap Stage 2+).
+#   agent-shell  — cangkang Tauri (jendela app + pet) yang meng-host core in-process.
+#   engine       — LIBRARY inferensi native (TTS SuperTonic + STT Whisper); tanpa bin.
+#   core         — backend penuh (axum HTTP loopback + IPC per-domain), dipakai
+#                  in-process oleh shell dan sebagai server standalone (dev/CLI/OBS).
 [workspace]
 members = ["agent-shell", "engine", "core"]
 resolver = "2"

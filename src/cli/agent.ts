@@ -2,13 +2,13 @@
 /**
  * src/cli/agent.ts — CLI untuk mode AI Assistant.
  *
- * Otak agent hidup di server Rust core (in-process di Companion.exe, atau
+ * Otak agent hidup di server Rust core (in-process di Lumimi.exe, atau
  * `cargo run -p live2d-core` saat dev); CLI ini cuma layar lain yang memanggil
  * API yang sama dengan panel di browser. Jadi riwayat, approval, dan folder
  * kerja dipegang server — CLI boleh dibuka-tutup kapan saja tanpa kehilangan
  * sesi.
  *
- * Pakai (server harus sudah jalan: start.bat / bun run dev):
+ * Pakai (server harus sudah jalan: bun run dev):
  *   bun run agent                        → folder kerja = cwd saat ini
  *   bun run agent --cwd ../proyek-lain   → set folder kerja lain
  *   bun run agent --yes                  → auto-setujui write_file/run_shell
@@ -55,7 +55,7 @@ function printHelp() {
 async function main() {
   // Cek server dulu supaya pesan errornya jelas, bukan fetch exception.
   try { await fetch(API + "/api/mode"); } catch {
-    console.error(`Server tidak jalan di ${API} — jalankan start.bat / bun run dev dulu.`);
+    console.error(`Server tidak jalan di ${API} — jalankan bun run dev dulu.`);
     process.exit(1);
   }
 
