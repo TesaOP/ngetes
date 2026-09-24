@@ -87,7 +87,7 @@ Jebakan yang harus diingat:
   jadi rilis dapat TTS SuperTonic tapi bukan STT Whisper native (STT mode `browser` tetap
   jalan). Untuk mengikutkan STT native, tambah flag itu di `src/dist.ts` (mesin build butuh
   cmake + LLVM/libclang).
-- **Versi terpusat di `2.0.0`.** Satu versi produk dipakai di `package.json`,
+- **Versi terpusat di `0.1.0`.** Satu versi produk dipakai di `package.json`,
   `agent-shell/tauri.conf.json`, dan ketiga `Cargo.toml` (plus fallback di
   `installer.iss`). `installer.iss` mengambil versi dari `package.json`, exe Tauri
   dari `tauri.conf.json`, dan `live2d_core::VERSION` (IPC `core_version` + `/api/version`)
