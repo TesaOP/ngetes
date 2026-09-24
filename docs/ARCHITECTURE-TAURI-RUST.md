@@ -4,7 +4,7 @@
 > migrasi backend `live2d-agent` dari TypeScript/Bun ke **Rust core di dalam
 > Tauri**, tanpa merusak renderer Live2D/PixiJS yang sudah jalan.
 >
-> **Status: DIEKSEKUSI — TARGET FINAL (revisi 2026-09-22).** `Companion.exe` =
+> **Status: DIEKSEKUSI — TARGET FINAL (revisi 2026-09-22).** `Lumimi.exe` =
 > satu binary satu proses: Tauri + Rust core (library, in-process) + frontend
 > ter-embed (frontendDist → binary). Transport INTERNAL WebView↔Rust = perintah
 > IPC per-domain, bertahap (single source of truth = fungsi `live2d_core`;
@@ -47,10 +47,10 @@ WebGL → compositing), **bukan** dengan memindah logika backend ke Rust.
 > akhir user yang mengikat: **satu berkas executable** — bukan Bun & Tauri jalan
 > sebagai dua proses terpisah seperti sekarang. Ini menetapkan arah:
 
-0. **PRODUK AKHIR = SATU EXE (`Companion.exe`).** Tidak ada proses Bun terpisah
+0. **PRODUK AKHIR = SATU EXE (`Lumimi.exe`).** Tidak ada proses Bun terpisah
    di produksi. Ini menutup opsi "pertahankan server Bun" — Bun hanya alat dev.
 
-1. **PRODUK AKHIR = SATU EXE SATU PROSES (`Companion.exe`).** Shell Tauri
+1. **PRODUK AKHIR = SATU EXE SATU PROSES (`Lumimi.exe`).** Shell Tauri
     me-link server Rust dan menjalankannya **in-process**
     (`agent-shell/src/main.rs::ensure_server` — thread runtime tokio sendiri,
     root path dari lokasi exe / cwd dev). Frontend **di-embed ke binary**
@@ -78,7 +78,7 @@ WebGL → compositing), **bukan** dengan memindah logika backend ke Rust.
 ## 3. Arsitektur target
 
 ```
-Companion.exe — SATU exe, SATU proses (semuanya dalam satu proses OS)
+Lumimi.exe — SATU exe, SATU proses (semuanya dalam satu proses OS)
 ├─ Tauri
 │   ├─ WebView2 → frontend JS ter-embed (PixiJS + Live2D, MotionRuntime, panel)
 │   │    ├─ Render loop 100% lokal (tanpa IPC per-frame)
@@ -195,9 +195,9 @@ Setiap stage harus mempertahankan semuanya; kalau berubah, itu regresi.
 
 > **CATATAN satu-exe (2026-09-22):** roadmap Stage 0–5 di bawah adalah SEJARAH
 > eksekusi. Kondisi akhir MELAMPAUI rencana: bukan "dua proses sementara" —
-> server Rust hidup **in-process di dalam `Companion.exe`** (satu proses OS).
+> server Rust hidup **in-process di dalam `Lumimi.exe`** (satu proses OS).
 > `bun run dev/start` = `cargo run -p live2d-core` (dev via browser), produk =
-> `Companion.exe`. Jangan memulai stage "pindah rute / sidecar / IPC" baru.
+> `Lumimi.exe`. Jangan memulai stage "pindah rute / sidecar / IPC" baru.
 > Sisa pekerjaan adalah stabilisasi + packaging, bukan migrasi.
 
 Aturan: **tiap stage meninggalkan aplikasi tetap fungsional + gate hijau**
@@ -210,7 +210,7 @@ berhenti aman di situ.
 > Tauri**. Jadi Stage 2–4 "pindah ke Rust" = **port rute Bun → handler axum**
 > (bukan command IPC), wire tetap HTTP loopback → frontend tak perlu ditulis
 > ulang. Stage 5 (frontendDist embed + buang exe Bun) = titik di mana produk
-> jadi **satu `Companion.exe`**. Tiap rute yang sudah diport dilayani server
+> jadi **satu `Lumimi.exe`**. Tiap rute yang sudah diport dilayani server
 > Rust; selama transisi, rute yang belum diport masih oleh Bun (dua proses
 > SEMENTARA di dev) — single-exe tercapai saat SEMUA rute pindah + frontendDist.
 > `src/client/transport/` yang sudah ada tetap seam-nya; ia cukup diarahkan ke
@@ -313,14 +313,22 @@ mulus di dalam jendela Tauri via HTTP (origin remote) — "model muncul, suara
 keluar". Jadi HttpTransport (mode kompatibilitas) valid; hanya jalur IPC yang
 menuntut origin lokal.
 
-**Keputusan terbuka untuk user** (SUDAH DIPUTUS — revisi satu-jalur 2026-09-22):
-dipilih **B yang dimatikan dualnya**: HTTP transport adalah SATU-SATUNYA jalur
-(server Rust `live2d-core`), Tauri IPC untuk API **dihapus** (shell tanpa
-`invoke_handler`; `src/client/transport/` tanpa `TauriTransport`/`tauriInvoke`/
-`appInfo`; indikator core di judul jendela via `GET /api/version` HTTP).
-Opsi A (frontendDist + origin lokal + IPC-first) DITOLAK — tak ada custom
-protocol `lumi://`, tak ada frontendDist. §6b tinggal sebagai catatan sejarah
-temuan teknis.
+**Keputusan (histori):** revisi "satu-jalur HTTP" 2026-09-22 sempat menghapus
+Tauri IPC untuk API. **Keputusan itu SUDAH DISUSUL** oleh revisi berikutnya
+(header dokumen §atas + §2b): produk kembali memakai `frontendDist` (aset
+ter-embed, `WebviewUrl::App` → origin lokal) **dan** IPC per-domain.
+
+**Kondisi NYATA sekarang** (terverifikasi di kode):
+- `agent-shell/tauri.conf.json` → `frontendDist: "../static"`, `withGlobalTauri: true`.
+- `agent-shell/src/main.rs` → `invoke_handler` dengan 5 command:
+  `core_version`, `server_port`, `pet_model`, `get_mode`, `set_mode`.
+- `src/client/transport/index.ts` → helper IPC per-domain (`initLoopback` via
+  `server_port`, `modeGet`/`modeSet` via `get_mode`/`set_mode`, `coreVersion`),
+  dengan HTTP loopback sebagai jembatan transisi + adapter eksternal (CLI/OBS/dev).
+
+Jadi jalur internal = IPC per-domain (domain yang sudah migrasi) + HTTP loopback
+untuk sisanya; frontend TIDAK di-serve via `WebviewUrl::External`. §6b tinggal
+sebagai catatan sejarah temuan teknis (blokir-origin IPC pada origin remote).
 
 ## 7. Risiko utama & mitigasi
 
@@ -340,7 +348,7 @@ temuan teknis.
 
 ```
 Development : Bun + Tauri + Rust + TypeScript  → jalan normal
-Production  : Companion.exe                      → pengalaman lengkap, 1 exe
+Production  : Lumimi.exe                      → pengalaman lengkap, 1 exe
 Internal    : Rust = core/backend/native
               TypeScript = UI + Live2D + Pixi + presentation
               LLM = layanan eksternal yang bisa diganti

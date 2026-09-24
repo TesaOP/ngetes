@@ -219,21 +219,21 @@ actor / view / panel) di-bundle ke `bundle.js` sebagai `window.__agentPanel`;
 
 Web murni tidak bisa menembus desktop; pet berjalan di jendela aplikasi
 terpisah. SATU PROSES: pet adalah window Tauri KEDUA ("pet") dalam
-`Companion.exe` yang sama — dibuka/tutup lewat `/api/pet/launch|close`
+`Lumimi.exe` yang sama — dibuka/tutup lewat `/api/pet/launch|close`
 (server in-process memanggil balik bridge `register_pet_host` dari shell;
 tutup-oleh-user disinkronkan via `notify_closed`). Tak ada proses kedua,
 tak ada mode CLI `pet` lagi.
 
 1. **Window pet in-process** — WebView2 transparan melayang di desktop,
    always-on-top native, tanpa frame, tanpa taskbar. Jendela utama
-   (`Companion.exe [main <url>]`, dipakai start.bat) berdekorasi normal dan
+   (`Lumimi.exe [main <url>]`) berdekorasi normal dan
    menunggu server bind (maks 15 dtk) sebelum membuat jendela.
     - Klik-tembus: toggle "Klik Tembus" di panel Pet (atau tombol di bar pet)
       → `POST /api/pet/clickthrough {on}` → pet page memanggil Tauri
       `setIgnoreCursorEvents`. Saat menyala, klik menembus ke desktop; satu-
       satunya jalan keluar adalah toggle yang sama di app utama.
 2. **Fallback (hanya bila core jalan TANPA shell — dev `cargo run -p
-   live2d-core`)**: spawn `Companion.exe` sebagai proses pet (transparan),
+   live2d-core`)**: spawn `Lumimi.exe` sebagai proses pet (transparan),
    lalu Chrome/Edge `--app` (opaque, always-on-top via PowerShell
    `SetWindowPos`, tanpa klik-tembus).
 3. `pet.html` — adapter view stack baru (importmap pixi8.mjs +

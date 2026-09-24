@@ -5,7 +5,7 @@ sesi berikutnya) bisa lanjut kerja tanpa membaca ulang percakapan panjang.
 Kalau kode dan dokumen ini beda, **kode yang benar** — perbaiki dokumennya.
 
 > Sistem sheet diimplementasikan di `static/js/app.js` (legacy — di-port saat
-> disentuh) + endpoint server di `src/server/index.ts`.
+> disentuh) + endpoint server di `core/src/sheet.rs` (+ `core/src/expressions.rs`).
 
 ## Kenapa ada sistem sheet
 
@@ -72,10 +72,10 @@ Batas struktural steps gerak: `STEP_MS_MIN` 40, `STEP_MS_MAX` 3000,
 supaya preset gerak tetap model-agnostic.
 
 Penyimpanan: `localStorage['live2d_sheet_' + currentModelKey()]` **dan**
-`data/sheets/<key>.json` di server (atomic + serialized write via
-`queueJsonWrite` di `src/server/index.ts`). `currentModelKey()` diturunkan dari
-model PATH, dan sanitizernya identik dengan `sanitizeKey()` di
-`src/server/index.ts` — jangan ubah salah satu tanpa yang lain. Data versi
+`data/sheets/<key>.json` di server (atomic tmp+rename via
+`write_json_atomic` di `core/src/sheet.rs`). `currentModelKey()` diturunkan dari
+model PATH, dan sanitizernya identik dengan `sanitize_key()` di
+`core/src/sheet.rs` — jangan ubah salah satu tanpa yang lain. Data versi
 lama (`sheets/*.json` dari arsip) kompatibel: cukup copy ke `data/sheets/`.
 
 ## API sheet (dipakai UI, diekspos di `window.__live2dAgent.sheet`)
@@ -110,7 +110,7 @@ Dua bagian:
 
 | Bagian | Apa |
 |---|---|
-| `GET /api/model/expressions?name=X` (`src/server/index.ts`) | Menyusuri folder model di `data/model/`, melaporkan setiap `.exp3` dengan `File` **relatif terhadap direktori `model3.json`** (itu yang di-resolve loader), plus flag `declared` per file dan `orphanCount` |
+| `GET /api/model/expressions?name=X` (`core/src/expressions.rs`) | Menyusuri folder model di `data/model/`, melaporkan setiap `.exp3` dengan `File` **relatif terhadap direktori `model3.json`** (itu yang di-resolve loader), plus flag `declared` per file dan `orphanCount` |
 | `buildModelSettings()` (`static/js/app.js`) | Menggabungkan hanya yang **belum** terdaftar ke salinan **in-memory** manifest, lalu menyerahkan objek itu ke `Live2DModel.from()` alih-alih string URL |
 
 Aturan yang wajib dipertahankan:

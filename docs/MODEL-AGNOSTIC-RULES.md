@@ -88,11 +88,11 @@ sebagai tengah membuat kepalanya miring permanen.
 | Tulis parameter dari driver/UI | backend `coreModel` di `src/live2d/view/Live2DView.ts` (SET + ADD, flush order 900) |
 | Pipeline motion (evaluator, sanitize, bounds) | `src/client/animation/motion-dsl.ts` → `static/js/bundle.js` |
 | Klasifikasi klip native (kurva + cdi3 + name-hint) | `src/client/engine/motion-taxonomy.ts` (server & bundle) |
-| Adopsi `.exp3` yatim (`discoverExpressions`) | `src/server/index.ts` → diteruskan ke renderer via `loadModel(path, settings)` |
+| Adopsi `.exp3` yatim (discovery) | `core/src/expressions.rs` (`expressions::discover`) → diteruskan ke renderer via `loadModel(path, settings)` |
 
 Aturan model-agnostic berlaku ke SEMUA lokasi itu — termasuk file TS baru: jangan
 pernah memasukkan nama model, id `Param…`, atau range spesifik ke
-`src/client/animation/*.ts` maupun `src/server/*`.
+`src/client/animation/*.ts` maupun `core/src/*`.
 
 ## Cara membuktikan tidak melanggar
 
