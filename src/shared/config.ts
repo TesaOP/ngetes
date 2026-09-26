@@ -49,6 +49,9 @@ const DEFAULT_CONFIG: Config = {
     silenceMs: 1500,
     maxMs: 30_000,
     device: "",
+    endpoint: "",                // (openai) base URL transcription; kosong = resmi OpenAI
+    apiKey: "",                  // (openai) kunci — plaintext di config.json, dimask ke UI
+    apiModel: "whisper-1",       // (openai) nama model API
   },
 };
 

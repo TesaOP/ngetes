@@ -14,7 +14,7 @@
 import * as PIXI from "pixi.js";
 import { Live2DRenderer } from "../Live2DRenderer";
 import { Live2DUserModel, MotionPriority } from "../Live2DUserModel";
-import { ICubismUpdater } from "../cubism/motion/icubismupdater";
+import { ICubismUpdater, CubismUpdateOrder } from "../cubism/motion/icubismupdater";
 import type { CubismModel } from "../cubism/model/cubismmodel";
 import { CubismFramework } from "../cubism/live2dcubismframework";
 import {
@@ -30,13 +30,20 @@ const MODEL_UNIT_PX = 400;
 
 /** Flush tulisan app.js tiap frame SETELAH semua efek framework: SET dulu
  * (pose absolut brain/motion-layer), lalu ADD (offset liveliness di atas
- * motion + gaze framework). */
+ * motion + gaze framework).
+ *
+ * Pengecualian param INPUT physics: nilainya di-flush lebih awal oleh
+ * AppWriteInputUpdater (order < 600) supaya CubismPhysics.evaluate() bereaksi
+ * di frame yang sama; entri itu di-consume di sana agar tak dobel-tulis. */
 class AppWriteUpdater extends ICubismUpdater {
   private pending = new Map<string, { v: number; w: number }>();
   private pendingAdd = new Map<string, { v: number; w: number }>();
   /** Cache id handle per string — getId membangun CubismId bila belum ada;
    * tanpa cache tiap poke app.js melewatinya tiap frame. */
   private ids = new Map<string, unknown>();
+  /** Id parameter INPUT physics (source.id rig) — di-set ulang tiap loadModel;
+   * kosong = model tanpa physics (semua tulisan lewat jalur order 900 biasa). */
+  physicsInputIds: Set<string> = new Set();
 
   constructor() {
     super(900);
@@ -55,6 +62,13 @@ class AppWriteUpdater extends ICubismUpdater {
     getModel: () => null, // idem
   };
 
+  /** Buang sisa tulisan model lama — wajib dipanggil tiap ganti model supaya
+   * poke untuk id model sebelumnya tidak bocor ke model baru. */
+  resetPending(): void {
+    this.pending.clear();
+    this.pendingAdd.clear();
+  }
+
   private idOf(idMgr: any, id: string): any {
     let h: any = this.ids.get(id);
     if (!h) {
@@ -62,6 +76,25 @@ class AppWriteUpdater extends ICubismUpdater {
       this.ids.set(id, h);
     }
     return h;
+  }
+
+  /** Pass pra-physics: terapkan & CONSUME tulisan untuk param INPUT physics
+   * saja, dipanggil dari AppWriteInputUpdater di order < 600. Consume (delete)
+   * wajib supaya flush order 900 tidak menerapkan ADD input dua kali. */
+  flushInputs(model: CubismModel): void {
+    if (!this.physicsInputIds.size) return;
+    if (!this.pending.size && !this.pendingAdd.size) return;
+    const idMgr = CubismFramework.getIdManager();
+    for (const [id, { v, w }] of this.pending) {
+      if (!this.physicsInputIds.has(id)) continue;
+      model.setParameterValueById(this.idOf(idMgr, id), v, w);
+      this.pending.delete(id);
+    }
+    for (const [id, { v, w }] of this.pendingAdd) {
+      if (!this.physicsInputIds.has(id)) continue;
+      model.addParameterValueById(this.idOf(idMgr, id), v, w);
+      this.pendingAdd.delete(id);
+    }
   }
 
   onLateUpdate(model: CubismModel, _dt: number): void {
@@ -80,10 +113,24 @@ class AppWriteUpdater extends ICubismUpdater {
   }
 }
 
+/** Companion AppWriteUpdater: flush tulisan app.js untuk param INPUT physics
+ * TEPAT sebelum Physics(600) supaya simulasi pendulum bereaksi terhadap
+ * param yang dipindah di frame yang sama. Order antara Breath(500) dan
+ * Physics(600); model tanpa physics → no-op. */
+class AppWriteInputUpdater extends ICubismUpdater {
+  constructor(private parent: AppWriteUpdater) {
+    super(CubismUpdateOrder.CubismUpdateOrder_Physics - 10);
+  }
+  onLateUpdate(model: CubismModel, _dt: number): void {
+    this.parent.flushInputs(model);
+  }
+}
+
 export class Live2DView {
   pixiApp: PIXI.Application | null = null;
   renderer: Live2DRenderer | null = null;
   private writes = new AppWriteUpdater();
+  private writesInput = new AppWriteInputUpdater(this.writes);
   private facade: any = null;
   private transform: FacadeTransform | null = null;
   private rafId: number | null = null;
@@ -227,11 +274,19 @@ export class Live2DView {
     userModel.blinkGate = this.blinkGate;
     userModel.breathGate = this.breathGate;
     userModel.lookGate = this.lookGate;
-    if (!(this.renderer as any).__writesRegistered) {
-      userModel.updateScheduler.addUpdatableList(this.writes);
-      userModel.updateScheduler.sortUpdatableList();
-      (this.renderer as any).__writesRegistered = true;
-    }
+    // Scheduler dibuat BARU tiap loadModel (userModel baru di
+    // Live2DRenderer.loadModel) — updater tulisan wajib didaftar ulang tiap
+    // load. Guard lama (__writesRegistered di renderer) membuat poke app.js
+    // mati diam-diam setelah ganti model: pending tak pernah dikonsumsi dan
+    // flush pra-physics ikut mati.
+    this.writes.resetPending();
+    userModel.updateScheduler.addUpdatableList(this.writes);
+    // Pass pra-physics (order < 600) untuk param INPUT physics — lockstep
+    // dengan this.writes: keduanya masuk scheduler yang sama.
+    userModel.updateScheduler.addUpdatableList(this.writesInput);
+    userModel.updateScheduler.sortUpdatableList();
+    // Set id input physics tiap load (userModel + physics baru tiap loadModel).
+    this.writes.physicsInputIds = new Set(userModel.getPhysicsInputParamIds());
 
     const info = this.renderer.getModelCanvasSize();
     const groups = this.renderer.getOfficialGroups();
@@ -371,6 +426,12 @@ export class Live2DView {
       async expression(name: string): Promise<boolean> {
         return renderer.playExpression(name);
       },
+      /** Hentikan motion native — klip Meta.Loop tidak pernah isFinished
+       * sendiri, app.js memanggil ini saat clipUntil klip loop habis supaya
+       * auto-idle bisa masuk kembali. */
+      stopMotions(): void {
+        renderer.stopNativeMotions();
+      },
       expressions: exprDefs,
       destroy() { self.destroyModel(); },
       internalModel: {
@@ -378,6 +439,8 @@ export class Live2DView {
         // startIdleMotion app.js hanya Object.keys(definitions)
         motionManager: {
           definitions: motionDefs,
+          // jalur freeze app.js (frozen state) memanggil stopAllMotions()
+          stopAllMotions: () => renderer.stopNativeMotions(),
           expressionManager: { definitions: exprDefs },
         },
         settings: {

@@ -121,13 +121,114 @@ pub async fn transcribe_stt(paths: &AppPaths, audio_wav: Vec<u8>, lang: String, 
 
 /// STT provider + model dari config.stt (fallback local / base).
 pub fn stt_provider_model(config_path: &Path) -> (String, String, String) {
-    let cfg = config::load(config_path);
-    let stt = cfg.get("stt").cloned().unwrap_or_default();
+    let stt = stt_section(config_path);
     let provider = stt.get("provider").and_then(|v| v.as_str()).unwrap_or("local").to_string();
     let model = stt.get("engineModel").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).unwrap_or("base").to_string();
-    let raw_lang = stt.get("language").and_then(|v| v.as_str()).unwrap_or("auto");
-    let lang = if raw_lang == "indonesian" { "id" } else { raw_lang }.to_string();
-    (provider, model, lang)
+    (provider, model, stt_lang_of(&stt))
+}
+
+/// Section stt dari config (config::load sudah backfill default per key).
+fn stt_section(config_path: &Path) -> serde_json::Value {
+    config::load(config_path).get("stt").cloned().unwrap_or_default()
+}
+
+/// Bahasa whisper dari config.stt: "indonesian" → "id", selain itu apa adanya
+/// ("auto" berarti biarkan deteksi sendiri).
+fn stt_lang_of(stt: &serde_json::Value) -> String {
+    let raw = stt.get("language").and_then(|v| v.as_str()).unwrap_or("auto");
+    if raw == "indonesian" { "id" } else { raw }.to_string()
+}
+
+/// Konfigurasi provider "openai" dari config.stt: (endpoint, api_key, model, lang).
+/// endpoint kosong → resmi OpenAI (lihat `transcription_url`); model dari
+/// `stt.apiModel` (fallback "whisper-1") — field `model` milik provider browser.
+pub fn stt_openai_config(config_path: &Path) -> (String, String, String, String) {
+    let stt = stt_section(config_path);
+    let endpoint = stt.get("endpoint").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let api_key = stt.get("apiKey").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let model = stt.get("apiModel").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).unwrap_or("whisper-1").to_string();
+    (endpoint, api_key, model, stt_lang_of(&stt))
+}
+
+/// URL endpoint transkripsi dari base URL `stt.endpoint`. Kosong → resmi OpenAI.
+/// Base yang sudah memuat path `/audio/transcriptions` dipakai apa adanya (user
+/// tempel URL lengkap), selain itu base dianggap memuat `/v1` dan path ditempel.
+pub fn transcription_url(endpoint: &str) -> String {
+    let base = endpoint.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return "https://api.openai.com/v1/audio/transcriptions".into();
+    }
+    if base.ends_with("/audio/transcriptions") {
+        return base.to_string();
+    }
+    format!("{base}/audio/transcriptions")
+}
+
+/// Rakit body multipart/form-data untuk /audio/transcriptions: part file (WAV)
+/// + model + language. Part language DILEWATI bila "auto"/kosong (API OpenAI
+/// tidak mengenal "auto" — tanpa field berarti deteksi sendiri). Return
+/// (content_type, body).
+pub fn build_transcription_body(boundary: &str, model: &str, lang: &str, wav: &[u8]) -> (String, Vec<u8>) {
+    let mut b = Vec::with_capacity(wav.len() + 512);
+    let push = |b: &mut Vec<u8>, s: &str| b.extend_from_slice(s.as_bytes());
+    push(&mut b, &format!("--{boundary}\r\n"));
+    push(&mut b, "Content-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\n");
+    push(&mut b, "Content-Type: audio/wav\r\n\r\n");
+    b.extend_from_slice(wav);
+    push(&mut b, &format!("\r\n--{boundary}\r\n"));
+    push(&mut b, "Content-Disposition: form-data; name=\"model\"\r\n\r\n");
+    push(&mut b, &format!("{model}\r\n"));
+    if !lang.is_empty() && lang != "auto" {
+        push(&mut b, &format!("--{boundary}\r\n"));
+        push(&mut b, "Content-Disposition: form-data; name=\"language\"\r\n\r\n");
+        push(&mut b, &format!("{lang}\r\n"));
+    }
+    push(&mut b, &format!("--{boundary}--\r\n"));
+    (format!("multipart/form-data; boundary={boundary}"), b)
+}
+
+/// Parse respons JSON transcription: `{"text": "..."}` → teks ter-trim.
+pub fn parse_transcription_response(body: &str) -> Result<String, String> {
+    let j: serde_json::Value = serde_json::from_str(body)
+        .map_err(|_| format!("respon bukan JSON: {}", body.chars().take(200).collect::<String>()))?;
+    match j.get("text").and_then(|v| v.as_str()) {
+        Some(t) => Ok(t.trim().to_string()),
+        None => Err(format!("respon tanpa \"text\": {}", body.chars().take(200).collect::<String>())),
+    }
+}
+
+/// Transkripsi via server OpenAI-compatible (`/v1/audio/transcriptions`).
+/// HANYA dipanggil bila user eksplisit menyetel `stt.provider: "openai"` di
+/// config.json (cloud, tidak pernah default — audio diunggah ke endpoint itu).
+pub async fn transcribe_openai(endpoint: &str, api_key: &str, model: &str, lang: &str, audio_wav: Vec<u8>) -> Result<String, String> {
+    // Boundary unik per request (pid + nanos); body WAV tak mungkin memuatnya.
+    let boundary = format!(
+        "----lumimi-stt-{:x}{:x}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    );
+    let (content_type, body) = build_transcription_body(&boundary, model, lang, &audio_wav);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| format!("client HTTP: {e}"))?;
+    let resp = client
+        .post(transcription_url(endpoint))
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Content-Type", content_type)
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("gagal menghubungi endpoint: {e}"))?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await.unwrap_or_default();
+    if status >= 400 {
+        return Err(format!("HTTP {status}: {}", text.chars().take(300).collect::<String>()));
+    }
+    parse_transcription_response(&text)
 }
 
 /// Daftar voice style tersedia (nama file voice_styles/*.json), untuk katalog.
@@ -146,4 +247,92 @@ pub fn tts_voices(paths: &AppPaths) -> Vec<String> {
     }
     out.sort();
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transcription_url_join_benar() {
+        assert_eq!(transcription_url(""), "https://api.openai.com/v1/audio/transcriptions");
+        assert_eq!(
+            transcription_url("https://api.groq.com/openai/v1"),
+            "https://api.groq.com/openai/v1/audio/transcriptions"
+        );
+        // trailing slash dibersihkan sebelum ditempel
+        assert_eq!(
+            transcription_url("https://api.openai.com/v1/"),
+            "https://api.openai.com/v1/audio/transcriptions"
+        );
+        // URL lengkap tempelan user dipakai apa adanya
+        assert_eq!(
+            transcription_url("https://host.example/v1/audio/transcriptions"),
+            "https://host.example/v1/audio/transcriptions"
+        );
+    }
+
+    #[test]
+    fn body_multipart_isi_benar() {
+        let wav = vec![0x52u8, 0x49, 0x46, 0x46, 0x00, 0x01];
+        let (ct, body) = build_transcription_body("BOUNDRY", "whisper-1", "id", &wav);
+        assert!(ct.starts_with("multipart/form-data; boundary=BOUNDRY"));
+        let s = String::from_utf8_lossy(&body);
+        assert!(s.contains("name=\"file\"; filename=\"audio.wav\""));
+        assert!(s.contains("name=\"model\"\r\n\r\nwhisper-1\r\n"));
+        assert!(s.contains("name=\"language\"\r\n\r\nid\r\n"));
+        assert!(s.ends_with("--BOUNDRY--\r\n"));
+        // byte WAV utuh ada di body
+        let pos = s.find("audio/wav\r\n\r\n").unwrap() + "audio/wav\r\n\r\n".len();
+        assert_eq!(&body[pos..pos + wav.len()], &wav[..]);
+    }
+
+    #[test]
+    fn body_multipart_auto_tanpa_language() {
+        let (_ct, body) = build_transcription_body("B", "whisper-1", "auto", &[]);
+        let s = String::from_utf8_lossy(&body);
+        assert!(!s.contains("name=\"language\""));
+        let (_ct, body) = build_transcription_body("B", "whisper-1", "", &[]);
+        assert!(!String::from_utf8_lossy(&body).contains("name=\"language\""));
+    }
+
+    #[test]
+    fn parse_respons_transkripsi() {
+        assert_eq!(parse_transcription_response(r#"{"text":" halo dunia "}"#).unwrap(), "halo dunia");
+        assert_eq!(parse_transcription_response(r#"{"text":""}"#).unwrap(), "");
+        let e = parse_transcription_response("bukan json").unwrap_err();
+        assert!(e.contains("bukan JSON"), "{e}");
+        let e = parse_transcription_response(r#"{"beda":1}"#).unwrap_err();
+        assert!(e.contains("tanpa \"text\""), "{e}");
+    }
+
+    #[test]
+    fn config_openai_baca_dan_default() {
+        let dir = std::env::temp_dir().join(format!("l2dmedtest-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("config.json");
+        std::fs::write(
+            &f,
+            r#"{"stt":{"provider":"openai","endpoint":"https://api.groq.com/openai/v1","apiKey":" sk-test123 ","apiModel":"whisper-large-v3-turbo"}}"#,
+        )
+        .unwrap();
+        let (endpoint, key, model, lang) = stt_openai_config(&f);
+        assert_eq!(endpoint, "https://api.groq.com/openai/v1");
+        assert_eq!(key, "sk-test123"); // trim
+        assert_eq!(model, "whisper-large-v3-turbo");
+        // file tanpa apiModel → fallback whisper-1; language hilang → auto
+        std::fs::write(&f, r#"{"stt":{"provider":"openai","apiKey":"sk-x"}}"#).unwrap();
+        let (endpoint, key, model, lang) = stt_openai_config(&f);
+        assert_eq!(endpoint, "");
+        assert_eq!(key, "sk-x");
+        assert_eq!(model, "whisper-1");
+        assert_eq!(lang, "auto");
+        // file hilang sama sekali → default utuh (default_config: language
+        // "indonesian" → "id")
+        let (_e, key, model, lang) = stt_openai_config(&dir.join("tak-ada.json"));
+        assert_eq!(key, "");
+        assert_eq!(model, "whisper-1");
+        assert_eq!(lang, "id");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -104,8 +104,9 @@ export interface SttConfig {
   provider?: string;
   model: string;       // (browser) repo HF, mis. Xenova/whisper-base
   engineModel?: string; // (local) nama model GGML whisper, mis. "base"|"tiny"|"small"
-  endpoint?: string;   // (openai) base URL server transcription
+  endpoint?: string;   // (openai) base URL server transcription; kosong = resmi OpenAI
   apiKey?: string;     // (openai) kunci — plaintext di config.json, DIMASK ke UI
+  apiModel?: string;   // (openai) nama model API, mis. "whisper-1" | "whisper-large-v3-turbo"
   language: string;    // "indonesian" | "auto" | kode bahasa Whisper lain
   autoSend: boolean;   // true = kirim otomatis; false = isi input untuk direview
   silenceMs: number;   // auto-stop setelah sekian ms senyap (sempat bicara)

@@ -22,6 +22,9 @@ serde_json = "1"
 # (thread runtime tokio sendiri) — tak ada exe server kedua, tak ada sidecar.
 live2d-core = { path = "../core" }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "fs", "macros", "io-util", "sync"] }
+# Dialog folder NATIVE Windows untuk import model (command import_model_dialog)
+# — menyalin folder langsung di disk, tanpa upload base64 lewat WebView.
+rfd = "0.15"
 
 [features]
 default = []

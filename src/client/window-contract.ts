@@ -12,6 +12,10 @@ import type {
   SpeechJob,
 } from "./speech/speech-policy";
 import type { collectNativeExpressions } from "./engine/native-expressions";
+import type {
+  buildNativeClips,
+  buildNativeClipsFromCounts,
+} from "./engine/native-clips";
 import type * as I18n from "./i18n/index";
 
 export type Destroy = () => void;
@@ -42,6 +46,11 @@ declare global {
     __roleMapping?: typeof RoleMapping;
     __framing?: typeof Framing;
     __nativeExpressions?: { collect: typeof collectNativeExpressions };
+    /** Klip motion native per-file — registry per-klip + playback exact. */
+    __nativeClips?: {
+      build: typeof buildNativeClips;
+      buildFromCounts: typeof buildNativeClipsFromCounts;
+    };
     __i18n?: typeof I18n;
     /** Seam transport (Stage 1a) — titik tunggal komunikasi ke backend. */
     __transport?: Transport;

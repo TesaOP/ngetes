@@ -32,12 +32,43 @@
             if (b) API = b;
           }
         } catch (e) {}
+        updateServerBadge(false);
         return API;
       })();
     }
     return __apiBaseReady;
   }
   refreshApiBase();
+
+  // Badge URL server lokal (loopback) — selalu terlihat di kiri-atas
+  // panggung; klik = salin URL penuh (OBS Browser Source, CLI, adapter
+  // eksternal). Dev: origin halaman; shell Tauri: port dari IPC
+  // `server_port` (ditemukan refreshApiBase).
+  function updateServerBadge(showCopied) {
+    const el = document.getElementById('srv-badge');
+    if (!el) return;
+    let host = API;
+    try { host = new URL(API).host; } catch (e) {}
+    el.textContent = showCopied ? __t('cfg.srvCopied') : host;
+    el.hidden = false;
+  }
+  (function wireServerBadge() {
+    const el = document.getElementById('srv-badge');
+    if (!el || el.__srvWired) return;
+    el.__srvWired = true;
+    el.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(API);
+        el.classList.add('copied');
+        updateServerBadge(true);
+        setTimeout(() => {
+          el.classList.remove('copied');
+          updateServerBadge(false);
+        }, 1200);
+      } catch (e) {}
+    });
+  })();
+  updateServerBadge(false);
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
   const state = {
@@ -131,6 +162,12 @@
     gesture: { timer: null, nextAt: 0, seed: Math.random() * 1000 },
 
     motionTaxonomy: null,
+
+    // Manifest model3 terakhir (hasil buildModelSettings — termasuk adopsi
+    // klip yatim, in-memory). Sumber registrasi registry native per-klip.
+    modelManifest: null,
+    // Klip native model aktif (window.__nativeClips.build) — id → (grup,index).
+    nativeClips: [],
 
     clipUntil: 0,
     clipName: null,
@@ -414,13 +451,14 @@
       const folder = parts[1];
       if (!folder) return null;
 
-      const [mRes, eRes] = await Promise.all([
+      const [mRes, eRes, nRes] = await Promise.all([
         fetch(
           API + "/" + modelPath.split("/").map(encodeURIComponent).join("/"),
         ),
         fetch(
           API + "/api/model/expressions?name=" + encodeURIComponent(folder),
         ),
+        fetch(API + "/api/model/motions?name=" + encodeURIComponent(folder)),
       ]);
       if (!mRes.ok || !eRes.ok) return null;
 
@@ -443,9 +481,32 @@
         /* adopt all on error */
       }
 
+      // Discovery motion (disk) — dipakai untuk durasi klip + adopsi yatim
+      // di bawah. Gagal → null, adopsi exp3 tetap jalan.
+      let motionsInfo = null;
+      try {
+        if (nRes && nRes.ok) motionsInfo = await nRes.json();
+      } catch (e) {
+        motionsInfo = null;
+      }
+      const mOnDisk =
+        motionsInfo && Array.isArray(motionsInfo.motions)
+          ? motionsInfo.motions
+          : [];
+      const clipMeta = {};
+      for (const m of mOnDisk) {
+        if (m && m.File)
+          clipMeta[m.File] = {
+            duration:
+              typeof m.duration === "number" && m.duration > 0
+                ? m.duration
+                : undefined,
+            loop: m.loop === true,
+          };
+      }
+
       const onDisk = Array.isArray(info.expressions) ? info.expressions : [];
       const orphans = filterAdoptable(onDisk, disabled);
-      if (!orphans.length) return null;
 
       const declared = Array.isArray(settings.FileReferences.Expressions)
         ? settings.FileReferences.Expressions.slice()
@@ -466,25 +527,89 @@
         takenFiles.add(o.File);
         added++;
       }
-      if (!added) return null;
+      if (added) settings.FileReferences.Expressions = declared;
 
-      settings.FileReferences.Expressions = declared;
+      // Adopsi klip motion yatim — padanan adopsi .exp3: file .motion3.json
+      // di disk yang tidak dideklarasikan rigger masuk sebagai grup baru
+      // (nama grup = stem file, bentrok → akhiran _2). Satu grup = satu klip,
+      // jadi tiap klip teralamat exact di registry. Stem yang sudah ada di
+      // deklarasi (salinan runtime/, folder nested) dilewati.
+      let motionAdded = 0;
+      {
+        const orphanMotions = mOnDisk.filter(
+          (m) => m && !m.declared && m.File && m.Name,
+        );
+        if (orphanMotions.length) {
+          const groups =
+            settings.FileReferences.Motions &&
+            typeof settings.FileReferences.Motions === "object" &&
+            !Array.isArray(settings.FileReferences.Motions)
+              ? settings.FileReferences.Motions
+              : {};
+          const takenGroups = new Set(Object.keys(groups));
+          const takenStems = new Set(
+            Object.values(groups)
+              .flat()
+              .map((c) => {
+                const f = c && c.File ? String(c.File) : "";
+                const base = f.split("/").pop() || "";
+                return base.replace(/\.motion3\.json$/i, "").toLowerCase();
+              })
+              .filter(Boolean),
+          );
+          for (const o of orphanMotions) {
+            const stem = String(o.Name);
+            if (takenStems.has(stem.toLowerCase())) continue;
+            let group = stem;
+            for (let n = 2; takenGroups.has(group); n++) group = stem + "_" + n;
+            groups[group] = [{ File: o.File }];
+            takenGroups.add(group);
+            takenStems.add(stem.toLowerCase());
+            motionAdded++;
+          }
+          if (motionAdded) settings.FileReferences.Motions = groups;
+        }
+      }
+
+      // Manifest di-stash SETELAH adopsi (klip yatim + durasi disk sudah
+      // termasuk) — sumber registrasi registry native per-klip di
+      // initMotionRegistry. In-memory saja, tidak pernah ke disk.
+      state.modelManifest = settings;
+      state.nativeClips =
+        typeof window !== "undefined" && window.__nativeClips
+          ? window.__nativeClips.build(
+              settings.FileReferences.Motions,
+              clipMeta,
+            )
+          : [];
+
+      if (!added && !motionAdded) return null;
 
       settings.url = new URL(
         modelPath.split("/").map(encodeURIComponent).join("/"),
         API + "/",
       ).href;
-      console.log(
-        "[exp3] adopted",
-        added,
-        "undeclared expression file(s) for",
-        folder,
-        "→ total",
-        declared.length,
-      );
-      return settings;
+      if (added)
+        console.log(
+          "[exp3] adopted",
+          added,
+          "undeclared expression file(s) for",
+          folder,
+          "→ total",
+          declared.length,
+        );
+      if (motionAdded)
+        console.log(
+          "[motion3] adopted",
+          motionAdded,
+          "undeclared motion clip(s) for",
+          folder,
+        );
+      return added || motionAdded ? settings : null;
     } catch (e) {
       console.warn("[exp3] adoption skipped:", e.message);
+      state.modelManifest = null;
+      state.nativeClips = [];
       return null;
     }
   }
@@ -502,6 +627,14 @@
       hideNoModelState();
 
       state.motionTaxonomy = null;
+      // Manifest + klip native model lama basi — buildModelSettings mengisi
+      // ulang untuk model baru (in-memory, tak pernah ke disk).
+      state.modelManifest = null;
+      state.nativeClips = [];
+      if (state._clipStopTimer) {
+        clearTimeout(state._clipStopTimer);
+        state._clipStopTimer = null;
+      }
       state.clipUntil = 0;
       state.clipName = null;
       state.clipStartedAt = 0;
@@ -3557,18 +3690,49 @@
       setTimeout(() => $("#loader").classList.add("hidden"), 950);
     }
 
+    // Impor folder model lewat dialog NATIVE (shell Lumimi, via IPC
+    // import_model_dialog): folder DISALIN langsung di disk oleh core — tanpa
+    // upload base64 lewat WebView (folder model besar melampaui batas body
+    // HTTP dan WebView2 memutus koneksi: "Failed to fetch"). Return true bila
+    // alur dialog selesai (sukses/batal/error validasi) — caller tak perlu
+    // fallback; false bila shell tak tersedia (dev browser) → alur lama.
+    async function importModelViaDialog() {
+      const w = window.__transport;
+      if (!w || typeof w.modelImportDialog !== "function") return false;
+      let r;
+      try {
+        r = await w.modelImportDialog(nameInput.value);
+      } catch (e) {
+        return false;
+      }
+      if (!r) return false;
+      if (r.cancelled) return true;
+      if (r.ok && r.name) {
+        showLoader("Model " + r.name + " diimpor...");
+        await refreshModels();
+        loadUserModel(r.name);
+        return true;
+      }
+      if (r.error) {
+        alert(__t("sys.errUpload", { msg: r.error }));
+        hideLoader();
+        return true;
+      }
+      return false;
+    }
+
     if (pickBtn)
-      pickBtn.addEventListener(
-        "click",
-        () => folderInput && folderInput.click(),
-      );
+      pickBtn.addEventListener("click", async () => {
+        if (await importModelViaDialog()) return;
+        folderInput && folderInput.click();
+      });
 
     const emptyFolderBtn = $("#btn-empty-folder");
     if (emptyFolderBtn)
-      emptyFolderBtn.addEventListener(
-        "click",
-        () => folderInput && folderInput.click(),
-      );
+      emptyFolderBtn.addEventListener("click", async () => {
+        if (await importModelViaDialog()) return;
+        folderInput && folderInput.click();
+      });
     const emptyZipBtn = $("#btn-empty-zip");
     if (emptyZipBtn)
       emptyZipBtn.addEventListener("click", () => {
@@ -6353,14 +6517,31 @@
           }
         },
         clearPoseDelta: unwindMotionDelta,
-        playNative: (g) => {
+        playNative: (g, nat) => {
           try {
-            state.model.motion(g, -1, 2);
-
-            state.clipStartedAt = performance.now();
-            state.clipUntil = state.clipStartedAt + 2200 + 250;
-            state.clipName = g;
-            state.impulse = Math.min(1.0, state.impulse + 0.3);
+            // Resolusi exact: entri registry/state dulu (punya durasi + loop),
+            // lalu data native dari runtime, terakhir jalur lama (grup acak).
+            const known = (state.nativeClips || []).find(
+              (c) => c.id === "motion_" + g,
+            );
+            const exact =
+              known ||
+              (nat &&
+              nat.group != null &&
+              typeof nat.index === "number" &&
+              nat.index >= 0
+                ? nat
+                : null);
+            if (exact) {
+              playNativeClip(exact);
+            } else {
+              // Jalur lama: id tanpa data native → grup acak (index -1).
+              state.model.motion(g, -1, 2);
+              state.clipStartedAt = performance.now();
+              state.clipUntil = state.clipStartedAt + 2200 + 250;
+              state.clipName = g;
+              state.impulse = Math.min(1.0, state.impulse + 0.3);
+            }
           } catch (e) {
             console.warn("[motion] native play failed:", g, e.message);
           }
@@ -6371,21 +6552,55 @@
     ? MotionRuntime.createRuntime(motionRegistry, motionBridge)
     : null;
 
+  /** Kumpulkan klip motion native model aktif. Prioritas: state.nativeClips
+   * (dibangun buildModelSettings dari manifest adopsi + peta durasi disk),
+   * lalu rebuild dari manifest, fallback terakhir definitions facade (grup +
+   * jumlah, tanpa durasi). Dipakai initMotionRegistry & buildTaxonomyFromNames. */
+  function collectNativeClips() {
+    if (state.nativeClips && state.nativeClips.length) return state.nativeClips;
+    const build = window.__nativeClips;
+    if (!build) return [];
+    const fr = state.modelManifest && state.modelManifest.FileReferences;
+    let clips = fr ? build.build(fr.Motions) : [];
+    if (!clips.length) {
+      try {
+        const im =
+          state.model &&
+          state.model.internalModel &&
+          state.model.internalModel.motionManager;
+        if (im && im.definitions) clips = build.buildFromCounts(im.definitions);
+      } catch (e) {}
+    }
+    return clips;
+  }
+
   async function initMotionRegistry() {
     if (!haveMotionSystem || !state.model) return;
-    const groups = (state.caps && state.caps.motionGroups) || [];
-    const meta = {};
+    // Grup fresh dari manifest (termasuk hasil adopsi) — sheet cache bisa
+    // basi karena dibuat saat model belum diadopsi/masih versi lama.
+    const manifestGroups =
+      state.modelManifest &&
+      state.modelManifest.FileReferences &&
+      state.modelManifest.FileReferences.Motions &&
+      typeof state.modelManifest.FileReferences.Motions === "object"
+        ? Object.keys(state.modelManifest.FileReferences.Motions)
+        : [];
+    if (state.caps) state.caps.motionGroups = manifestGroups;
+    const tags = {};
     const T = state.motionTaxonomy;
     if (T && T.clipMeta) {
       for (const c of Object.values(T.clipMeta)) {
-        if (!c || !c.group || meta[c.group]) continue;
-        meta[c.group] = {
-          duration: c.duration && c.duration > 0 ? c.duration : 2,
-          tags: c.verb ? [c.verb] : [],
-        };
+        if (!c || !c.name || !c.verb || tags[c.name]) continue;
+        tags[c.name] = [c.verb];
       }
     }
-    motionRegistry.registerNativeGroups(groups, meta);
+    const clips = collectNativeClips();
+    const n = motionRegistry.registerNativeClips(clips, tags);
+    console.log(
+      "[motion] registry:",
+      n,
+      "klip native (per-klip" + (clips.length ? "" : ", fallback grup") + ")",
+    );
 
     try {
       const key = characterSheetKey().replace("live2d_sheet_", "");
@@ -6942,6 +7157,36 @@
 
   let gestureToken = 0;
 
+  /** Putar satu klip native exact (grup + index) — dipakai playGesture dan
+   * bridge.playNative. clipUntil mengikuti durasi klip bila diketahui; klip
+   * Meta.Loop dihentikan saat clipUntil habis supaya auto-idle kembali. */
+  function playNativeClip(clip) {
+    if (!state.model || !clip) return;
+    try {
+      state.model.motion(clip.group, clip.index, 2);
+      state.clipStartedAt = performance.now();
+      const durMs =
+        clip.duration && clip.duration > 0 ? clip.duration * 1000 : 2200;
+      state.clipUntil = state.clipStartedAt + durMs + 250;
+      state.clipName = clip.name || clip.id;
+      state.impulse = Math.min(1.0, state.impulse + 0.3);
+      if (state._clipStopTimer) {
+        clearTimeout(state._clipStopTimer);
+        state._clipStopTimer = null;
+      }
+      if (clip.loop) {
+        state._clipStopTimer = setTimeout(() => {
+          state._clipStopTimer = null;
+          try {
+            if (state.model && state.model.stopMotions) state.model.stopMotions();
+          } catch (e) {}
+        }, durMs + 250);
+      }
+    } catch (e) {
+      console.warn("[motion] native clip play failed:", clip.id, e.message);
+    }
+  }
+
   function playNativeGroup(g) {
     if (haveMotionSystem && motionRuntime.play("motion_" + g, { priority: 90 }))
       return;
@@ -6957,6 +7202,15 @@
     if (!state.model || !name) return;
 
     if (typeof name === "string") {
+      // 1) id klip native exact (motion_<stem>) — resolusi (grup, index) dari
+      //    manifest, mencakup grup "" dan grup multi-klip yang dulu hilang.
+      const clip = (state.nativeClips || []).find((c) => c.id === name);
+      if (clip) {
+        playNativeClip(clip);
+        return;
+      }
+      // 2) grup native (paritas registerNativeGroups lama) — data .motion3.json
+      //    intrinsic, tetap di-resolve SEBELUM preset user.
       const g = name.replace(/^motion_/, "");
       if (state.caps && state.caps.motionGroups && state.caps.motionGroups.includes(g)) {
         playNativeGroup(g);
@@ -8901,9 +9155,21 @@
       gestures: (() => {
         const list = Object.keys(GESTURE_LIBRARY)
           .concat(
-            Array.isArray(sheet.motionGroups)
-              ? sheet.motionGroups.map((g) => "motion_" + g)
-              : [],
+            // Klip native per-file (termasuk hasil adopsi .motion3.json yatim):
+            // id yang BENAR-BENAR ada di registry, bukan tebakan "motion_" +
+            // grup dari sheet cache yang bisa basi.
+            haveMotionSystem
+              ? motionRegistry
+                  .list()
+                  .filter(
+                    (a) => a.source === "native" && a.aiEnabled !== false,
+                  )
+                  .map((a) => a.id)
+              : Array.isArray(sheet.motionGroups)
+                ? sheet.motionGroups
+                    .filter((g) => typeof g === "string" && g)
+                    .map((g) => "motion_" + g)
+                : [],
           )
           .concat(presetNames('gerak'));
         if (haveMotionSystem) {
@@ -8989,19 +9255,23 @@
   }
 
   function buildTaxonomyFromNames() {
-    const groups = (state.caps && state.caps.motionGroups) || [];
-    if (!groups.length || typeof MotionTaxonomy === "undefined") return null;
+    if (typeof MotionTaxonomy === "undefined") return null;
+    const clips = collectNativeClips();
+    if (!clips.length) return null;
     const built = MotionTaxonomy.buildTaxonomy(
-      groups.map((g) => ({ name: g, motion3: null })),
+      clips.map((c) => ({ name: c.name, motion3: null })),
     );
+    const byClipName = new Map(clips.map((c) => [c.name, c]));
     const clipMeta = {};
-    for (const c of built.clips)
+    for (const c of built.clips) {
+      const src = byClipName.get(c.name);
       clipMeta[c.name] = {
         name: c.name,
         verb: c.verb,
-        group: c.name,
-        index: -1,
+        group: src ? src.group : c.name,
+        index: src ? src.index : -1,
       };
+    }
     state.motionTaxonomy = {
       byVerb: built.byVerb,
       clipMeta,

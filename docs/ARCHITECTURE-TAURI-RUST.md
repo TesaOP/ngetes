@@ -320,11 +320,14 @@ ter-embed, `WebviewUrl::App` → origin lokal) **dan** IPC per-domain.
 
 **Kondisi NYATA sekarang** (terverifikasi di kode):
 - `agent-shell/tauri.conf.json` → `frontendDist: "../static"`, `withGlobalTauri: true`.
-- `agent-shell/src/main.rs` → `invoke_handler` dengan 5 command:
-  `core_version`, `server_port`, `pet_model`, `get_mode`, `set_mode`.
+- `agent-shell/src/main.rs` → `invoke_handler` dengan 6 command:
+  `core_version`, `server_port`, `pet_model`, `get_mode`, `set_mode`,
+  `import_model_dialog` (dialog folder native rfd + salin folder oleh core —
+  import model tanpa upload base64 lewat WebView).
 - `src/client/transport/index.ts` → helper IPC per-domain (`initLoopback` via
-  `server_port`, `modeGet`/`modeSet` via `get_mode`/`set_mode`, `coreVersion`),
-  dengan HTTP loopback sebagai jembatan transisi + adapter eksternal (CLI/OBS/dev).
+  `server_port`, `modeGet`/`modeSet` via `get_mode`/`set_mode`, `coreVersion`,
+  `modelImportDialog`), dengan HTTP loopback sebagai jembatan transisi +
+  adapter eksternal (CLI/OBS/dev).
 
 Jadi jalur internal = IPC per-domain (domain yang sudah migrasi) + HTTP loopback
 untuk sisanya; frontend TIDAK di-serve via `WebviewUrl::External`. §6b tinggal

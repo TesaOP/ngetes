@@ -99,3 +99,55 @@ describe("MotionRegistry", () => {
     expect(reg.register(null as any).ok).toBe(false);
   });
 });
+
+describe("MotionRegistry.registerNativeClips (per-klip)", () => {
+  let reg: MotionRegistry;
+
+  beforeEach(() => {
+    reg = new MotionRegistry();
+  });
+
+  it("tiap klip jadi entri native sendiri dengan data playback (grup,index)", () => {
+    const n = reg.registerNativeClips([
+      { id: "motion_Idle", name: "mtn_01", group: "Idle", index: 0, duration: 3.5 },
+      { id: "motion_mtn_02", name: "mtn_02", group: "", index: 0 },
+      { id: "motion_mtn_03", name: "mtn_03", group: "", index: 1 },
+    ]);
+    expect(n).toBe(3);
+    const idle = reg.get("motion_Idle")!;
+    expect(idle.source).toBe("native");
+    expect(idle.native).toEqual({ group: "Idle", index: 0 });
+    expect(idle.duration).toBe(3.5);
+    // Grup "" — dulu tidak pernah terdaftar; kini alamat exact.
+    expect(reg.get("motion_mtn_02")!.native).toEqual({ group: "", index: 0 });
+    expect(reg.get("motion_mtn_03")!.native).toEqual({ group: "", index: 1 });
+  });
+
+  it("re-init idempoten: entri native model lama dibuang, builtin/user utuh", () => {
+    reg.register(makeAsset("nod") as any, { overwrite: true });
+    reg.register({ ...makeAsset("milikku", { source: "user" } as any), source: "user" } as any, { overwrite: true });
+    reg.registerNativeClips([{ id: "motion_a", name: "a", group: "A", index: 0 }]);
+    reg.registerNativeClips([{ id: "motion_b", name: "b", group: "B", index: 0 }]);
+    const ids = reg.list().map((a) => a.id).sort();
+    expect(ids).toEqual(["milikku", "motion_b", "nod"]);
+  });
+
+  it("tags per-klip dari taxonomy (keyed by nama klip)", () => {
+    reg.registerNativeClips(
+      [{ id: "motion_lompat", name: "lompat", group: "G", index: 0 }],
+      { lompat: ["jump"] },
+    );
+    expect(reg.get("motion_lompat")!.tags).toEqual(["jump"]);
+  });
+
+  it("klip tidak valid (tanpa id / index negatif / grup bukan string) ditolak", () => {
+    const n = reg.registerNativeClips([
+      { id: "", name: "x", group: "G", index: 0 },
+      { id: "motion_y", name: "y", group: "G", index: -1 },
+      { id: "motion_z", name: "z", group: undefined as any, index: 0 },
+      { id: "motion_ok", name: "ok", group: "G", index: 2 },
+    ]);
+    expect(n).toBe(1);
+    expect(reg.has("motion_ok")).toBe(true);
+  });
+});

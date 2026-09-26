@@ -34,7 +34,8 @@ pub fn default_config() -> Value {
         "stt": {
             "provider": "local", "engineModel": "base", "model": "Xenova/whisper-base",
             "language": "indonesian", "autoSend": true, "silenceMs": 1500,
-            "maxMs": 30_000, "device": ""
+            "maxMs": 30_000, "device": "",
+            "endpoint": "", "apiKey": "", "apiModel": "whisper-1"
         }
     })
 }
@@ -128,6 +129,15 @@ pub fn api_config_response(path: &Path) -> Value {
     }
 
     let sect = |k: &str| cfg.get(k).cloned().unwrap_or_else(|| json!({}));
+    // stt.apiKey (provider openai) dimask — plaintext tak pernah lewat HTTP.
+    let mut stt_out = sect("stt");
+    if let Some(obj) = stt_out.as_object_mut() {
+        if let Some(k) = obj.get("apiKey").and_then(|v| v.as_str()) {
+            if !k.is_empty() && !k.starts_with("MASUKKAN") {
+                obj.insert("apiKey".into(), json!(mask_key(k)));
+            }
+        }
+    }
     json!({
         "activeId": cfg.get("activeId").cloned().unwrap_or(Value::Null),
         "connections": conns_out,
@@ -135,7 +145,7 @@ pub fn api_config_response(path: &Path) -> Value {
         "events": sect("events"),
         "camera": sect("camera"),
         "motion": sect("motion"),
-        "stt": sect("stt"),
+        "stt": stt_out,
         "i18n": sect("i18n"),
         "overlay": sect("overlay"),
     })
@@ -540,7 +550,7 @@ mod tests {
         let f = dir.join("config.json");
         std::fs::write(
             &f,
-            r#"{"activeId":"a","connections":[{"id":"a","apiKey":"sk-secretsecret1234","roles":["chat","bogus"]}],"tts":{"provider":"supertonic","apiKey":"tts-secretkey99"}}"#,
+            r#"{"activeId":"a","connections":[{"id":"a","apiKey":"sk-secretsecret1234","roles":["chat","bogus"]}],"tts":{"provider":"supertonic","apiKey":"tts-secretkey99"},"stt":{"provider":"openai","apiKey":"stt-secretkey77"}}"#,
         )
         .unwrap();
         let resp = api_config_response(&f);
@@ -548,6 +558,7 @@ mod tests {
         assert_eq!(c0["apiKey"], "sk-sec••••••••1234"); // dimask
         assert_eq!(c0["roles"], json!(["chat"])); // bogus dibuang
         assert_eq!(resp["tts"]["apiKey"], "tts-se••••••••ey99"); // tts dimask
+        assert_eq!(resp["stt"]["apiKey"], "stt-se••••••••ey77"); // stt dimask
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

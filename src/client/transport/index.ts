@@ -158,6 +158,32 @@ export const transport = {
   },
 
   /**
+   * Import folder model lewat dialog folder NATIVE (domain model-import,
+   * migrasi IPC). Hanya hidup di shell Lumimi (exe): dialog dibuka Rust (rfd)
+   * dan folder DISALIN langsung di disk oleh core — tanpa upload base64
+   * lewat WebView (folder model ber-tekstur 4K melampaui batas body HTTP dan
+   * WebView2 memutus koneksi: "Failed to fetch"). Dev browser → undefined
+   * (call-site jatuh ke alur webkitdirectory + HTTP).
+   */
+  async modelImportDialog(
+    name?: string,
+  ): Promise<{ ok: boolean; cancelled?: boolean; name?: string; path?: string; error?: string } | undefined> {
+    if (!isEmbedded()) return undefined;
+    const r = await invoke<{
+      ok: boolean;
+      cancelled?: boolean;
+      name?: string;
+      path?: string;
+      error?: string;
+    }>("import_model_dialog", { name: name || undefined });
+    if (r === undefined) {
+      console.warn("[transport] import_model_dialog IPC gagal — jembatan HTTP/webkitdirectory (transisi)");
+      return undefined;
+    }
+    return r;
+  },
+
+  /**
    * Versi core — Embedded → command `core_version`; dev → HTTP /api/version.
    * Non-blokir (indikator judul saja).
    */

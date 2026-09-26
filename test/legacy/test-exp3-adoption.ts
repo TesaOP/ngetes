@@ -53,16 +53,22 @@ async function clientTests() {
   ok('filterAdoptable() found in static/js/app.js', !!filterSrc);
   const combined = (filterSrc ? filterSrc + '\n' : '') + fnSrc;
 
-  async function run(manifest: any, discovery: any, modelPath = 'model/foo/sub/char.model3.json') {
+  async function run(manifest: any, discovery: any, modelPath = 'model/foo/sub/char.model3.json', motions: any = { motions: [] }) {
     const logs: string[] = [];
     const sandbox: any = {
       API: 'http://127.0.0.1:9999',
       location: { href: 'http://127.0.0.1:9999/index.html' },
       URL,
+      // buildModelSettings meng-stash manifest hasil adopsi ke state (in-memory,
+      // konsumen: initMotionRegistry). Konteks vm tidak punya window — stub.
+      state: {},
       console: { log: (...a: any[]) => logs.push(a.join(' ')), warn: (...a: any[]) => logs.push('WARN ' + a.join(' ')) },
       fetch: async (url: any) => {
         if (String(url).includes('/api/model/expressions-adoption')) {
           return { ok: true, json: async () => ({ expressions: [], disabled: [] }) };
+        }
+        if (String(url).includes('/api/model/motions')) {
+          return { ok: motions !== null, json: async () => (motions ?? { motions: [] }) };
         }
         if (String(url).includes('/api/model/expressions')) {
           return { ok: discovery !== null, json: async () => discovery };
@@ -74,7 +80,7 @@ async function clientTests() {
     };
     vm.createContext(sandbox);
     vm.runInContext(combined + `;result = buildModelSettings(${JSON.stringify(modelPath)});`, sandbox);
-    return { out: await sandbox.result, logs };
+    return { out: await sandbox.result, logs, state: sandbox.state };
   }
 
   const disc3 = {
@@ -152,6 +158,53 @@ async function clientTests() {
   const names: string[] = r.out ? r.out.FileReferences.Expressions.map((e: any) => e.Name) : [];
   ok('CJK / numeric / snake_case names all preserved verbatim',
     names.join(',') === '呆猫,01,exp_angry', names.join(','));
+
+  section('CLIENT  motion3 adoption (padanan adopsi .exp3)');
+  r = await run(model3(null), { expressions: [] }, undefined, {
+    motions: [{ Name: 'idle', File: 'idle.motion3.json', declared: false }],
+  });
+  ok('orphan motion adopted as its own one-clip group named by stem',
+    r.out && r.out.FileReferences.Motions && Array.isArray(r.out.FileReferences.Motions.idle) &&
+    r.out.FileReferences.Motions.idle[0].File === 'idle.motion3.json',
+    r.out ? JSON.stringify(r.out.FileReferences.Motions) : 'null');
+  ok('motion adoption stashes the manifest on state (registry source)',
+    !!r.state.modelManifest && r.state.modelManifest === r.out);
+
+  const withMotions = model3(null);
+  withMotions.FileReferences.Motions = { Idle: [{ File: 'motions/mtn_01.motion3.json' }] };
+  r = await run(withMotions, { expressions: [] }, undefined, {
+    motions: [
+      { Name: 'mtn_01', File: 'motions/mtn_01.motion3.json', declared: true, group: 'Idle', index: 0 },
+      { Name: 'mtn_01', File: 'runtime/motions/mtn_01.motion3.json', declared: false },
+      { Name: 'lompat', File: 'motions/lompat.motion3.json', declared: false },
+    ],
+  });
+  ok('duplicate stem of a declared clip skipped (runtime/ copy), unique stem adopted',
+    r.out && Object.keys(r.out.FileReferences.Motions).sort().join(',') === 'Idle,lompat',
+    r.out ? Object.keys(r.out.FileReferences.Motions).join(',') : 'null');
+
+  r = await run(withMotions, { expressions: [] }, undefined, {
+    motions: [{ Name: 'mtn_01', File: 'motions/mtn_01.motion3.json', declared: true, group: 'Idle', index: 0 }],
+  });
+  ok('declared-only motions, no orphans → null (no adoption, plain URL load)', r.out === null);
+
+  const withIdleGroup = model3(null);
+  withIdleGroup.FileReferences.Motions = { idle: [{ File: 'a.motion3.json' }] };
+  r = await run(withIdleGroup, { expressions: [] }, undefined, {
+    motions: [{ Name: 'idle', File: 'b.motion3.json', declared: false }],
+  });
+  ok('group-name collision suffixed (_2); declared group untouched',
+    r.out && r.out.FileReferences.Motions.idle[0].File === 'a.motion3.json' &&
+    Array.isArray(r.out.FileReferences.Motions.idle_2) &&
+    r.out.FileReferences.Motions.idle_2[0].File === 'b.motion3.json',
+    r.out ? Object.keys(r.out.FileReferences.Motions).join(',') : 'null');
+
+  r = await run(model3(null), { expressions: [] }, undefined, null);
+  ok('motion discovery fetch fails → null (no crash, exp3 path intact)', r.out === null);
+  // Gagalnya endpoint motions tidak boleh mengganggu adopsi exp3.
+  r = await run(model3(null), disc3, undefined, null);
+  ok('motion discovery fetch fails → exp3 adoption unaffected',
+    r.out && r.out.FileReferences.Expressions.length === 2);
 
   const banned = [/['"]lumine['"]/i, /神宫白子/, /exp_angry/, /['"]mothion['"]/i, /呆猫/];
   const hits = banned.filter(re => re.test(fnSrc));

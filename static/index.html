@@ -694,6 +694,14 @@
         </div>
 
       </div>
+
+      <!-- URL server lokal (loopback) — footer drawer, hanya terlihat saat
+           panel dibuka; klik = salin URL. Diisi app.js setelah refreshApiBase
+           (port dari IPC server_port di shell Tauri; origin halaman di dev). -->
+      <div class="srv-info" id="srv-info-row">
+        <span data-i18n="cfg.srvLabel">Server</span>
+        <button id="srv-badge" class="srv-badge" type="button" data-i18n-title="cfg.srvTip" title="Server lokal — klik untuk salin URL" hidden></button>
+      </div>
     </div><!-- /controls-panel -->
   </div><!-- /.app -->
 

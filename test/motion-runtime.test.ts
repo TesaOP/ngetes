@@ -347,4 +347,34 @@ describe("MotionRuntime arbitrase multi-layer", () => {
     expect(nativeGroup).toBe("idle");
     expect(runtime.isPlaying("m")).toBe(true); // layer DSL tetap ada
   });
+
+  it("native clip dengan data {group,index} meneruskannya ke bridge", () => {
+    const reg = new MotionRegistry();
+    reg.register(
+      makeAsset("motion_mtn_02", {
+        source: "native",
+        type: "motion3",
+        tracks: [],
+        native: { group: "", index: 1 },
+      } as any)
+    );
+    let got: { group: string; index: number } | undefined;
+    let group = "";
+    const bridge = {
+      now: () => 0,
+      getPoseBase: () => ({}),
+      applyPoseDelta: () => {},
+      clearPoseDelta: () => {},
+      applyParamDrive: () => {},
+      releaseParamDrive: () => {},
+      playNative: (g: string, nat?: { group: string; index: number }) => {
+        group = g;
+        got = nat;
+      },
+    };
+    const runtime = new MotionRuntime(reg, bridge as any);
+    expect(runtime.play("motion_mtn_02")).toBe(true);
+    expect(group).toBe("mtn_02");
+    expect(got).toEqual({ group: "", index: 1 });
+  });
 });

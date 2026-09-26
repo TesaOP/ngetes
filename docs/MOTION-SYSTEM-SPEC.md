@@ -98,13 +98,34 @@ register(asset) · get(id) · has(id) · list() · remove(id, source) · search(
 Registry menggabungkan TIGA sumber tanpa menyalin datanya:
 
 1. **builtin** — 9 gesture prosedural (`registerGestureLibrary`)
-2. **native** — klip `.motion3.json` milik model (priority 90, via `registerNativeGroups`)
+2. **native** — klip `.motion3.json` milik model, **per-klip** (priority 90,
+   via `registerNativeClips`; tiap entri membawa `native:{group,index}` untuk
+   playback exact)
 3. **user** — Motion Asset buatan Motion Studio (`replaceUserMotions`)
 
 Setiap entri: `id, name, description, source, tags, duration,
 emotionCompatibility, intensityRange, cooldown, priority, capabilities`.
 
 # 9–10. Native & Gesture Integration
+
+**Discovery & adopsi (revisi 2026-09-25).** Klip native ditemukan dua jalur
+yang bertemu di manifest in-memory (`buildModelSettings` app.js):
+
+- **Deklarasi rigger** — grup di `FileReferences.Motions` model3.json.
+- **Adopsi klip yatim** — `GET /api/model/motions` (core/src/motion_files.rs)
+  scan disk rekursif; file `.motion3.json` yang tidak dideklarasikan masuk
+  sebagai grup baru satu-klip (nama grup = stem file, bentrok → akhiran _2;
+  stem yang sudah dideklarasikan dilewati — salinan `runtime/`, folder
+  nested tidak menggandakan entri). Padanan persis adopsi `.exp3`; manifest
+  hasil adopsi TIDAK pernah ditulis ke disk. Durasi klip dari `Meta.Duration`.
+
+**Registrasi per-klip, bukan per-grup.** `src/client/engine/native-clips.ts`
+membangun daftar klip dari manifest: id = `motion_<grup>` untuk grup bernama
+ber-1 klip (paritas perilaku lama), selain itu `motion_<stem>` (+ akhiran _n
+bila bentrok). Grup bernama string kosong (`""`) sah di Cubism dan klipnya
+ikut didaftarkan — dulu klip di grup `""` dan di grup multi-klip tidak pernah
+bisa dimainkan (hanya "acak per grup"). Runtime meneruskan `native:{group,
+index}` ke `bridge.playNative`, jadi tiap klip teralamat exact.
 
 Taxonomy (`src/client/engine/motion-taxonomy.ts`) tetap mekanisme otoritatif
 penemuan/klasifikasi klip native; native clips masuk registry sebagai entri
@@ -148,6 +169,15 @@ sisa field seperti mata/badan tetap bergerak). Native clip tidak menyentuh
 layer DSL — app.js punya guard `clipUntil` sendiri selama klip main. Cooldown
 lewat registry (`canPlay`/`markPlayed`; dari LLM dihormati, manual bypass).
 Watchdog 250 ms di samping rAF mencegah motion yatim mengunci parameter.
+
+**Paritas protokol prioritas di framework (revisi 2026-09-25).** Aturan
+"band sama menggantikan" juga berlaku pada antrean motion native Cubism:
+`Live2DUserModel.startMotionGroup` mengizinkan replace band-sama (klip loop
+`Meta.Loop` tidak pernah `isFinished` — tanpa ini satu klip mengunci semua
+play sesama band), dan `Live2DUserModel.update` memanggil `updateMotion` tanpa
+syarat supaya `_currentPriority` ter-reset saat antrean kosong (dulu lengket
+selamanya). app.js menghentikan klip loop lewat `stopMotions()` facade saat
+`clipUntil` habis — auto-idle kembali masuk.
 
 # 13–14. Blending & Intensity
 

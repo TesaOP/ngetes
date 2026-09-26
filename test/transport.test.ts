@@ -115,9 +115,61 @@ test("coreVersion: embedded via IPC", async () => {
   expect(await transport.coreVersion()).toBe("0.1.0");
 });
 
+test("modelImportDialog: dev browser → undefined (fallback alur webkitdirectory)", async () => {
+  const { transport } = await import("../src/client/transport");
+  expect(await transport.modelImportDialog()).toBeUndefined();
+});
+
+test("modelImportDialog: embedded → invoke dengan nama preferensi", async () => {
+  const seen: any[] = [];
+  g.__TAURI__ = {
+    core: {
+      invoke: async (cmd: string, args: any) => {
+        seen.push([cmd, args]);
+        if (cmd === "import_model_dialog") {
+          return { ok: true, name: "mao_pro", path: "model/mao_pro/mao_pro.model3.json" };
+        }
+        return undefined;
+      },
+    },
+  };
+  const { transport } = await import("../src/client/transport");
+  const r = await transport.modelImportDialog("Mao");
+  expect(r?.ok).toBe(true);
+  expect(r?.name).toBe("mao_pro");
+  expect(seen).toEqual([["import_model_dialog", { name: "Mao" }]]);
+});
+
+test("modelImportDialog: nama kosong → undefined arg (biar core turunkan dari stem)", async () => {
+  const seen: any[] = [];
+  g.__TAURI__ = {
+    core: {
+      invoke: async (cmd: string, args: any) => {
+        seen.push([cmd, args]);
+        return { ok: false, cancelled: true };
+      },
+    },
+  };
+  const { transport } = await import("../src/client/transport");
+  expect(await transport.modelImportDialog("")).toEqual({ ok: false, cancelled: true });
+  expect(seen).toEqual([["import_model_dialog", { name: undefined }]]);
+});
+
+test("modelImportDialog: IPC gagal → undefined (jembatan transisi, bukan throw)", async () => {
+  g.__TAURI__ = {
+    core: {
+      invoke: async () => {
+        throw new Error("denied");
+      },
+    },
+  };
+  const { transport } = await import("../src/client/transport");
+  expect(await transport.modelImportDialog()).toBeUndefined();
+});
+
 test("transport: permukaan seam lengkap", async () => {
   const { transport } = await import("../src/client/transport");
-  for (const k of ["fetch", "getJson", "postJson", "invoke", "modeGet", "modeSet", "coreVersion", "initLoopback", "httpBase", "isEmbedded"]) {
+  for (const k of ["fetch", "getJson", "postJson", "invoke", "modeGet", "modeSet", "coreVersion", "modelImportDialog", "initLoopback", "httpBase", "isEmbedded"]) {
     expect(typeof (transport as any)[k], k).toBe("function");
   }
 });

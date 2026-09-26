@@ -114,8 +114,12 @@ const AVATAR_PREFERRED: &[&str] = &[
     "thumbnail.png", "preview.png",
 ];
 
-/// Cari avatar model — padanan `findModelAvatar`: file preferred dulu, lalu walk
-/// (kedalaman relatif ≤ 2) untuk gambar yang bukan aset model3/cdi3/physics/moc3.
+/// Cari avatar model — padanan `findModelAvatar`: file preferred dulu, lalu
+/// kandidat bernama folder model (`lumine_icon.png` / `lumine.png`), lalu
+/// gambar DI ROOT (subfolder TIDAK boleh mendahului — kasus nyata: tekstur UV
+/// `lumine.8192/texture_00.png` 8192×8192 menang urut alfabet dan diserahkan
+/// sebagai avatar, memakan 25 MB + tampil sebagai potongan atlas), terakhir
+/// walk subfolder (kedalaman ≤ 2, isi "texture" dikecualikan).
 pub fn find_avatar(model_dir: &Path, name: &str) -> Option<PathBuf> {
     if name.split(['\\', '/']).any(|s| s == "..") {
         return None;
@@ -130,13 +134,38 @@ pub fn find_avatar(model_dir: &Path, name: &str) -> Option<PathBuf> {
             return Some(p);
         }
     }
+    // Kandidat bernama stem folder — format umum ekspor model
+    // (lumine_icon.png, hana.png, avatar_hana.png), dicek di root.
+    for ext in ["png", "jpg", "jpeg", "webp"] {
+        for cand in [
+            format!("{name}_icon.{ext}"),
+            format!("{name}.{ext}"),
+            format!("{name}_avatar.{ext}"),
+        ] {
+            let p = dir.join(&cand);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
     fn is_img(n: &str) -> bool {
         let l = n.to_lowercase();
         l.ends_with(".png") || l.ends_with(".jpg") || l.ends_with(".jpeg") || l.ends_with(".webp") || l.ends_with(".gif")
     }
     fn is_asset(r: &str) -> bool {
         let l = r.to_lowercase();
-        l.contains("model3") || l.contains("cdi3") || l.contains("physics") || l.contains("moc3")
+        l.contains("model3") || l.contains("cdi3") || l.contains("physics")
+            || l.contains("moc3") || l.contains("texture")
+    }
+    // Root dulu: gambar apa pun di root menang sebelum menyusur subfolder.
+    let mut root: Vec<_> = std::fs::read_dir(&dir).ok()?.flatten().collect();
+    root.retain(|e| !e.file_type().map(|t| t.is_dir()).unwrap_or(false));
+    root.sort_by_key(|e| e.file_name());
+    for e in &root {
+        let n = e.file_name().to_string_lossy().into_owned();
+        if is_img(&n) && !is_asset(&n) {
+            return Some(e.path());
+        }
     }
     fn walk(d: &Path, rel: &str) -> Option<PathBuf> {
         let mut items: Vec<_> = std::fs::read_dir(d).ok()?.flatten().collect();
@@ -293,6 +322,124 @@ pub fn import_zip(model_dir: &Path, data_dir: &Path, name: &str, base64_zip: &st
     }
 }
 
+/// Buang akhiran ".model3" dari stem file (case-insensitive, ASCII — aman
+/// dipotong per-byte karena akhirannya ASCII).
+fn strip_model3_suffix(stem: &str) -> &str {
+    let b = stem.as_bytes();
+    if b.len() >= 7 && b[b.len() - 7..].eq_ignore_ascii_case(b".model3") {
+        &stem[..stem.len() - 7]
+    } else {
+        stem
+    }
+}
+
+/// Import folder model dari disk LOKAL (jalur dialog folder native di shell —
+/// IPC `import_model_dialog`): salin rekursif ke `model_dir/<nama>` TANPA
+/// upload base64 lewat WebView. Folder model ber-tekstur 4K berukuran
+/// puluhan-ratusan MB; JSON base64-nya melampaui batas body HTTP dan WebView2
+/// memutus koneksi ("Failed to fetch") — menyalin langsung di disk menghindari
+/// semuanya. Nama: `preferred_name` bila diisi, else stem file `*.model3.json`,
+/// else nama folder sumber (semuanya disanitasi). Wajib mengandung
+/// `*.model3.json`. (status, body).
+pub fn import_model_folder(
+    model_dir: &Path,
+    data_dir: &Path,
+    src: &Path,
+    preferred_name: &str,
+) -> (u16, String) {
+    use serde_json::json;
+
+    let is_dir = std::fs::metadata(src).map(|m| m.is_dir()).unwrap_or(false);
+    if !is_dir {
+        return (400, json!({ "ok": false, "error": "folder sumber tidak ada" }).to_string());
+    }
+    let model3 = match find_model3(src, 0) {
+        Some(p) => p,
+        None => {
+            return (
+                400,
+                json!({ "ok": false, "error": "folder tidak mengandung *.model3.json" })
+                    .to_string(),
+            )
+        }
+    };
+
+    // Nama: preferensi user → stem model3.json ("mao_pro.model3.json" →
+    // "mao_pro") → nama folder sumber. Pilih nama mentah dulu, sanitasi SEKALI
+    // di akhir — sanitize("") menghasilkan "model_<ts>", bukan kosong, jadi
+    // cabang prioritas tidak boleh mengandalkan cek kosong pasca-sanitize.
+    let mut raw = preferred_name.trim().to_string();
+    if raw.is_empty() {
+        raw = strip_model3_suffix(
+            &model3.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
+        )
+        .trim()
+        .to_string();
+    }
+    if raw.is_empty() {
+        raw = src
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+    }
+    let name = crate::expressions::sanitize_model_folder_name(&raw);
+    if name.is_empty() {
+        return (
+            400,
+            json!({ "ok": false, "error": "tidak bisa menentukan nama model" }).to_string(),
+        );
+    }
+
+    let dest = model_dir.join(&name);
+    if !dest.starts_with(model_dir) {
+        return (400, json!({ "ok": false, "error": "nama model invalid" }).to_string());
+    }
+    if src == dest {
+        // Sumber sudah di galeri model — idempoten, anggap selesai.
+        let rel = model_path_rel(data_dir, model_dir, &name).unwrap_or_default();
+        return (200, json!({ "ok": true, "name": name, "path": rel }).to_string());
+    }
+    if dest.starts_with(src) {
+        // User memilih folder yang memuat folder tujuan (mis. data/model itu
+        // sendiri) — menyalin folder ke dalam dirinya sendiri; tolak.
+        return (
+            400,
+            json!({ "ok": false, "error": "folder sumber memuat folder tujuan" }).to_string(),
+        );
+    }
+    if std::fs::create_dir_all(&dest).is_err() {
+        return (400, json!({ "ok": false, "error": "gagal buat folder" }).to_string());
+    }
+
+    fn walk(src_dir: &Path, dest_dir: &Path) {
+        let Ok(rd) = std::fs::read_dir(src_dir) else { return };
+        for e in rd.flatten() {
+            let target = dest_dir.join(e.file_name());
+            if e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                let _ = std::fs::create_dir_all(&target);
+                walk(&e.path(), &target);
+            } else {
+                let _ = std::fs::copy(e.path(), &target);
+            }
+        }
+    }
+    walk(src, &dest);
+
+    match find_model3(&dest, 0) {
+        Some(abs) => {
+            let rel = abs
+                .strip_prefix(data_dir)
+                .map(|r| r.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            (200, json!({ "ok": true, "name": name, "path": rel }).to_string())
+        }
+        None => (
+            400,
+            json!({ "ok": false, "error": "gagal menyalin folder model" }).to_string(),
+        ),
+    }
+}
+
 /// Content-Type gambar avatar dari ekstensi.
 pub fn avatar_mime(path: &Path) -> &'static str {
     let e = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
@@ -348,6 +495,85 @@ mod tests {
     }
 
     #[test]
+    fn impor_folder_valid_dari_disk_menantukan_nama_stem() {
+        let data = tmp();
+        let model_dir = data.join("model");
+        // Sumber di luar model_dir, seperti folder hasil dialog user: nama
+        // folder generik ("runtime"), manifest bernama "mao_pro.model3.json".
+        let src = data.join("sumber").join("runtime");
+        std::fs::create_dir_all(src.join("textures")).unwrap();
+        std::fs::write(src.join("mao_pro.model3.json"), "{\"Version\":3}").unwrap();
+        std::fs::write(src.join("mao_pro.moc3"), "MOC").unwrap();
+        std::fs::write(src.join("textures").join("00.png"), "PNG").unwrap();
+
+        // Tanpa nama preferensi → stem manifest ("mao_pro"), bukan "runtime".
+        let (st, body) = import_model_folder(&model_dir, &data, &src, "");
+        assert_eq!(st, 200, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["name"], "mao_pro");
+        assert_eq!(v["path"], "model/mao_pro/mao_pro.model3.json");
+        assert!(model_dir.join("mao_pro").join("textures").join("00.png").exists());
+        assert_eq!(list_models(&model_dir), vec!["mao_pro".to_string()]);
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn impor_folder_nama_preferred_menang_dan_disanitasi() {
+        let data = tmp();
+        let model_dir = data.join("model");
+        let src = data.join("sumber").join("runtime");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("mao_pro.model3.json"), "{}").unwrap();
+
+        let (st, body) = import_model_folder(&model_dir, &data, &src, "Mao (EN)!");
+        assert_eq!(st, 200, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["name"], "Mao_EN_");
+        assert!(model_dir.join("Mao_EN_").join("mao_pro.model3.json").exists());
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn impor_folder_tanpa_model3_ditolak() {
+        let data = tmp();
+        let model_dir = data.join("model");
+        let src = data.join("sumber").join("runtime");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("mao_pro.moc3"), "MOC").unwrap();
+
+        let (st, body) = import_model_folder(&model_dir, &data, &src, "");
+        assert_eq!(st, 400, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["ok"], false);
+        assert!(!model_dir.join("runtime").exists());
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn impor_folder_menolak_sumber_yang_memuat_tujuan() {
+        let data = tmp();
+        let model_dir = data.join("model");
+        std::fs::create_dir_all(&model_dir).unwrap();
+        let hana = model_dir.join("hana");
+        std::fs::create_dir_all(&hana).unwrap();
+        std::fs::write(hana.join("hana.model3.json"), "{}").unwrap();
+
+        // User memilih model_dir itu sendiri: dest (model/hana) berada DI DALAM
+        // sumber — menyalin folder ke dalam dirinya sendiri; harus ditolak,
+        // bukan salin tanpa akhir.
+        let (st, body) = import_model_folder(&model_dir, &data, &model_dir, "");
+        assert_eq!(st, 400, "{body}");
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["ok"], false);
+        // Idempoten: memilih folder model yang sudah di galeri → sukses tanpa salin.
+        let (st2, body2) = import_model_folder(&model_dir, &data, &hana, "");
+        assert_eq!(st2, 200, "{body2}");
+        let v2: serde_json::Value = serde_json::from_str(&body2).unwrap();
+        assert_eq!(v2["name"], "hana");
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
     fn find_dan_list_model3() {
         let data = tmp();
         let model_dir = data.join("model");
@@ -374,6 +600,52 @@ mod tests {
             model_path_rel(&data, &model_dir, "kosong").as_deref(),
             Some("model/kosong/__rescue__.model3.json")
         );
+
+        let _ = std::fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn avatar_root_dahulu_daripada_tekstur_subfolder() {
+        let data = tmp();
+        let model_dir = data.join("model");
+
+        // (A) Struktur nyata model lumine: ikon di root, tekstur UV di
+        // subfolder yang urut alfabetnya mendahului file ikon. Bug lama:
+        // walk masuk lumine.8192 dulu → texture_00.png 8192×8192 (25 MB)
+        // diserahkan sebagai avatar.
+        let m = model_dir.join("lumine");
+        std::fs::create_dir_all(m.join("lumine.8192")).unwrap();
+        std::fs::write(m.join("lumine.8192").join("texture_00.png"), b"T").unwrap();
+        std::fs::write(m.join("lumine.model3.json"), "{}").unwrap();
+        std::fs::write(m.join("lumine_icon.png"), b"I").unwrap();
+        assert_eq!(
+            find_avatar(&model_dir, "lumine").unwrap(),
+            m.join("lumine_icon.png")
+        );
+
+        // (B) Gambar root menang atas gambar subfolder mana pun (root-first),
+        // bukan cuma kasus texture.
+        let h = model_dir.join("hana");
+        std::fs::create_dir_all(h.join("gallery")).unwrap();
+        std::fs::write(h.join("gallery").join("photo.png"), b"G").unwrap();
+        std::fs::write(h.join("hana.model3.json"), "{}").unwrap();
+        std::fs::write(h.join("potret.png"), b"P").unwrap();
+        assert_eq!(find_avatar(&model_dir, "hana").unwrap(), h.join("potret.png"));
+
+        // (C) Kandidat bernama stem folder: hana.png / hana_icon.png dikenali
+        // walau bukan nama preferensi generik.
+        let s = model_dir.join("sena");
+        std::fs::create_dir_all(&s).unwrap();
+        std::fs::write(s.join("sena.model3.json"), "{}").unwrap();
+        std::fs::write(s.join("sena_icon.png"), b"S").unwrap();
+        assert_eq!(find_avatar(&model_dir, "sena").unwrap(), s.join("sena_icon.png"));
+
+        // (D) Hanya tekstur → None (placeholder), tekstur bukan avatar.
+        let k = model_dir.join("kosong");
+        std::fs::create_dir_all(k.join("tex.8192")).unwrap();
+        std::fs::write(k.join("tex.8192").join("texture_00.png"), b"T").unwrap();
+        std::fs::write(k.join("kosong.model3.json"), "{}").unwrap();
+        assert_eq!(find_avatar(&model_dir, "kosong"), None);
 
         let _ = std::fs::remove_dir_all(&data);
     }

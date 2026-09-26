@@ -18,6 +18,7 @@ import { inspectModel, type ModelProfile } from "./ModelInspector";
 import { RoleController } from "./RoleController";
 import { ParameterArbiter, type SourceId } from "./ParameterArbiter";
 import { ArbiterUpdater } from "./ArbiterUpdater";
+import { CubismUpdateOrder } from "./cubism/motion/icubismupdater";
 import { Live2DUserModel, MotionPriority } from "./Live2DUserModel";
 
 let frameworkStarted = false;
@@ -130,6 +131,10 @@ export class Live2DRenderer {
 
     this.userModel = new Live2DUserModel();
     this.paramCtrl = null; // model baru — controller lama basi
+    // Arbiter hidup per-renderer: nilai sticky pose model lama tidak boleh
+    // dibawa ke model baru (id param bisa sama, dan getParameter membaca
+    // arbiter lebih dulu dari model).
+    this.arbiter.clearAll();
     this.userModel.loadModel(mocBuf, false);
 
     // id grup resmi (EyeBlink/LipSync) — otoritatif soal keanggotaan,
@@ -256,6 +261,18 @@ export class Live2DRenderer {
       this.userModel.registerLipsync(idMgr.getId(mouth.id), mouth.min, mouth.max);
     }
     this.userModel.updateScheduler.addUpdatableList(new ArbiterUpdater(this.arbiter));
+    // Pass pra-physics: hanya param INPUT physics, order < 600 (Physics),
+    // supaya role/pose manual yang menggerakkan input memicu pendulum.
+    const physInputIds = this.userModel.getPhysicsInputParamIds();
+    if (physInputIds.length) {
+      this.userModel.updateScheduler.addUpdatableList(
+        new ArbiterUpdater(
+          this.arbiter,
+          CubismUpdateOrder.CubismUpdateOrder_Physics - 10,
+          new Set(physInputIds),
+        ),
+      );
+    }
     this.userModel.updateScheduler.sortUpdatableList();
     if (hasPhysics) this.userModel.stabilizePhysics();
 
@@ -481,6 +498,10 @@ export class Live2DRenderer {
   async playNativeMotion(group: string, index = 0, priority: number = MotionPriority.Normal): Promise<number> {
     if (!this.userModel) return -1;
     return this.userModel.startMotionGroup(group, index, priority);
+  }
+  /** Hentikan semua motion native — klip loop tak pernah selesai sendiri. */
+  stopNativeMotions(): void {
+    this.userModel?.stopNativeMotions();
   }
   async playExpression(name: string): Promise<boolean> {
     if (!this.userModel) return false;

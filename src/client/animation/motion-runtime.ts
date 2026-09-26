@@ -19,7 +19,9 @@ export interface RuntimeBridge {
   readParam?(id: string): number;
   getSupports?(): Set<string>;
   getOwnedParams?(): Set<string>;
-  playNative?(group: string): void;
+  /** native = data playback klip ({group,index,loop?}) dari registry — absen
+   * pada pemanggil lama; bridge jatuh ke resolusi id (grup acak) seperti dulu. */
+  playNative?(group: string, native?: { group: string; index: number; loop?: boolean }): void;
   now?(): number;
 }
 
@@ -143,7 +145,8 @@ export class MotionRuntime {
     // disentuh di sini, paritas dengan perilaku lama.
     if (asset.source === "native") {
       this.registry.markPlayed(id, this.now());
-      this.bridge.playNative?.(asset.id.replace(/^motion_/, ""));
+      const nat = (asset as { native?: { group: string; index: number; loop?: boolean } }).native;
+      this.bridge.playNative?.(asset.id.replace(/^motion_/, ""), nat);
       return true;
     }
 

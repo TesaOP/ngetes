@@ -7,9 +7,25 @@ kontributor, README untuk ringkasan produk.
 - **Karakter kurang atau terlalu lebay mengikuti mouse?** Panel konfigurasi, slider **Ekspresif kepala/mata/badan (gaze)**: per-model, live-apply, persist lewat Simpan.
 - **Diam 30 menit?** Tab AI, **Kelakuan**, **Hidup**, Simpan. Otak membaca `quietMs` langsung dari `window.__appEvents` (live, tanpa restart).
 - **0 emosi?** Cek console `[exp3] adopted N`. Kalau 0, model memang tanpa `.exp3`; bikin preset `emosi` di tab Sheet.
+- **Motion karakter cuma "bawaan" di Motion Studio?** Semua `.motion3.json` di folder model kini kedetek:
+  yang dideklarasikan di `FileReferences.Motions` model3.json DAN yang yatim (adopsi disk via
+  `GET /api/model/motions`, console `[motion3] adopted N`). Tiap klip jadi entri terpisah
+  (`motion_<stem>`, label "model"), termasuk klip di grup bernama `""`. Re-inspeksi model bila sheet
+  masih menunjukkan `motionGroups` lama (cache basi). Cek console `[motion] registry: N klip native`.
+- **Motion sekali main lalu tak bisa diputar lagi / idle berhenti?** Sudah dibenerin (revisi
+  2026-09-25): bug protokol prioritas framework membuat `_currentPriority` lengket — rebuild
+  `bun run build` dan refresh. Klip `Meta.Loop` dihentikan otomatis saat clipUntil habis supaya
+  auto-idle kembali.
 - **Fetch gagal?** Cek `location.origin`, jangan hardcode `127.0.0.1:8310`.
 - **Model CJK 404?** `safeJoin` men-decode `%E7%A5%9E` jadi `神宫白子`, ditangani `core/src/static_serve.rs`.
-- **Upload model gagal?** Model dikirim sebagai JSON base64 ke `/api/upload` atau `/api/import-zip`, dan folder wajib memuat `*.model3.json`. Body yang tidak valid ditolak dengan 400.
+- **Upload model gagal?** Di Lumimi.exe tombol "Pick Model Folder" memakai
+  dialog folder NATIVE lewat IPC (`import_model_dialog`): folder DISALIN
+  langsung di disk ke `data/model/<nama>/` — tanpa upload base64 lewat
+  WebView. Folder wajib memuat `*.model3.json`; nama model diambil dari stem
+  file itu kecuali kamu mengisi kolom nama. Di dev browser (tanpa shell)
+  upload jalan lewat JSON base64 ke `/api/upload` atau `/api/import-zip`
+  dengan batas body 512 MB khusus dua rute itu. "Failed to fetch" pada folder
+  besar = build exe lama (sebelum batas 512 MB) — rebuild.
 - **Akses dari HP atau LAN?** `HOST=0.0.0.0`, tapi sadari semua orang di jaringan bisa membaca server.
 - **Model blank di headless?** Normal: swiftshader tidak render WebGL ke framebuffer; model tetap load (console `[Live2D] Model loaded`).
 - **TTS 429 atau suara browser terus?** Kuota provider TTS habis (mis. Gemini free tier); sistem otomatis jatuh ke suara browser. Tunggu reset kuota atau isi billing. Detail provider di menu Mesin Suara.
@@ -20,3 +36,4 @@ kontributor, README untuk ringkasan produk.
 - **TTS/STT native diam, atau "engine native tidak tersedia"?** Engine native sekarang library in-process (bukan lagi sidecar exe). STT butuh `cargo build --release -p lumimi --features engine-stt` (cmake plus LLVM/libclang di PATH plus `LIBCLANG_PATH`); TTS jalan tanpa itu. Tanpa build STT, pilih provider TTS/STT lain, dan fitur degrade dengan anggun.
 - **Native pertama kali lama, atau "mengunduh model…"?** Model tidak dibundel: diunduh sekali on-demand (SuperTonic sekitar 385 MB, Whisper GGML sekitar 40 sampai 150 MB) dari HuggingFace lalu di-cache (`~/.cache/supertonic3` plus `engines/models/`). Butuh online sekali; offline sebelum terunduh memunculkan error jelas dan fitur degrade.
 - **STT native kurang akurat?** Default model `base`. Ganti `stt.engineModel` ke `small` atau `medium` di `data/config.json` (lebih akurat, lebih berat, unduhan lebih besar). Model `tiny` paling ringan tapi paling sering salah kata.
+- **STT error "stt.apiKey belum diisi" / "HTTP 401" saat provider `openai`?** Provider cloud ini hanya jalan bila `config.json` punya `"stt": { "provider": "openai", "apiKey": "sk-..." }`; 401/403 berarti kunci salah, 404 berarti `stt.endpoint` tidak memuat `/v1` (isi base URL, mis. `https://api.groq.com/openai/v1` — path `/audio/transcriptions` ditempel otomatis). Audio diunggah ke endpoint itu — provider ini pilihan sadar, tidak pernah default.

@@ -3,9 +3,16 @@
  * Parity with js/motion-registry.js (createRegistry).
  */
 import type { MotionAsset } from "../../shared/types";
+import type { NativeClip } from "../engine/native-clips";
 import { stepsToTracks, summaryForLLM } from "./motion-dsl";
 
-export interface RegistryEntry extends MotionAsset { source: "builtin" | "native" | "user"; }
+export interface RegistryEntry extends MotionAsset {
+  source: "builtin" | "native" | "user";
+  /** Data playback klip native — diisi registerNativeClips; runtime
+   * meneruskannya ke bridge.playNative (grup + index exact). loop = klip
+   * Meta.Loop, tidak pernah selesai sendiri di framework. */
+  native?: { group: string; index: number; loop?: boolean };
+}
 
 export class MotionRegistry {
   private byId = new Map<string, RegistryEntry>();
@@ -51,6 +58,23 @@ export class MotionRegistry {
   registerNativeGroups(groups: string[], info?: Record<string, any>): void {
     const meta=info||{};
     for(const g of groups||[]){ if(!g) continue; const m=meta[g]||{}; this.register({ version:1, id:"motion_"+g, name:g, source:"native", type:"motion3", description: m.description||("Motion bawaan model: "+g), tags:m.tags||[], duration:m.duration||2, loop:false, intensity:{min:0.3,max:1.0,default:0.8} as any, emotionCompatibility:m.emotionCompatibility||{}, cooldown:0, priority:90, aiEnabled:true, requires:[], tracks:[] } as any, {overwrite:true}); }
+  }
+
+  /** Daftarkan klip native PER-KLIP (menggantikan registerNativeGroups di
+   * app.js): tiap .motion3.json jadi entri terpisah dengan data playback
+   * {group,index} — klip di grup multi-klip dan grup "" kini bisa dimainkan.
+   * Entri native model lama dibuang dulu supaya re-init antar model idempoten. */
+  registerNativeClips(clips: NativeClip[], tagsByClip?: Record<string, string[]>): number {
+    for(const [id,a] of Array.from(this.byId)) if(a.source==="native") this.byId.delete(id);
+    let n=0;
+    for(const c of clips||[]){
+      if(!c || !c.id || typeof c.group !== "string" || !(c.index >= 0)) continue;
+      const nat: { group: string; index: number; loop?: boolean } = { group:c.group, index:c.index };
+      if(c.loop) nat.loop = true;
+      this.register({ version:1, id:c.id, name:c.name||c.id, source:"native", type:"motion3", description:"Motion bawaan model: "+(c.name||c.id), tags:(tagsByClip&&tagsByClip[c.name])||[], duration:c.duration||2, loop:false, intensity:{min:0.3,max:1.0,default:0.8} as any, emotionCompatibility:{}, cooldown:0, priority:90, aiEnabled:true, requires:[], tracks:[], native:nat } as any, {overwrite:true});
+      n++;
+    }
+    return n;
   }
 
   replaceUserMotions(assets: MotionAsset[]): number {

@@ -23,6 +23,7 @@ import * as MotionTaxonomy from "./engine/motion-taxonomy";
 import * as Framing from "./engine/framing";
 import * as RoleMapping from "./engine/role-mapping";
 import { collectNativeExpressions } from "./engine/native-expressions";
+import { buildNativeClips, buildNativeClipsFromCounts } from "./engine/native-clips";
 import * as LipSync from "./speech/lip-sync";
 import { createSpeechPolicy } from "./speech/speech-policy";
 import * as i18n from "./i18n/index";
@@ -48,6 +49,12 @@ if (typeof window !== "undefined") {
   // app.js legacy memanggil lewat window.__roleMapping (wrapper tipis).
   window.__roleMapping = RoleMapping;
   window.__nativeExpressions = { collect: collectNativeExpressions };
+  // Klip motion native per-file — app.js memakainya untuk registry per-klip:
+  // grup "" dan klip di grup multi-klip kini teralamat exact (bukan acak).
+  window.__nativeClips = {
+    build: buildNativeClips,
+    buildFromCounts: buildNativeClipsFromCounts,
+  };
   // Rumus framing panggung (murni) — dipakai legacy frameModel. upper/full
   // hanya fungsi TINGGI stage (anti-gepeng saat splitter didrag).
   window.__framing = Framing;

@@ -81,6 +81,39 @@ fn set_mode(mode: String) -> Result<serde_json::Value, String> {
     }
 }
 
+/// Import model lewat dialog folder NATIVE (domain model-import). Dialog
+/// dibuka rfd di thread blocking (jangan tahan runtime async); penyalinan
+/// folder dilakukan `live2d_core::model::import_model_folder` langsung di
+/// disk — TANPA upload base64 lewat WebView (folder model ber-tekstur 4K
+/// melampaui batas body HTTP dan WebView2 memutus koneksi: "Failed to
+/// fetch"). `name` = preferensi nama dari kolom nama (kosong → stem file
+/// *.model3.json).
+#[tauri::command]
+async fn import_model_dialog(name: Option<String>) -> Result<serde_json::Value, String> {
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        rfd::FileDialog::new().pick_folder()
+    })
+    .await
+    .map_err(|e| format!("dialog gagal: {e}"))?;
+    let Some(src) = picked else {
+        // User menutup dialog tanpa memilih — bukan error.
+        return Ok(serde_json::json!({ "ok": false, "cancelled": true }));
+    };
+    let paths = live2d_core::paths::AppPaths::detect();
+    let (status, out) = live2d_core::model::import_model_folder(
+        &paths.model_dir,
+        &paths.data_dir,
+        &src,
+        name.as_deref().unwrap_or(""),
+    );
+    let mut v: serde_json::Value =
+        serde_json::from_str(&out).unwrap_or(serde_json::json!({ "ok": false }));
+    if status >= 400 && v.get("ok").is_none() {
+        v["ok"] = serde_json::json!(false);
+    }
+    Ok(v)
+}
+
 const FALLBACK_PORT: u16 = 8310;
 /** Batas pemulihan: kalau server belum juga naik dalam 2 menit, menyerah —
  *  user tinggal menutup jendela dan menjalankan Lumimi.exe lagi. */
@@ -256,7 +289,8 @@ fn main() {
             server_port,
             pet_model,
             get_mode,
-            set_mode
+            set_mode,
+            import_model_dialog
         ])
         .setup(move |app| {
             // Daftarkan pembuka/penutup pet in-process ke core (server yang

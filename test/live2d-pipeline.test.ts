@@ -50,6 +50,20 @@ describe("ParameterArbiter — prioritas & konflik", () => {
     expect(a.resolve().has("ParamAngleY")).toBe(false);
   });
 
+  it("clearAll membuang semua sticky — ganti model tidak mewarisi pose lama", () => {
+    const a = new ParameterArbiter();
+    a.set("ParamAngleY", -14, "manual");
+    a.set("ParamMouthForm", 1, "emotion");
+    expect(a.resolve().size).toBe(2);
+    a.clearAll();
+    expect(a.resolve().size).toBe(0);
+    // cache resolveFinal ikut basi — bacaan setelah clear tak menghidupkan lagi
+    a.set("ParamAngleY", 5, "manual");
+    expect(a.resolveFinal().get("ParamAngleY")).toBe(5);
+    a.clearAll();
+    expect(a.resolveFinal().has("ParamAngleY")).toBe(false);
+  });
+
   it("resolve() murni — dua panggilan hasil sama, tidak mengubah state", () => {
     const a = new ParameterArbiter();
     a.set("ParamAngleX", 7, "motion");

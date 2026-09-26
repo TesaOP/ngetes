@@ -540,6 +540,36 @@ a:hover { text-decoration: underline; }
   visibility: hidden;
 }
 
+/* Info URL server lokal (loopback) — footer drawer panel kontrol (TIDAK di
+   panggung). Klik URL = salin (OBS Browser Source, CLI, adapter eksternal). */
+.srv-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line-soft);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.srv-badge {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.srv-badge:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+.srv-badge.copied {
+  color: var(--lamp-ok, #7dd87d);
+}
+
 /* Aktivitas agent di panggung — menghubungkan karakter dengan pekerjaan
    teknis. Hanya tampil saat busy/approval; idle sengaja sunyi. */
 #stage-agent-chip {

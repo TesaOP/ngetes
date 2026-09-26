@@ -22,6 +22,7 @@ pub mod mode;
 pub mod model;
 pub mod motion_ai;
 pub mod motion_dsl;
+pub mod motion_files;
 pub mod motion_taxonomy;
 pub mod motions;
 pub mod paths;
@@ -54,6 +55,13 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub fn core_ready() -> bool {
     true
 }
+
+/// Batas body KHUSUS rute upload model (upload folder & import-zip). Folder
+/// model ber-tekstur 4K berukuran puluhan-ratusan MB — JSON base64-nya
+/// melampaui batas default axum (2 MB) sehingga server memutus koneksi di
+/// tengah upload dan WebView2 melaporkan "Failed to fetch" (bukan 413 bersih).
+/// Rute lain tetap memakai batas default.
+const MODEL_UPLOAD_BODY_CAP: usize = 512 * 1024 * 1024;
 
 /// Bangun router HTTP core. `/health` + `/api/version` + penyajian statis
 /// (fallback) dari `static/` & `data/` sesuai AppPaths.
@@ -126,14 +134,23 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/model/path", get(get_model_path))
         .route("/api/sheet", get(get_sheet_h).post(post_sheet_h))
         .route("/api/model/expressions", get(get_expressions))
+        .route("/api/model/motions", get(get_motions))
         .route(
             "/api/model/expressions-adoption",
             get(get_adoption).post(post_adoption),
         )
         .route("/api/model/files", get(get_model_files))
         .route("/api/model/avatar", get(get_model_avatar))
-        .route("/api/model/upload", axum::routing::post(post_model_upload))
-        .route("/api/model/import-zip", axum::routing::post(post_import_zip))
+        .route(
+            "/api/model/upload",
+            axum::routing::post(post_model_upload)
+                .layer(axum::extract::DefaultBodyLimit::max(MODEL_UPLOAD_BODY_CAP)),
+        )
+        .route(
+            "/api/model/import-zip",
+            axum::routing::post(post_import_zip)
+                .layer(axum::extract::DefaultBodyLimit::max(MODEL_UPLOAD_BODY_CAP)),
+        )
         .route("/api/model/{name}", axum::routing::delete(delete_model_h))
         .route("/api/motions", get(get_motions_list).post(post_motions_h))
         .route("/api/motions/{id}", get(get_motion_h).put(put_motion_h).delete(del_motion_h))
@@ -771,14 +788,26 @@ async fn post_vtuber_operator(body: axum::body::Bytes) -> Response {
 }
 
 /// POST /api/stt — transkripsi audio WAV. Provider "local" = whisper in-process
-/// (butuh build feature engine-stt); tanpa feature → 503. Cloud (openai) belum.
+/// (butuh build feature engine-stt); tanpa feature → 503. Provider "openai" =
+/// cloud OpenAI-compatible, HANYA bila user eksplisit menyetelnya di config.
 async fn post_stt(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
-    let (provider, model, lang) = media::stt_provider_model(&paths.data_dir.join("config.json"));
-    if provider != "local" {
-        return json_status(StatusCode::NOT_IMPLEMENTED, json!({ "error": format!("STT provider '{provider}' belum diport ke core") }));
-    }
+    let cfg_path = paths.data_dir.join("config.json");
+    let (provider, model, lang) = media::stt_provider_model(&cfg_path);
     if body.is_empty() {
         return json_status(StatusCode::BAD_REQUEST, json!({ "error": "audio kosong" }));
+    }
+    if provider == "openai" {
+        let (endpoint, api_key, oai_model, oai_lang) = media::stt_openai_config(&cfg_path);
+        if api_key.is_empty() {
+            return json_status(StatusCode::BAD_REQUEST, json!({ "error": "stt.apiKey belum diisi di config.json (provider openai)" }));
+        }
+        return match media::transcribe_openai(&endpoint, &api_key, &oai_model, &oai_lang, body.to_vec()).await {
+            Ok(text) => json_status(StatusCode::OK, json!({ "text": text })),
+            Err(e) => json_status(StatusCode::BAD_GATEWAY, json!({ "error": format!("STT error: {e}") })),
+        };
+    }
+    if provider != "local" {
+        return json_status(StatusCode::NOT_IMPLEMENTED, json!({ "error": format!("STT provider '{provider}' belum diport ke core") }));
     }
     #[cfg(feature = "engine-stt")]
     {
@@ -960,6 +989,19 @@ async fn get_expressions(
 ) -> Response {
     let name = q.get("name").map(String::as_str).unwrap_or("");
     match expressions::discover(&paths.model_dir, &paths.data_dir, name) {
+        Ok(v) => json_status(StatusCode::OK, v),
+        Err(e) => json_status(StatusCode::NOT_FOUND, json!({ "error": e })),
+    }
+}
+
+/// GET /api/model/motions?name=X — discovery klip .motion3.json (disk +
+/// flag declared + grup/index). Sumber adopsi klip yatim di klien.
+async fn get_motions(
+    State(paths): State<AppPaths>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let name = q.get("name").map(String::as_str).unwrap_or("");
+    match motion_files::discover(&paths.model_dir, &paths.data_dir, name) {
         Ok(v) => json_status(StatusCode::OK, v),
         Err(e) => json_status(StatusCode::NOT_FOUND, json!({ "error": e })),
     }
@@ -1433,6 +1475,7 @@ mod tests {
             ("GET", "/api/models", None),
             ("GET", "/api/model/path?name=m1", None),
             ("GET", "/api/model/expressions?name=m1", None),
+            ("GET", "/api/model/motions?name=m1", None),
             ("GET", "/api/model/expressions-adoption?name=m1", None),
             ("POST", "/api/model/expressions-adoption", Some(json!({"name":"m1","disabled":[]}))),
             ("GET", "/api/model/files?name=m1", None),

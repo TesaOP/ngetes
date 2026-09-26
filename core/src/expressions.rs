@@ -38,7 +38,7 @@ pub fn sanitize_model_folder_name(name: &str) -> String {
     }
 }
 
-fn rel_fwd(base: &Path, full: &Path) -> Option<String> {
+pub(crate) fn rel_fwd(base: &Path, full: &Path) -> Option<String> {
     let rel = full.strip_prefix(base).ok()?;
     Some(rel.to_string_lossy().replace('\\', "/"))
 }

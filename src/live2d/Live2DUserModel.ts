@@ -215,16 +215,38 @@ export class Live2DUserModel extends CubismUserModel {
     if (model && this._physics) this._physics.stabilization(model);
   }
 
+  /** Id parameter yang jadi INPUT physics (source.id tiap input di rig).
+   * Physics.evaluate() (order 600) MEMBACA nilai id ini dari model; tulisan
+   * manual yang di-flush di order 900 dibaca satu frame terlambat DAN —
+   * karena saveParameters() mendahului scheduler — tak pernah sampai, jadi
+   * memindah param input tidak pernah memicu ayunan. Pemanggil memakai set
+   * ini untuk mem-flush tulisan input SEBELUM physics (order < 600). Kosong
+   * bila model tanpa physics. */
+  getPhysicsInputParamIds(): string[] {
+    const rig = (this._physics as any)?._physicsRig;
+    const inputs = rig?.inputs;
+    if (!inputs || !inputs.length) return [];
+    const out: string[] = [];
+    for (const inp of inputs) {
+      const id = inp?.source?.id?.getString?.();
+      if (id) out.push(id);
+    }
+    return out;
+  }
+
   /** Pipeline dua fase resmi — dipanggil tiap frame sebelum draw. */
   update(dtSeconds: number): void {
     const model = this.getModel();
     if (!model) return;
     model.loadParameters();
     this._motionUpdated = false;
-    if (this._motionManager.isFinished()) {
+    // updateMotion dipanggil TANPA syarat: reset _currentPriority hidup di
+    // ekornya. Jalur lama (isFinished → skip updateMotion) membuat prioritas
+    // motion terakhir "lengket" selamanya — reserveMotion menolak semua play
+    // sesama band, akar "klip native cuma bisa diputar sekali".
+    this._motionUpdated = this._motionManager.updateMotion(model, dtSeconds);
+    if (this._motionManager.isFinished() && this.autoIdle) {
       this.startIdleIfAvailable();
-    } else {
-      this._motionUpdated = this._motionManager.updateMotion(model, dtSeconds);
     }
     model.saveParameters();
     this.updateScheduler.onLateUpdate(model, dtSeconds);
@@ -272,7 +294,20 @@ export class Live2DUserModel extends CubismUserModel {
       return -1;
     }
     if (index < 0 || index >= s.getMotionCount(group)) return -1;
-    if (priority !== MotionPriority.Force && !this._motionManager.reserveMotion(priority)) {
+    // Paritas spesifikasi motion (§12): motion band sama MENGGANTIKAN yang
+    // sedang main, bukan ditolak. Klip native kerap Meta.Loop=true — tidak
+    // pernah isFinished sehingga _currentPriority tidak pernah reset sendiri;
+    // tanpa ini satu klip loop mengunci semua play sesama band selamanya
+    // (dan auto-idle tak pernah kembali setelahnya). Force tetap lewat
+    // jalur resminya; band lebih rendah tetap ditolak reserveMotion.
+    const sameBand =
+      priority !== MotionPriority.Force &&
+      priority === this._motionManager.getCurrentPriority();
+    if (
+      priority !== MotionPriority.Force &&
+      !sameBand &&
+      !this._motionManager.reserveMotion(priority)
+    ) {
       return -1;
     }
     if (priority === MotionPriority.Force) {
@@ -308,6 +343,16 @@ export class Live2DUserModel extends CubismUserModel {
     }
     const started = this._motionManager.startMotionPriority(motion, false, priority);
     return started ? 1 : -1;
+  }
+
+  /** Hentikan semua motion native (fade-out anggun oleh queue manager).
+   * Dipakai app.js untuk klip Meta.Loop setelah clipUntil habis — framework
+   * tidak mengenal konsep clipUntil app, klip loop tidak pernah selesai
+   * sendiri sehingga auto-idle tidak bisa masuk. _currentPriority ikut reset
+   * otomatis: updateMotion me-reset saat isFinished setelah antrean kosong. */
+  stopNativeMotions(): void {
+    this._motionManager.stopAllMotions();
+    this._motionManager.setReservePriority(MotionPriority.None);
   }
 
   /** Putar ekspresi by-name dari manifest. 5-r.5: ekspresi TANPA prioritas —

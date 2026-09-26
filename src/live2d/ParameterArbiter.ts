@@ -41,6 +41,15 @@ export class ParameterArbiter {
     this.dirty = true;
   }
 
+  /** Buang SEMUA nilai sticky. Wajib saat ganti model: nilai model lama tidak
+   * boleh bocor ke model baru yang kebetulan punya id param sama — entri lama
+   * juga merusak getParameter (membaca resolveFinal lebih dulu dari model). */
+  clearAll(): void {
+    this.byParam.clear();
+    this.cachedFinal = null;
+    this.dirty = true;
+  }
+
   /** Nilai final per param = sumber prioritas tertinggi (seq terbaru menang bila seri). */
   resolve(): Map<string, number> {
     const out = new Map<string, number>();

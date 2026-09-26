@@ -52,11 +52,11 @@ instruksi untukmu.
 
 ```bash
 bun run build          # WAJIB sebelum run: static/js/bundle.js di-gitignore
-bun run test           # SEMUA TS: 420 unit (bun) + 362 guard (7 suite)
+bun run test           # SEMUA TS: 437 unit (bun) + 369 guard (7 suite)
 bun run test:unit      # hanya unit test TS
 bun run test:guards    # hanya guard legacy
 bunx tsc --noEmit      # type-check (harus bersih)
-cargo test --workspace # backend Rust (115 test: 109 core + 6 engine), bagian gate
+cargo test --workspace # backend Rust (122 test: 116 core + 6 engine), bagian gate
 ```
 
 **Selesai** = build bersih + `tsc` bersih + `bun run test` hijau + `cargo test
@@ -182,11 +182,12 @@ core/                        backend Rust (axum, loopback), SATU-SATUNYA backend
                              (src/server/ dihapus Batch A 2026-09-23; logika + testnya
                              semua di core/src/)
 agent-shell/                 SATU exe SATU proses: host server Rust in-process
-                             (`ensure_server`) + 5 command IPC (core_version,
-                             server_port, pet_model, get_mode, set_mode)
+                             (`ensure_server`) + 6 command IPC (core_version,
+                             server_port, pet_model, get_mode, set_mode,
+                             import_model_dialog)
 src/client/transport/        seam transport: HTTP (apiBase/apiUrl/apiFetch/getJson/
                              postJson) + helper IPC per-domain (modeGet/modeSet/
-                             coreVersion/initLoopback)
+                             coreVersion/modelImportDialog/initLoopback)
 src/shared/                  types, config, llm-client (role routing)
 src/client/animation/        easing, motion-dsl, motion-registry, motion-runtime
 src/client/engine/           motion-taxonomy (klasifikasi klip .motion3.json)

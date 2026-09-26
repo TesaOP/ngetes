@@ -67,6 +67,369 @@ sudah selaras dengan arsitektur ini.
    (user bilang hapus manual saat sudah stabil) + blocker Core di SHA lama
    GitHub (risiko sudah diterima user — jangan dibuka lagi).
 
+## UPDATE 2026-09-26 (87) — AVATAR SALAH: TEKSTUR UV 8192×8192 DISERVE SEBAGAI GAMBAR MODEL
+
+**Laporan user:** model lumine sudah bisa diimpor & muncul, tapi `sb-avatar`
+menampilkan gambar yang salah — "kenapa bukan yang format gambar di root
+lumine?".
+
+**Akar masalah di `find_avatar` (`core/src/model.rs`).** Dua celah:
+1. `AVATAR_PREFERRED` hanya nama generik persis (`avatar.png`, `icon.png`,
+   …) — `lumine_icon.png` TIDAK ada di daftar.
+2. Walk subfolder urut alfabet dari root: `lumine` (dir) → `lumine.8192`
+   (dir, urut sebelum `lumine_icon.png` karena '.' < '_') →
+   `texture_00.png` lolos `is_img` (ekstensi .png) dan `is_asset` (filter
+   lama hanya model3/cdi3/physics/moc3) → **tekstur UV 8192×8192 sebesar
+   25 MB diserahkan sebagai avatar**. Sidebar memuat potongan atlas, bukan
+   ikon.
+
+**Fix (sumber tunggal Rust — tidak ada padanan JS):**
+1. Kandidat bernama stem folder di root: `{name}_icon.{png,jpg,jpeg,webp}`,
+   `{name}.{ext}`, `{name}_avatar.{ext}`.
+2. Scan gambar **DI ROOT dulu** (files-only, sorted) sebelum walk subfolder —
+   gambar root tak pernah kalah oleh isi subfolder.
+3. `is_asset` kini mengecualikan yang mengandung `"texture"` — tekstur tak
+   lagi dianggap avatar walau model tanpa gambar lain (→ None/placeholder).
+
+**Test:** `avatar_root_dahulu_daripada_tekstur_subfolder` — mereproduksi
+struktur nyata lumine (4 kasus: ikon vs tekstur, root-first vs subfolder,
+kandidat bernama stem, model hanya-tekstur → None).
+
+**Verifikasi:** cargo 122 test hijau (juga menangkap kegagalan OOM sementara
+"paging file too small" — artefak target debug korup sementara saat dua
+kompilasi tumpang tindih; cukup ulangi setelah RAM lega, TIDAK perlu
+`cargo clean`); endpoint live (server dev DAN exe hasil `build:pet`)
+mengembalikan `lumine_icon.png` 104.964 byte identik file-nya. Handler
+sudah `Cache-Control: no-cache` → tidak ada masalah avatar basi; frontend
+tak berubah. Gate TS: tsc + 439 unit + 369 guard hijau.
+
+**Catatan rilis:** `bun run dist` perlu dijalankan ulang agar paket
+`dist/Lumimi/` memakai exe berfix ini; dist menghapus folder output lama
+(termasuk `data/` tes user di dist — sengaja, `data/` tidak boleh ikut
+dipaket).
+
+## UPDATE 2026-09-26 (86) — UJI EXE TAURI SUNGGUHAN + URL SERVER DI FOOTER DRAWER
+
+**Permintaan user:** "uji yang udah jadi exe di shell tauri… ga hanya terkait
+arbiter tapi keseluruhan yang ada" + "dikasih tau di appnya ini jalan di port
+atau url apa" (lalu: "itu url jangan taruh situ" — JANGAN di panggung).
+
+**Fitur URL server.** Row baru `.srv-info` di FOOTER drawer panel kontrol
+(`#controls-panel`): label "Server" + `#srv-badge` berisi host:port
+(`127.0.0.1:8310`), klik = salin URL penuh ke clipboard (untuk OBS Browser
+Source/CLI), flash "URL tersalin!". Port asli diambil IPC `server_port`
+(embedded) via `refreshApiBase` yang sudah ada; dev = origin halaman. i18n
+kunci baru `cfg.srvLabel`/`cfg.srvTip`/`cfg.srvCopied` di KEDUA kamus
+(pelajaran: hapus kunci lama harus di kedua dict — parity test menangkap
+sisa `live.srv*` di dict-en). Versi pertama sempat ditaruh di kiri-atas
+panggung — user menolak, dipindah ke drawer.
+
+**Uji exe menyeluruh (`bun run build:pet` → `target/release/Lumimi.exe`).**
+Server dev yatim (live2d-core.exe di 8310) DIMATIKAN dulu supaya
+`pick_port()` shell tidak menempel ke server dev — exe menyalakan server
+in-process-nya sendiri (log `[shell] server Rust in-process — root=…
+port=8310`). Hasil, semua di stack exe:
+- `/api/version` → `{"engine":"rust-in-process"}`; jendela Tauri memuat
+  halaman ter-embed (tauri.localhost) dan badge resolve port via IPC.
+- 10 updater lengkap + 10 input physics (lumine) di load pertama.
+- Physics: tahan `ParamAngleZ` 18° → `ParamAngleZ2/Z3` mengikuti 17.5; lepas
+  → balik 0.
+- **Ganti model via tombol Muat UI (lumine → ren_official_cubism):**
+  10 updater terdaftar ulang penuh di scheduler baru, `physicsInputIds`
+  terisi ulang sesuai rig baru (6 input), arbiter `resolve()` = 0 — bug
+  guard entri (85) terkonfirmasi mati di exe.
+- Screenshot native (computer-use): drawer terbuka, footer menunjukkan
+  "Server 127.0.0.1:8310", panggung bersih.
+
+**Jawaban OBS (pertanyaan user):** overlay OBS = halaman terpisah
+`static/vtuber.html` — transparan, TANPA kontrol, tanpa tab baru; klik di
+OBS tidak menavigasi. Semua perilaku (balasan LLM/antrean) hidup di SERVER
+satu proses; seluruh kontrol tetap di shell utama. URL untuk Browser Source:
+`http://127.0.0.1:<port>/vtuber.html` (basis URL-nya kini terlihat di footer
+drawer, klik untuk salin).
+
+**Catatan runtime:** angka UI exe berbahasa Inggris karena i18n auto-detect
+mengikuti locale sistem window tersebut — bukan bug.
+
+**Gate:** build + tsc + 439 unit + 369 guard + 127 cargo — hijau.
+
+## UPDATE 2026-09-26 (85) — UJI UI NYATA MODEL lumine: BUG KEDUA (GUARD REGISTRASI TULISAN) KETEMU + DIPERBAIKI
+
+**Laporan user:** "Coba uji pada lumine" — verifikasi fix entri (84) langsung di
+UI nyata, model **lumine** (22 kanal physics rambut `ParamHeadPhysicsX*`,
+input: ParamAngleX/Y/Z, ParamBodyAngle*, ParamEye*Open, ParamBreath).
+
+**Bug kedua ketemu saat uji — guard registrasi tulisan mati setelah ganti
+model.** `Live2DView.loadModel` mendaftarkan `AppWriteUpdater`(900) +
+`AppWriteInputUpdater`(590) hanya sekali, dijaga `__writesRegistered` yang
+menempel di **renderer** — padahal `Live2DRenderer.loadModel` membuat
+`Live2DUserModel` (dan scheduler) **baru tiap load**. Akibatnya setelah ganti
+model, poke app.js (slider panel "Penjelasan Parameter", `applyOverrides`
+pose/aiLock, liveliness) hanya menumpuk di `pending` yang **tak pernah
+dikonsumsi** → pose tidak menempel, physics tak pernah lihat input, semua
+diam-diam. Terbukti di runtime: scheduler model kedua hanya berisi 8 updater
+(tanpa AppWrite*). **Fix:** daftar ulang kedua updater **tiap loadModel** +
+`AppWriteUpdater.resetPending()` buang sisa tulisan model lama supaya tidak
+bocor ke model baru (`view/Live2DView.ts`).
+
+**Verifikasi di UI nyata (lumine), bukan sintetis:**
+- Slider `ParamAngleX` di panel "Penjelasan Parameter" digeser ke 25 → output
+  physics rambut bereaksi frame yang sama: `ParamAngleX2` 0.003 → 4.03
+  (transien pendulum yaw naik lalu luruh — pola ayunan yang benar), lepas
+  balik ke ~0.
+- `ParamAngleZ` ditahan 20° lewat jalur tulis app (poke per frame seperti
+  drag) → output physics `ParamAngleZ2` mengikuti terus-menerus ±16.5;
+  screenshot menunjukkan kepala miring + rambut tergantung mengikuti, lepas →
+  kembali netral (`ParamAngleZ2` −0.03).
+- Jalur lengkap yang terverifikasi: event input slider → poke backend
+  (`writes.coreModel`) → `pending` → flush 590 (param input physics) →
+  Physics(600) bereaksi → sisanya di 900.
+
+**Catatan teknis uji runtime:** tab IAB yang tak tampak di-throttle Chromium
+(rAF = 0 frame; Pixi ticker ikut mati). Untuk mengukur, pipeline dijalankan
+manual: `draw()` **menjalankan `userModel.update()` internal** — poke harus
+diberikan tepat sebelum TIAP `draw()` (poke sebelum `um.update()` manual
+terbuang oleh update ekstra dari draw). `pixiApp.render()` lalu menyalin ke
+canvas untuk screenshot.
+
+**Gate:** build bersih + tsc bersih + 439 unit + 369 guard + 127 cargo test —
+hijau semua.
+
+**Audit lanjutan (permintaan user: "masih ada yang belum dibinding?")** —
+sweep semua seam per-load. Dikonfirmasi SUDAH benar: backend `coreModel` +
+facade app.js dibangun ulang tiap `loadModel`; gate blink/breath/look
+di-push ulang ke userModel baru (view.loadModel) DAN dipasang ulang app.js
+setelah load; provider lipsync dibaca lazy per-frame oleh `LipsyncUpdater`
+dan dipasang ulang app.js; roleCtrl/paramCtrl/tekstur per-load.
+**Ketemu & diperbaiki satu lagi:** `ParameterArbiter` hidup per-renderer dan
+`clearSource()` tidak pernah dipanggil siapa pun — nilai sticky pose model
+lama bisa bocor ke model baru yang kebetulan punya id param sama, termasuk
+merusak `getParameter` (membaca `resolveFinal()` arbiter lebih dulu). Fix:
+`ParameterArbiter.clearAll()` baru + dipanggil di `Live2DRenderer.loadModel`
+saat userModel baru dibuat + unit test "clearAll membuang semua sticky".
+Saat ini memang belum ada penulis runtime arbiter (pose lewat jalur app.js),
+jadi ini pertahanan untuk seam publik `setParameter`/`setRole` — satu
+pemanggil baru tanpa clear = bocor antar model. Verifikasi akhir post-audit:
+reload page → 10 updater terdaftar, hold ParamAngleZ 15 → `ParamAngleZ2`
+mengikuti 11.06, lepas → netral (0/0.12).
+
+## UPDATE 2026-09-26 (84) — PARAM INPUT PHYSICS: TULISAN MANUAL DI-FLUSH SEBELUM Physics(600)
+
+**Laporan user:** "kenapa parameter pyshic ga menghasilkan gerakan saat
+dipindah harusnya ada kan" — memindah/menyetel param yang jadi INPUT physics
+(mis. sudut kepala/badan) tidak memicu ayunan pendulum rambut/aksesori sama
+sekali.
+
+**Akar masalah — inversi urutan updater.** Pipeline per frame
+(`Live2DUserModel.update`): `loadParameters()` → `updateMotion` →
+`saveParameters()` → `scheduler.onLateUpdate()` → `model.update()`. Semua
+tulisan manual masuk lewat updater di **order 900** (AppWriteUpdater di
+`view/Live2DView.ts` untuk jalur poke app.js; ArbiterUpdater untuk jalur
+role/setParameter), sedangkan **CubismPhysicsUpdater di order 600**.
+`CubismPhysics.evaluate()` MEMBACA nilai param input dari model saat jalan —
+tapi di frame itu input masih nilai lama (poke belum diterapkan), dan karena
+`saveParameters()` mendahului scheduler, poke tak pernah masuk snapshot yang
+di-`loadParameters()` frame berikutnya. Jadi physics **selamanya** membaca
+base motion, bukan nilai yang dipindah → tak ada ayunan. Pipeline resmi
+menerapkan input drag di order 400 (sebelum physics 600); tulisan manual kita
+telat 300 poin.
+
+**Fix — pass pra-physics dua jalur (order `Physics − 10` = 590, antara
+Breath 500 dan Physics 600):**
+- `Live2DUserModel.getPhysicsInputParamIds()` — kumpulkan id source tiap
+  input dari `_physics._physicsRig.inputs[].source.id` (kosong bila tanpa
+  physics; model-agnostic, tak ada id hardcode).
+- **AppWriteUpdater** dapat `flushInputs(model)` + companion
+  `AppWriteInputUpdater` (order 590): terapkan & **consume** (hapus dari
+  `pending`/`pendingAdd`) hanya entri yang id-nya param input physics. Consume
+  wajib supaya ADD tidak dobel di flush order 900. `physicsInputIds` di-set
+  ulang tiap `loadModel`.
+- **ArbiterUpdater** dapat opsi `order` + `onlyIds`; instance kedua didaftar
+  di `Live2DRenderer.loadModel` (order 590, `onlyIds` = input physics). Nilai
+  arbiter absolut/SET → menulisnya lagi di pass 900 idempoten, jadi jalur 900
+  yang ada tidak berubah perilakunya.
+
+Perilaku "sticky override efek framework" order 900 untuk **semua param
+non-input** utuh (tak ada yang menulis param input antara 590 dan
+`model.update()` selain physics yang cuma membaca). Model tanpa physics →
+kedua pass no-op.
+
+**Gate hijau (terverifikasi 2026-09-26):** `bunx tsc --noEmit` bersih,
+`bun run build` bersih, `bun run test:unit` 438 pass (tambah
+`test/physics-input-order.test.ts` — kunci invariansi urutan lewat scheduler
+asli tanpa Core), `bun run test:guards` 369 pass, `cargo test --workspace`
+121 core + 6 engine pass. **Belum diuji rasa di runtime nyata** (perlu model
+ber-physics + pengamatan mata): apakah amplitudo ayunan terasa pas saat param
+input digeser via panel — verifikasi lewat pemakaian, jangan ditebak.
+
+## UPDATE 2026-09-26 (83) — STT PROVIDER "openai" (CLOUD, OPT-IN) AKHIRNYA HIDUP DI CORE
+
+**Laporan user:** "apakah STT-nya bisa make API?" — rancangan `SttConfig`
+memang sudah menyediakan provider `openai` (endpoint OpenAI-compatible
+`/v1/audio/transcriptions` + `endpoint` + `apiKey` di `src/shared/types.ts`),
+tapi handler `/api/stt` di core menolak semua provider selain `local` dengan
+501 "belum diport ke core" (komentar: "Cloud (openai) belum"). **Sekarang
+sudah diport.**
+
+Implementasi (semua di core, klien tak berubah):
+
+1. **`core/src/media.rs`** — `stt_openai_config()` baca `stt.endpoint` /
+   `stt.apiKey` / `stt.apiModel` (fallback "whisper-1"; field `model` tetap
+   milik provider browser, `engineModel` milik local); `transcription_url()`
+   (kosong → resmi OpenAI, URL lengkap berakhiran `/audio/transcriptions`
+   dipakai apa adanya, selain itu base+path); `build_transcription_body()`
+   multipart/form-data dirakit manual (part file WAV + model + language —
+   language DILEWATI bila "auto" karena API OpenAI tak mengenalnya) tanpa
+   feature `multipart` reqwest; `transcribe_openai()` reqwest rustls, timeout
+   60s, `Authorization: Bearer`, error HTTP ≥400 → pesan dgn snippet body
+   (pola `llm.rs`). Refactor kecil: `stt_provider_model()` berbagi
+   `stt_section()` + `stt_lang_of()` ("indonesian"→"id").
+2. **`core/src/lib.rs` `post_stt`** — cabang baru: `provider == "openai"` →
+   `stt.apiKey` kosong → 400; transkripsi gagal → 502; sukses → `{text}`.
+   Provider lain selain local/openai tetap 501. Klien (`voice-input.js`)
+   sudah sejak awal mengirim WAV 16 kHz ke `/api/stt` dan menyerahkan
+   pemilihan provider ke server — nol perubahan klien.
+3. **Privasi (aturan tetap berlaku):** default `provider` TETAP `local`;
+   `openai` hanya jalan bila user eksplisit menulisnya di `config.json`
+   (cloud, audio diunggah ke endpoint itu — pilihan sadar). `stt.apiKey`
+   kini DIMASK di `GET /api/config` (`api_config_response`, padanan
+   `tts.apiKey`; prefix `MASUKKAN` tak dimask) — sebelumnya section `stt`
+   disajikan mentah, berbahaya begitu ada kunci di dalamnya.
+4. **Config default** (core `default_config()` + TS `DEFAULT_CONFIG` +
+   `SttConfig`): tambah `endpoint: ""`, `apiKey: ""`, `apiModel:
+   "whisper-1"` — backfill section lama otomatis aman (user file yang
+   menulis `stt` parsial tetap dapat fallback di `stt_openai_config`).
+
+**Gate hijau:** cargo 121 core (+5 test media: URL join, multipart isi/
+auto-tanpa-language, parse respons, config baca/default — tanpa jaringan) +
+6 shell · bun 437 unit + 369 guard · tsc · build. Cara pakai: set
+`config.json` → `"stt": { "provider": "openai", "apiKey": "sk-...",
+"apiModel": "whisper-1" }` (endpoint kosong = OpenAI resmi; Groq dsb. isi
+`"endpoint": "https://api.groq.com/openai/v1"`).
+
+## UPDATE 2026-09-25 (82) — SEMUA MOTION & EKSPRESI KARAKTER KEDETEK + BISA DIPUTAR
+
+**Laporan user:** pas masukin karakter Live2D, yang muncul "cuman builtin doang,
+gada yang source dari karakter" — ekspresi maupun motion. Investigasi menemukan
+TIGA akar masalah berbeda, semuanya dibenerin + terverifikasi end-to-end di
+browser untuk ketiga model user (lumine, ren_official_cubism, 神宫白子模型):
+
+1. **Motion yatim tidak pernah diadopsi.** Ekspresi punya jalur adopsi disk
+   (buildModelSettings + `/api/model/expressions`) tapi motion TIDAK — model
+   dengan `FileReferences.Motions` kosong (lumine, 神宫白子) tidak dapat klip
+   native sama sekali walau file `.motion3.json` ada di disk. **Fix:** endpoint
+   baru `GET /api/model/motions` (core/src/motion_files.rs baru — scan rekursif
+   + flag declared + grup/index + Meta.Duration/Loop, 3 test); buildModelSettings
+   mengadopsi klip yatim sebagai grup satu-klip bernama stem file (bentrok →
+   `_2`; stem sudah terdeklarasi → skip, jadi salinan `runtime/` tidak
+   menggandakan), in-memory seperti adopsi .exp3.
+2. **Registrasi per-grup membuang klip.** `registerNativeGroups` mendaftarkan
+   satu entri per GRUP dan skip grup `""` — klip ren di grup `""` (mtn_02,
+   mtn_03) tidak pernah bisa dimainkan. **Fix:** `src/client/engine/native-clips.ts`
+   baru + `MotionRegistry.registerNativeClips` — per-KLIP dengan data playback
+   `native:{group,index,loop}`; id `motion_<grup>` untuk grup 1-klip (paritas
+   lama) dan `motion_<stem>` (+`_n` dedupe) untuk sisanya. Runtime meneruskan
+   data itu ke `bridge.playNative(g, nat)`; playGesture/playNativeClip memutar
+   klip exact. Daftar `gestures` untuk LLM kini dari registry native (bukan
+   tebakan `motion_`+grup dari sheet basi). Taxonomy name-only fallback dibangun
+   dari klip (meta.group/index exact → playEmotionClip mainkan klip pas).
+3. **Bug protokol prioritas framework: `_currentPriority` lengket selamanya.**
+   `Live2DUserModel.update` dulu skip `updateMotion` saat antrean kosong, tapi
+   reset `_currentPriority` justru hidup di ekor `updateMotion` — akibatnya
+   setelah motion Normal pertama selesai, `reserveMotion` menolak SEMUA play
+   sesama band: motion native "cuma bisa diputar sekali" (ini penyebab utama
+   laporan user, berlaku juga untuk model lama). **Fix (Live2DUserModel):**
+   updateMotion dipanggil tanpa syarat (reset jalan saat antrean kosong);
+   `startMotionGroup` mengizinkan replace band-sama (paritas spec §12; klip
+   `Meta.Loop` tidak pernah isFinished); `stopNativeMotions()` baru. app.js:
+   klip loop dihentikan otomatis lewat `state.model.stopMotions()` (facade baru
+   di Live2DView) saat clipUntil habis supaya auto-idle kembali; facade
+   `motionManager.stopAllMotions` (jalur freeze app.js kini benar-benar
+   berfungsi); `autoIdle:false` kini dihormati startIdleIfAvailable (dulu
+   diabaikan — double idle).
+
+**Gate hijau:** bun 437 unit (+17) + 369 guard (+7 kasus adopsi motion di
+test-exp3-adoption) + tsc + cargo 116 core (+3) + 6 shell. **Verifikasi runtime
+nyata (browser + server dev):** lumine — `motion_idle` teradopsi (9.98s loop)
+dan main; ren — 3 klip terdaftar exact, replace band-sama saat klip lain main,
+auto-stop loop jalan (stopMotions terpanggil, idle lanjut); 神宫白子 — 8
+ekspresi CJK teradopsi, `playExpression` true, tanpa warning. Dokumen:
+MOTION-SYSTEM-SPEC §8–10 & §12 di-update, TROUBLESHOOTING ada entri baru.
+
+## UPDATE 2026-09-24 (81) — IMPORT MODEL VIA DIALOG NATIVE: "FAILED TO FETCH" AKHIRNYA DIBENERIN
+
+**Laporan user:** tombol "Pick Model Folder" gagal terus — `Upload failed:
+Failed to fetch` saat memasukkan model Mao dari `G:\mao_en\runtime` (folder
+ber-tekstur 4096px). Akar masalah DUA lapis:
+
+1. **Batas body default axum = 2 MB.** `post_model_upload`/`post_import_zip`
+   memakai extractor `Bytes`; folder model ber-tekstur 4K mengirim JSON
+   base64 puluhan-ratusan MB → server membatalkan body di tengah upload →
+   WebView2 melaporkan reset koneksi sebagai `TypeError: Failed to fetch`
+   (bukan 413 bersih) → pesan alert yang tak bisa dipahami user awam.
+2. **Upload base64 lewat WebView memang rapuh** untuk folder besar (memori,
+   kecepatan, `webkitRelativePath`).
+
+**Fix mengikuti aturan migrasi IPC per-domain (ARCHITECTURE §aturan-migrasi):**
+
+- `core/src/model.rs` → fungsi baru **`import_model_folder(model_dir,
+  data_dir, src, preferred_name)`**: salin rekursif folder dari disk LOKAL ke
+  `data/model/<nama>/` tanpa upload sama sekali. Nama: preferensi user →
+  stem `*.model3.json` (`mao_pro.model3.json` → `mao_pro`) → nama folder
+  sumber; sanitasi SEKALI di akhir (hati-hati: `sanitize_model_folder_name("")`
+  menghasilkan `model_<ts>`, bukan kosong — cek kosong HARUS sebelum
+  sanitize). Guard anti rekursi: sumber == tujuan (idempoten) dan sumber
+  memuat tujuan (mis. user memilih `data/model` sendiri) ditolak. 4 test baru.
+- `agent-shell/src/main.rs` → command IPC ke-6 **`import_model_dialog`**
+  (dep `rfd` 0.15): dialog folder native dibuka via `spawn_blocking`,
+  penyalinan oleh fungsi core yang SAMA (single source of truth). Cancel →
+  `{ok:false, cancelled:true}`; error validasi → `{ok:false, error}` (bukan
+  Err — supaya frontend menampilkan pesannya, bukan diam-diam fallback).
+- `src/client/transport/index.ts` → helper bernama **`modelImportDialog`**
+  (embedded → invoke; dev browser → `undefined` = fallback alur lama). 4 test
+  baru + permukaan seam di-update.
+- `static/js/app.js` → tombol "Pick Model Folder" & empty-state: coba dialog
+  native dulu (`window.__transport.modelImportDialog`), sukses →
+  refreshModels + loadUserModel; batal → diam; error → alert pesan core;
+  bukan shell → alur `<input webkitdirectory>` lama (dev browser).
+- `core/src/lib.rs` → **`MODEL_UPLOAD_BODY_CAP` 512 MB** via
+  `DefaultBodyLimit` KHUSUS 2 rute upload/import-zip (rute lain tetap 2 MB).
+  Ini memperbaiki juga jalur zip & drag-drop di dev browser.
+
+**Gate hijau:** cargo 113 core (+4) + 6 shell; bun 424 unit (+4) + 362 guard;
+tsc bersih; `bun run build` OK. Warning lama `unused import json` di
+`agent/loop_.rs` bukan dari sesi ini. **Verifikasi end-to-end di Lumimi.exe
+nyata: dialog native buka → pilih folder → model ter-copy + muncul + load**
+(lihat entri berikutnya bila ada). EXE harus di-rebuild
+(`bun run build:pet`) supaya command IPC ter-registrasi + bundle baru
+ter-embed.
+
+## UPDATE 2026-09-24 (80) — RENCANA pipeline Motion Studio DIARSIPKAN (belum ada kode)
+
+Sesi ini **merancang, bukan mengimplementasi**: user minta pipeline supaya AI
+bisa membuat motion halus yang memahami banyaknya parameter model ("AI
+menyelidiki sendiri tiap parameter buat apa"). Hasilnya diarsipkan di
+**`docs/PLAN-MOTION-PIPELINE.md`** — arsip lengkap dengan 13 catatan revisi
+user (field terstruktur notes, cross-check VLM↔metrik, retry param bersyarat,
+settle physics saat capture, `holdEnd` vs `returnToDefault`, critic visual
+opsional, laporan terpetakan `beatId`, threshold persentil jerk dari klip
+native, kebijakan layering eksplisit, approve massal konsisten, planner
+2-langkah, invalidasi cache hash moc3/cdi3/physics3, ukuran keberhasilan
+dengan kunci jawaban manual).
+
+**Keputusan kunci yang terkunci di dokumen itu:** LLM tidak pernah memegang
+ID param mentah — resolusi label→param dari rig report hasil approve user;
+compiler baca field terstruktur (`sign`/`side`/`region`/`coupled_with`/
+`safe_range`/`confidence`), `notes` teks bebas hanya untuk manusia (jalur
+`paramNotes` lama di `director.rs`/`sheet_ai.rs` tetap ada, di-upgrade);
+physics output dilarang di-keyframe; cache report stale ≠ dipakai buta.
+
+**Status: 0 kode berubah** (sesi ini cuma menulis 2 file docs: plan ini +
+PLAN-MOTION-PIPELINE.md). `git status` bersih dari perubahan kode/build.
+Sesi berikutnya mulai dari **Fase 1 (rig report + hash invalidation)** kalau
+user melanjutkan — atau abaikan rencana ini kalau proyek diarahkan lain
+(user: "isolasi projek saat ini dulu").
+
 ## UPDATE 2026-09-23 (79) — BATCH A: arsip `src/server/` DIHAPUS (verified cleanup, bukan deletion-by-assumption)
 
 Lanjutan entri 78. Permintaan user: hapus arsip Bun `src/server/` + 141 test TS
