@@ -14,7 +14,7 @@
 use serde_json::{json, Map, Value};
 
 /// Batas nilai per field kanonik (semantic role limits).
-fn field_bound(field: &str) -> Option<f64> {
+pub(crate) fn field_bound(field: &str) -> Option<f64> {
     match field {
         "ax" | "ay" | "bodyX" | "bodyY" | "bodyZ" => Some(30.0),
         "ex" | "ey" | "mouthForm" => Some(1.0),

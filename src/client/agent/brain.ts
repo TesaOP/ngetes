@@ -26,7 +26,6 @@ import {
   guessEmotion,
   segmentTextFallback,
   deriveReplyActions,
-  EMOTION_GESTURE_FALLBACK,
 } from "./directive-parser";
 import { httpBase, transport } from "../transport";
 import { scaleRoleFraction } from "./param-range";
@@ -78,17 +77,9 @@ const DEFAULT_EMOTIONS = [
   "bingung",
   "normal",
 ];
-const DEFAULT_GESTURES = [
-  "nod",
-  "shake",
-  "tilt_curious",
-  "lean_excited",
-  "recoil_surprised",
-  "look_away_shy",
-  "laugh_bounce",
-  "think",
-  "wave_hi",
-];
+// Daftar gesture bawaan (nod/shake/…) DIHAPUS (keputusan user, 2026-09-27):
+// gerakan kini hanya dari klip native model + motion user + preset 'gerak',
+// yang semuanya sudah diiklankan lewat cap.gestures dari capability profile.
 
 function l2d(): any {
   return (window as any).__live2dAgent;
@@ -243,23 +234,12 @@ ${cap.accessories?.length ? cap.accessories.join(", ") : "tidak ada"}
 Format: [ACC:ParamXX:1] nyalakan, [ACC:ParamXX:0] matikan
 
 === GERAK ===
-Untuk gerakan, PILIH dari daftar gesture di bawah. Angka parameter mentah
-diurus sistem — kamu tidak perlu (dan tidak boleh) mengarang angka.
-
-=== DAFTAR GESTURE (gerakan siap-pakai, PALING DIUTAMAKAN untuk gerak) ===
-${cap.gestures?.length ? cap.gestures.join(", ") : DEFAULT_GESTURES.join(", ")}
-Format: [GESTURE:nama]
-Ini gerakan yang UDAH JADI (anggukan, geleng, kaget, dll) — bentuknya SELALU
-benar karena sudah dirancang manual, beda dari [HEAD]/[BODY] yang kamu harus
-nebak angka sendiri. UTAMAKAN pilih dari daftar ini setiap ada momen ekspresif
-(setuju→nod, nolak/gak percaya→shake, kaget→recoil_surprised, mikir→think,
-malu→look_away_shy, seneng banget→lean_excited, ketawa→laugh_bounce,
-sapa→wave_hi, penasaran→tilt_curious).
+${cap.gestures?.length ? `Untuk gerakan, PILIH dari daftar gesture di bawah. Angka parameter mentah\ndiurus sistem — kamu tidak perlu (dan tidak boleh) mengarang angka.\n\n=== DAFTAR GESTURE (gerakan siap-pakai, PALING DIUTAMAKAN untuk gerak) ===\n${cap.gestures.join(", ")}\nFormat: [GESTURE:nama]\nIni gerakan yang UDAH JADI — bentuknya SELALU benar karena berasal dari\nmotion milik model atau buatan user. UTAMAKAN pilih dari daftar ini setiap\nada momen ekspresif.` : "Model ini belum punya daftar gesture siap-pakai. JANGAN mengarang nama gesture —\npakai [EMOTION:…], [HEAD]/[BODY] halus, atau biarkan gerak datang dari motion\nmilik model."}
 ${this.motionCatalogBlock(this.capProfile)}
 
 === FORMAT DIRECTIVE ===
 1. EMOSI:    [EMOTION:senang] [EMOTION:sedih] [EMOTION:malu] [EMOTION:kaget] [EMOTION:normal]
-2. GESTURE:  [GESTURE:nama] — lihat daftar gesture di atas, PAKAI INI untuk gerakan (bukan HEAD/BODY manual)
+2. GESTURE:  [GESTURE:nama] — HANYA nama dari DAFTAR GESTURE di atas (bila ada); kalau kosong, jangan pakai [GESTURE:] sama sekali
 3. KEPALA:   [HEAD:x,y]   — HANYA untuk arah pandang halus tambahan, opsional, x=kiri/kanan y=atas/bawah
 4. MATA:     [EYES:x,y]   — bola mata, opsional (pakai range dari daftar di atas)
 5. MULUT:    [MOUTH:form,open] — bentuk & buka mulut, opsional
@@ -272,13 +252,13 @@ Jangan cuma 1 action block per kalimat panjang — pecah juga di titik koma/jeda
 alami kalau ada perubahan nada, biar karakter berubah SEIRAMA omongannya,
 bukan diem sepanjang kalimat baru berubah sekali di akhir.
 
-Contoh:
-[EMOTION:senang][GESTURE:wave_hi] Halo! [EMOTION:senang][GESTURE:lean_excited] Senang banget ketemu kamu hari ini~
-[EMOTION:malu][GESTURE:look_away_shy] Eh, [EMOTION:malu] tadi aku mimpi tentang kamu lho...
-[EMOTION:normal][GESTURE:nod] Hehe, bercanda kok~
+Contoh (nama gesture SELALU dari DAFTAR GESTURE di atas — jangan pakai nama lain):
+[EMOTION:senang][GESTURE:nama_gerak_dari_daftar] Halo! [EMOTION:senang] Senang banget ketemu kamu hari ini~
+[EMOTION:malu][GESTURE:nama_gerak_dari_daftar] Eh, [EMOTION:malu] tadi aku mimpi tentang kamu lho...
+[EMOTION:normal] Hehe, bercanda kok~
 
 Contoh pendek:
-[EMOTION:kaget][GESTURE:recoil_surprised] Wah, serius?! [EMOTION:kaget][GESTURE:shake] Aku gak nyangka banget!
+[EMOTION:kaget] Wah, serius?! [EMOTION:kaget] Aku gak nyangka banget!
 
 === ATURAN ===
 1. SELALU sertakan [EMOTION:...] di setiap segment; TAMBAHKAN [GESTURE:...] di
@@ -318,7 +298,7 @@ Contoh pendek:
       langBlock +=
         "\n=== LANGUAGE ===\n" +
         "Speak with the user in ENGLISH — the spoken text and every segment's prose must be English.\n" +
-        "EXCEPTION: motion directives like [EMOTION:senang], [GESTURE:wave_hi], [EXPR:nama] keep the exact Indonesian keyword vocabulary listed above — they are protocol tokens read by the app, not prose. Never translate or invent directive keywords.\n";
+        "EXCEPTION: motion directives like [EMOTION:senang], [GESTURE:nama_gerak], [EXPR:nama] keep the exact Indonesian keyword vocabulary listed above — they are protocol tokens read by the app, not prose. Never translate or invent directive keywords.\n";
     }
 
     return sys + capBlock + langBlock;
@@ -388,7 +368,7 @@ Contoh pendek:
             emotions: profile?.emotions || DEFAULT_EMOTIONS,
             // Dulu mengirim daftar emosi (quirk lama); kini mengirim nama
             // gesture asli — director jadi bisa memilih gesture yang benar-benar ada.
-            gestures: profile?.gestures || DEFAULT_GESTURES,
+            gestures: profile?.gestures || [],
             motions: (profile as any)?.motionCatalog || [],
           },
           paramNotes,
@@ -832,16 +812,11 @@ Contoh pendek:
       if (!handledByMotion)
         console.warn("[agent] motion tidak dikenal/ditolak:", actions.motion);
     }
-    // Gesture fallback (hardcode per-emosi) hanya untuk emosi yang TIDAK
-    // dimainkan dari aset model — .exp3/klip sudah membawa gerak tubuhnya
-    // sendiri. [GESTURE:] eksplisit dari LLM tetap selalu dipakai.
-    const gestureToPlay =
-      actions.gesture ||
-      (actions.emotion &&
-        emotionVia !== "native" &&
-        emotionVia !== "clip" &&
-        EMOTION_GESTURE_FALLBACK[actions.emotion]) ||
-      null;
+    // Gesture fallback (hardcode per-emosi) SUDAH DIHAPUS bersama tabel
+    // gesture bawaan. Gerakan hanya dari [GESTURE:] eksplisit LLM (yang wajib
+    // memakai nama dari daftar capability) atau gerak tubuh bawaan emosi via
+    // aset model (.exp3/klip).
+    const gestureToPlay = actions.gesture || null;
     if (gestureToPlay && agent.playGesture) agent.playGesture(gestureToPlay);
   }
 
@@ -1013,7 +988,7 @@ Contoh pendek:
           nativeExpressions: [],
           accessories: [],
           properties: [],
-          gestures: DEFAULT_GESTURES,
+          gestures: [],
           motionCatalog: [],
           sheet: null,
           userNote: "",

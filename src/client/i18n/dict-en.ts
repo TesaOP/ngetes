@@ -211,10 +211,10 @@ export const DICT_EN: Record<string, string> = {
 
   // ── ms — Motion Studio (pane + popup) ──────────────────────────
   "ms.title": "Motion Studio",
-  "ms.paneHint": "Create your own motions via a keyframe timeline <b>per model parameter</b> — head, hands, hair, brows, anything the rig has. Save with a description & tags, then the AI can use them while chatting. Built-in motions and the model's own motions keep working as usual.",
+  "ms.paneHint": "Create your own motions via a keyframe timeline <b>per model parameter</b> — head, hands, hair, brows, anything the rig has. Save with a description & tags, then the AI can use them while chatting. The model's own motions keep working as usual.",
   "ms.open": "Open Motion Studio",
   "ms.listTitle": "Motion List",
-  "ms.listHint": "Sources: <b>builtin</b> = 9 app motions, <b>model</b> = motions from the model files, <b>yours</b> = made in Motion Studio. Only yours can be edited/deleted.",
+  "ms.listHint": "Sources: <b>model</b> = motions from the model files, <b>yours</b> = made in Motion Studio. Only yours can be edited/deleted.",
   "ms.sub": "Assemble motions via keyframes. Press ▶ to see it on the model directly. While editing, idle motion is frozen so the pose shows as-is.",
   "ms.libAria": "List of your motions",
   "ms.newTip": "New motion",
@@ -269,6 +269,27 @@ export const DICT_EN: Record<string, string> = {
   "ms.chip4": "angry headshake",
   "ms.chip5": "sad sinking",
   "ms.genGo": "Generate",
+  // Independent lint + model analysis from disk (motion_analysis/motion_validation)
+  "ms.lint.title": "{e} errors · {w} warnings · {n} info",
+  "ms.lint.error": "error",
+  "ms.lint.warn": "warn",
+  "ms.lint.info": "info",
+  "ms.physNote": "physics output — do not animate directly; drive its cause (body/head angles) so it sways naturally",
+  "ms.analysis.count": "{n} motions analyzed · {f} physics outputs",
+  // Visual check (visual critic — motion-vision)
+  "ms.verify.button": "Visual Check",
+  "ms.verify.prompt": "Motion intent (what should it look like)?",
+  "ms.verify.doing": "Capturing filmstrip & judging (±10–20 s)…",
+  "ms.verify.done": "Visual verdict ready — see below",
+  "ms.verify.skipped": "Skipped: {msg}",
+  "ms.verify.fail": "Visual check failed: {msg}",
+  "ms.verify.title": "Visual verdict (confidence {c})",
+  "ms.verify.playing": "playing",
+  "ms.verify.intent": "matches intent",
+  "ms.verify.artifacts": "artifact",
+  "ms.verify.notes": "notes",
+  "ms.verify.yes": "yes",
+  "ms.verify.no": "no",
 
   // ── pe — preset editor popup ───────────────────────────────────
   "pe.sub": "Compose preset poses via sliders. Move a slider → visible on the model immediately & saved to the draft. While editing, the model is fully frozen (no idle / blink / breathing); the freeze lifts after Save / Clear / Apply / Close.",
@@ -314,6 +335,7 @@ export const DICT_EN: Record<string, string> = {
   "conn.role.assistant": "assistant (agent brain & tools)",
   "conn.role.motion": "motion (movement & expressions)",
   "conn.role.sheet": "sheet (parameter analysis)",
+  "conn.role.motionVision": "motion-vision (judges images — vision model required)",
   "conn.save": "Save",
   "conn.cancel": "Cancel",
 

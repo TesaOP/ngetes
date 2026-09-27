@@ -39,18 +39,21 @@ kelihatan seperti pembersihan. Semuanya punya alasan, bukan selera.
    ditaruh di tab mana. Keduanya perlu. Jangan digabung.
 
 3. **Namespace gerak: tabrakan dicegah saat SIMPAN, bukan saat lookup.**
-   `playGesture()` resolve dengan urutan: motion native model → preset `gerak`
-   user → `GESTURE_LIBRARY` builtin. Motion native adalah data intrinsik model,
+   `playGesture()` resolve dengan urutan: klip native exact (`motion_<stem>`)
+   → grup native model → preset `gerak` user → entri registry (`static/js/app.js`
+   `playGesture()`). Motion native adalah data intrinsik model,
    sekelas `.exp3` — bukan "saran AI" yang boleh dikalahkan preset. Jadi preset
    `gerak` **ditolak** kalau namanya sudah dipakai (`checkGerakName()`), dengan
    usulan nama alternatif (`suggestGerakName()`). Sheet lama yang sudah bentrok
    di disk diperbaiki sekali saat migrasi oleh `deshadowGerakPresets()`, rename
    + catat `renamedFrom` supaya UI bisa menjelaskan, bukan hapus.
+   (Tabel gesture bawaan `GESTURE_LIBRARY` dulu ikut di urutan ini —
+   **dihapus** keputusan user 2026-09-27.)
 
 4. **Angka hanya dari engine.** `min`/`max`/`def` datang dari Cubism Core saja.
    LLM tidak pernah boleh mengirim angka range, dan `steps` gerak buatan LLM
-   ditolak — LLM hanya boleh MEMILIH nama yang benar-benar ada di
-   `GESTURE_LIBRARY`/`motionGroups`. Semua value preset di-clamp ke range
+   ditolak — LLM hanya boleh MEMILIH nama gerak yang benar-benar ada di
+   registry (klip native model / motion user / preset `gerak`). Semua value preset di-clamp ke range
    terukur saat apply (`applyPreset()`), jadi file sheet pun tidak dipercaya.
 
 ## Skema sheet v4
@@ -177,8 +180,10 @@ ke TS, guard ini dikonversi ke bun test bersama modulnya — bukan dibuang.
 ## Utang teknis / catatan
 
 - **`motionGroups` kosong di kedua model bundled** dan hanya ada 1 file
-  `.motion3.json`. `[GESTURE:]` sepenuhnya bergantung pada 9 gesture builtin
-  `GESTURE_LIBRARY`. Konsekuensi aset, bukan bug.
+  `.motion3.json` deklarasi. Sejak 2026-09-27 (tabel `GESTURE_LIBRARY` dihapus),
+  `[GESTURE:]` resolve ke klip native adopsi / preset `gerak` user — bila model
+  tak punya keduanya, director tidak mengiklankan gesture sama sekali dan LLM
+  dilarang mengarang nama. Konsekuensi aset, bukan bug.
 - `config.json` milik user berisi koneksi + apiKey — file itu ada di
   `data/config.json`, **di-gitignore** dan **tidak pernah disajikan** lewat HTTP
   statis (403). Ini data milik user, minta izin dulu sebelum menyentuh.

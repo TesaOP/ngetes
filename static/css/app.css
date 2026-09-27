@@ -2792,6 +2792,33 @@ input[type="range"]::-moz-range-thumb {
   background: var(--ink-3);
 }
 
+/* Lint independen (analisis model dari disk) — advisory, tidak memblokir. */
+.ms-lint {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 6px;
+  font-size: 11px;
+  border-top: 1px dashed var(--line-soft);
+}
+.ms-lint.hidden { display: none; }
+.ms-lint-title { color: var(--text-dim); }
+.ms-lint-item { display: flex; gap: 6px; align-items: baseline; }
+.ms-lint-item .lv {
+  flex: none;
+  font-size: 9.5px;
+  padding: 0 5px;
+  border-radius: var(--r-xs);
+  border: 1px solid var(--line);
+}
+.ms-lint-item .lv.err { color: var(--coral); border-color: var(--coral); }
+.ms-lint-item .lv.warn { color: var(--lamp-soft); border-color: var(--lamp-soft); }
+.ms-lint-item .lv.info { color: var(--text-dim); }
+.ms-lint-item .msg { color: var(--text-dim); }
+/* Penanda param output physics di panel parameter. */
+.ms-phys { color: var(--lamp-soft); margin-left: 4px; }
+
 /* Popup Motion Studio bisa digeser lewat header. */
 .pn-popup-head.drag-handle {
   cursor: grab;

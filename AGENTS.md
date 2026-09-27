@@ -13,8 +13,7 @@
 > `package.json` = `lumimi`, folder rilis `dist/Lumimi/` plus `dist/Lumimi-Setup.exe`.
 > Yang sengaja TETAP: crate internal `live2d-core` dan `live2d-engine` (nama teknis,
 > bukan brand), dan kelas speech `companion`/`companion_proactive` (istilah perilaku
-> di `speech-policy.ts`, bukan nama produk). Log historis di
-> `docs/STATUS-CUBISM5-EFEK.md` tetap menyebut nama lama apa adanya.
+> di `speech-policy.ts`, bukan nama produk).
 
 ## Ringkasan proyek
 
@@ -29,12 +28,10 @@ dobel-klik menyalakan server dan jendela sekaligus). Inti logika **TypeScript**
 `static/js/i18n.js`; driver karakter dan UI di `static/js/app.js` (dijaga guard).
 **Bun = alat build/dev saja** (bundle, test, tsc), bukan runtime. Renderer satu
 jalur: **Pixi 8 + Cubism SDK Framework 5-r.5** (teruji dengan Core 6.0.1) di
-`src/live2d/view/`; stack lama (Pixi 6 + pixi-live2d) sudah dipensiunkan (entri
-27-40 STATUS).
+`src/live2d/view/`; stack lama (Pixi 6 + pixi-live2d) sudah dipensiunkan.
 
-Produk ini juga membawa **agent-nya sendiri** sebagai fitur (loop, 21 tool, dan
-permission gate di `core/src/agent/`). Jangan tertukar: itu kode produk, bukan
-instruksi untukmu.
+Produk ini juga membawa **agent-nya sendiri** sebagai fitur (loop, 25 tool,
+dan permission gate di `core/src/agent/`). Jangan tertukar: itu kode produk, bukan instruksi untukmu.
 
 ## Urutan baca wajib (mengikat)
 
@@ -45,7 +42,7 @@ instruksi untukmu.
 | 3 | [`docs/MOTION-SYSTEM-SPEC.md`](docs/MOTION-SYSTEM-SPEC.md) | menyentuh pipeline motion / Motion Studio |
 | 4 | [`docs/MODES.md`](docs/MODES.md) | menyentuh mode, runtime, atau teardown |
 | 5 | [`docs/ARCHITECTURE-TAURI-RUST.md`](docs/ARCHITECTURE-TAURI-RUST.md) | menyentuh **apa pun** terkait backend Rust / shell Tauri / transport (IPC per-domain untuk domain yang sudah migrasi; HTTP loopback = adapter eksternal + jembatan transisi) |
-| 6 | [`docs/STATUS-CUBISM5-EFEK.md`](docs/STATUS-CUBISM5-EFEK.md) | **awal sesi**: baca entri teratas (handoff sesi sebelumnya) · **akhir sesi**: tambah entri baru |
+| 6 | `docs/STATUS-CUBISM5-EFEK.md` (LOKAL, di-gitignore — handoff sesi pribadi, bukan acuan contributor) | **awal sesi lokal**: baca entri teratas bila file ada · **akhir sesi**: tambah entri baru (tetap lokal, jangan di-push) |
 | 7 | [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | debugging perilaku yang dilaporkan user |
 
 ## Perintah & definisi "selesai"
@@ -181,6 +178,20 @@ Jebakan yang harus diingat:
 core/                        backend Rust (axum, loopback), SATU-SATUNYA backend
                              (src/server/ dihapus Batch A 2026-09-23; logika + testnya
                              semua di core/src/)
+  motion_analysis.rs         analisis motion model dari DISK: range observasi,
+                             base pose, output physics3 (angka hanya dari engine)
+  motion_validation.rs       validator independen draft Motion Asset (advisory;
+                             sanitize tetap gerbang akhir)
+  agent/motion_tools.rs      tool motion agent bawaan: motion_analyze /
+                             motion_validate / motion_save / motion_verify
+                             (loop analisis → desain → validasi → verifikasi
+                             visual → simpan dengan approval)
+  motion_vision.rs           critic visual: harness render → filmstrip 8 frame
+                             → LLM role `motion-vision` (koneksi HARUS
+                             ditandai eksplisit; model harus menerima gambar)
+static/harness-motion.html   halaman harness render critic visual (juga
+src/client/harness/          entry build ke-4 harness-motion.mjs) — capture
+                             sinkron canvas.toDataURL, tanpa rAF/kompositor
 agent-shell/                 SATU exe SATU proses: host server Rust in-process
                              (`ensure_server`) + 6 command IPC (core_version,
                              server_port, pet_model, get_mode, set_mode,

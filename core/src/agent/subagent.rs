@@ -57,7 +57,7 @@ async fn run_sub_loop(config_path: &Path, root: &Path, work_dir: &str, task: &st
     } else {
         "\n\nKamu subagent READ-ONLY: HANYA boleh tool baca/cari. Dilarang menulis, mengedit, menghapus, menjalankan perintah, atau spawn subagent. Kembalikan ringkasan temuan yang padat."
     };
-    let system = format!("{}{}", loop_::build_system(&lang, work_dir), extra);
+    let system = format!("{}{}", loop_::build_system(&lang, work_dir, ""), extra);
 
     let mut history: Vec<(String, String)> = vec![("user".into(), clip(task, 4000))];
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();

@@ -29,6 +29,10 @@ export type SpeakOpts = {
 
 export type Live2DLegacyBridge = {
   getCapabilityProfile?: () => Promise<{ userNote?: string }>;
+  /** Nama folder model aktif (untuk konteks tool motion di server). */
+  modelKey?: () => string;
+  /** Param id untuk nama role (hasil role-mapping engine; sumber tunggal di TS). */
+  roleIdFor?: (role: string) => string | null;
   speak?: (text: string, onDone?: () => void, opts?: SpeakOpts) => void;
   stopSpeaking?: () => void;
 };

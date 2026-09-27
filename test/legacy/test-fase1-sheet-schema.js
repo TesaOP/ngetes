@@ -426,7 +426,7 @@ if (typeof sanitizeSteps === 'function' && BOUNDS) {
     sanitizeSteps([{ d: { ay: 1 }, ms: 999999 }])[0].ms === 3000);
   ok('NaN ms falls back to the minimum',
     sanitizeSteps([{ d: { ay: 1 }, ms: 'abc' }])[0].ms === 40);
-  ok('a builtin GESTURE_LIBRARY step survives sanitisation unchanged',
+  ok('a preset step survives sanitisation unchanged',
     JSON.stringify(sanitizeSteps([{ d: { ay: -8 }, ms: 160 }])) === JSON.stringify([{ d: { ay: -8 }, ms: 160 }]));
 }
 
@@ -597,8 +597,8 @@ ok('gerak presets route through playGesture, not a frozen pose',
   /if \(preset\.category === 'gerak'\) \{ playGesture\(preset\.name\); return true; \}/.test(appSrc));
 ok('playGesture sanitises preset steps at apply time',
   /sanitizeSteps\(preset\.steps\)/.test(appSrc));
-ok('builtin gestures still bypass preset lookup when no preset matches',
-  /preset \? sanitizeSteps\(preset\.steps\) : GESTURE_LIBRARY\[name\]/.test(appSrc));
+ok('playGesture resolves presets first, then registry (builtin table is gone)',
+  /if \(preset\) \{/.test(appSrc) && !/GESTURE_LIBRARY\[name\]/.test(appSrc));
 ok('preset values are clamped to the MEASURED Cubism range at apply',
   /Math\.max\(lo, Math\.min\(hi, Number\(raw\)\)\)/.test(appSrc));
 ok('unknown param ids in a preset are dropped',
@@ -637,21 +637,21 @@ ok('reservedGestureNames() was extractable', typeof reservedGestureNames === 'fu
 ok('checkGerakName() was extractable', typeof checkGerakName === 'function');
 ok('suggestGerakName() was extractable', typeof suggestGerakName === 'function');
 ok('deshadowGerakPresets() was extractable', typeof deshadowGerakPresets === 'function');
-ok('the real GESTURE_LIBRARY was extracted (not an empty stub)',
-  !!LIB && Object.keys(LIB).length >= 8, LIB ? Object.keys(LIB).length + ' builtins' : 'null');
+// Tabel gesture bawaan DIHAPUS (keputusan user 2026-09-27): guard mengunci
+// penghapusannya — tak boleh muncul lagi di app.js.
+ok('the builtin GESTURE_LIBRARY table is gone from app.js',
+  !/const GESTURE_LIBRARY = \{/.test(appSrc));
 
 if (typeof checkGerakName === 'function' && typeof deshadowGerakPresets === 'function') {
   const modelSheet = { motionGroups: ['Idle', 'TapBody'], presets: { user: [], ai: [] } };
 
-  // The lookup order in playGesture() is native → preset → builtin, so BOTH
-  // native motion and builtin verbs shadow a preset. Both must be reserved.
+  // The lookup order in playGesture() is native → preset (builtin table is
+  // gone), so native motion names shadow a preset and must stay reserved.
   const reserved = reservedGestureNames(modelSheet);
   ok('native motion group names are reserved', reserved.has('idle'));
   ok('the motion_ prefixed spelling is reserved too', reserved.has('motion_idle'),
     'playGesture strips the prefix, so both spellings resolve to the group');
-  ok('builtin GESTURE_LIBRARY verbs are reserved', reserved.has('nod'));
-  ok('reserved lookup is case-insensitive',
-    !!reservedGestureNames(modelSheet).get('IDLE'.toLowerCase()));
+  ok('no builtin verbs are reserved anymore', !reserved.has('nod'));
 
   // Rejection, not override: the native motion keeps its name.
   const vsMotion = checkGerakName('Idle', modelSheet);
@@ -668,10 +668,9 @@ if (typeof checkGerakName === 'function' && typeof deshadowGerakPresets === 'fun
   ok('the prefixed spelling is rejected as well', vsPrefixed.ok === false,
     'otherwise "motion_TapBody" would be swallowed by the group TapBody');
 
+  // Nama bekas gesture bawaan kini BEBAS dipakai (tabelnya sudah dihapus).
   const vsBuiltin = checkGerakName('nod', modelSheet);
-  ok('a preset named after a builtin gesture is REJECTED', vsBuiltin.ok === false);
-  ok('the builtin clash is classified separately', vsBuiltin.code === 'builtin-gesture',
-    'different remedy text: the clash is with the app, not the model');
+  ok('a preset named after a removed builtin gesture is ACCEPTED', vsBuiltin.ok === true);
 
   ok('an empty name is rejected before any collision check',
     checkGerakName('   ', modelSheet).code === 'empty');
@@ -680,13 +679,13 @@ if (typeof checkGerakName === 'function' && typeof deshadowGerakPresets === 'fun
   ok('a free name is accepted', fine.ok === true);
   ok('the accepted name is trimmed', fine.name === 'Nari Pelan');
 
-  // A model with no motions at all must still block builtin clashes, and must
-  // not invent collisions that don't exist.
+  // A model with no motions at all must not invent collisions that don't
+  // exist — dan tak ada lagi clash bawaan aplikasi (tabelnya dihapus).
   const bare = { motionGroups: [], presets: { user: [], ai: [] } };
   ok('with no native motions, a model-name clash cannot happen',
     checkGerakName('Idle', bare).ok === true);
-  ok('with no native motions, builtin clashes are still caught',
-    checkGerakName('shake', bare).ok === false);
+  ok('with no native motions, former builtin names are accepted',
+    checkGerakName('shake', bare).ok === true);
 
   // suggestGerakName must dodge the user's OWN presets too: a suggestion that
   // landed on an existing preset name would be silently overwritten as an edit.
@@ -758,8 +757,9 @@ if (playGestureSrc) {
   ok('playGesture returns early on a native motion hit',
     /includes\(g\)\)\s*\{[\s\S]{0,300}return;/.test(playGestureSrc),
     'without the early return the preset branch would run too');
-  ok('user presets are still resolved before the builtin table',
-    playGestureSrc.indexOf('findGerakPreset(name)') < playGestureSrc.indexOf('GESTURE_LIBRARY[name]'));
+  ok('playGesture routes presets through playStepsViaRuntime before registry fallback',
+    playGestureSrc.indexOf('playStepsViaRuntime(name, steps)') !== -1 &&
+    playGestureSrc.indexOf('playStepsViaRuntime(name, steps)') < playGestureSrc.indexOf('motionRegistry.has(name)'));
 }
 ok('the reason the lookup order is not flipped is documented',
   /INTRINSIC data, the same class as \.exp3/.test(appSrc));

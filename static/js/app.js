@@ -6378,71 +6378,9 @@
   // Amplitudo & durasi sengaja diperbesar (±14-18°, 0.9-1.6 dtk) — gerakan
   // perlu TERLIHAT jelas di panggung; versi lama (±6-12°, 0.6 dtk) terlalu
   // halus sehingga dianggap tidak berjalan.
-  const GESTURE_LIBRARY = {
-    nod: [
-      { d: { ay: -14 }, ms: 260 },
-      { d: { ay: 12 }, ms: 240 },
-      { d: { ay: -9 }, ms: 220 },
-      { d: { ay: 4 }, ms: 180 },
-      { d: {}, ms: 200 },
-    ],
-    shake: [
-      { d: { ax: -16 }, ms: 220 },
-      { d: { ax: 16 }, ms: 220 },
-      { d: { ax: -12 }, ms: 200 },
-      { d: { ax: 7 }, ms: 180 },
-      { d: {}, ms: 220 },
-    ],
-    tilt_curious: [
-      { d: { bodyZ: 12, ax: 9, ex: 0.25 }, ms: 400 },
-      { d: { bodyZ: 10, ax: 7 }, ms: 800 },
-      { d: {}, ms: 240 },
-    ],
-    lean_excited: [
-      { d: { bodyY: -9, ay: -9, ey: 0.15 }, ms: 260 },
-      { d: { bodyY: 4, ay: 3 }, ms: 300 },
-      { d: {}, ms: 340 },
-    ],
-    recoil_surprised: [
-      { d: { ay: -16, bodyY: 9, ex: -0.15, ey: -0.2 }, ms: 200 },
-      { d: { ay: -6, ey: -0.1 }, ms: 380 },
-      { d: { ay: 2 }, ms: 220 },
-      { d: {}, ms: 320 },
-    ],
-    look_away_shy: [
-      { d: { ax: -17, ex: -0.45, ay: 8 }, ms: 460 },
-      { d: { ax: -10, ex: -0.3 }, ms: 760 },
-      { d: {}, ms: 260 },
-    ],
-    laugh_bounce: [
-      { d: { ay: -10, bodyY: -8 }, ms: 160 },
-      { d: { ay: 7, bodyY: 5 }, ms: 160 },
-      { d: { ay: -7, bodyY: -5 }, ms: 160 },
-      { d: { ay: 4, bodyY: 3 }, ms: 140 },
-      { d: { ay: -2 }, ms: 120 },
-      { d: {}, ms: 200 },
-    ],
-    think: [
-      { d: { bodyZ: -11, ax: -8, ay: 5, ex: -0.3, ey: -0.15 }, ms: 420 },
-      { d: { bodyZ: -9, ax: -6 }, ms: 1100 },
-      { d: {}, ms: 260 },
-    ],
-    wave_hi: [
-      { d: { ax: 12, ay: -6, bodyX: 6 }, ms: 300 },
-      { d: { ax: -9 }, ms: 280 },
-      { d: { ax: 6 }, ms: 260 },
-      { d: { ax: -3 }, ms: 200 },
-      { d: {}, ms: 260 },
-    ],
-  };
-
-  const EMOTION_GESTURE = {
-    senang: "lean_excited",
-    sedih: "look_away_shy",
-    malu: "look_away_shy",
-    kaget: "recoil_surprised",
-    normal: "nod",
-  };
+  // GESTURE_LIBRARY (9 gesture prosedural bawaan) DIHAPUS (keputusan user,
+  // 2026-09-27): model Live2D tidak bisa memakainya secara bermakna — gerak
+  // kini seluruhnya dari klip native milik model + motion buatan user/preset.
 
   const haveMotionSystem =
     typeof MotionRegistry !== "undefined" &&
@@ -6451,8 +6389,6 @@
   const motionRegistry = haveMotionSystem
     ? MotionRegistry.createRegistry()
     : null;
-  if (haveMotionSystem)
-    motionRegistry.registerGestureLibrary(GESTURE_LIBRARY, EMOTION_GESTURE);
 
   let motionApplied = {};
   const POSE_FIELDS = {
@@ -6707,10 +6643,10 @@
   // ── Gesture namespace: collision prevention at the point of CREATION ────
   //
   // playGesture() resolves in the order: native motion group → user 'gerak'
-  // preset → GESTURE_LIBRARY. That order is deliberate and stays: a model's own
-  // .motion3.json groups are INTRINSIC data, the same class as .exp3 native
-  // expressions — not an "AI suggestion" that a user preset is allowed to beat.
-  // The user must never lose access to the model's real motions.
+  // preset. That order is deliberate and stays: a model's own .motion3.json
+  // groups are INTRINSIC data, the same class as .exp3 native expressions —
+  // not an "AI suggestion" that a user preset is allowed to beat. The user
+  // must never lose access to the model's real motions.
   //
   // The user > ai precedence rule does NOT apply here: that rule is for two
   // sources competing for the SAME slot (presets.user vs presets.ai). Native
@@ -6718,23 +6654,18 @@
   //
   // So instead of letting either side win a name fight, we make the fight
   // impossible: a 'gerak' preset may not be SAVED under a name that already
-  // resolves to something else. Then both remain callable, under distinct names,
-  // and no lookup is ever silently shadowed.
+  // resolves to something else. Then both remain callable, under distinct
+  // names, and no lookup is ever silently shadowed.
   //
   // Both spellings of a motion group are reserved because playGesture() strips
   // the prefix — a preset called "motion_Idle" would be swallowed by the group
   // "Idle" just as surely as one called "Idle".
   //
-  // GESTURE_LIBRARY names are reserved for the same reason in the opposite
-  // direction: a preset IS checked before the builtin table, so allowing the
-  // name "nod" would shadow the builtin verb that agent.js advertises to the
-  // LLM in every prompt. Same silent-shadowing bug, mirrored.
+  // (Tabel gesture bawaan dulu ikut di-reserve di sini; tabel itu sudah
+  // dihapus — tak ada lagi nama yang direservasi dari sisi aplikasi.)
   function reservedGestureNames(sheet) {
     const s = sheet || state.lastSheet || {};
     const out = new Map();
-    for (const k of Object.keys(GESTURE_LIBRARY)) {
-      out.set(k.toLowerCase(), { kind: "builtin", display: k });
-    }
 
     for (const g of Array.isArray(s.motionGroups) ? s.motionGroups : []) {
       if (!g) continue;
@@ -6760,22 +6691,18 @@
       };
     const hit = reservedGestureNames(sheet).get(clean.toLowerCase());
     if (hit) {
+      // Satu-satunya sumber bentrok yang tersisa: motion bawaan MODEL
+      // (tabel gesture bawaan aplikasi sudah dihapus).
       return {
         ok: false,
-        code: hit.kind === "motion" ? "motion-group" : "builtin-gesture",
+        code: "motion-group",
         conflictWith: hit.display,
         message:
-          hit.kind === "motion"
-            ? 'Nama "' +
-              clean +
-              '" sudah dipakai motion bawaan model ("' +
-              hit.display +
-              '"). Pilih nama lain.'
-            : 'Nama "' +
-              clean +
-              '" sudah dipakai gerakan bawaan aplikasi ("' +
-              hit.display +
-              '"). Pilih nama lain.',
+          'Nama "' +
+          clean +
+          '" sudah dipakai motion bawaan model ("' +
+          hit.display +
+          '"). Pilih nama lain.',
         suggestion: suggestGerakName(clean, sheet),
       };
     }
@@ -7219,14 +7146,13 @@
     }
 
     const preset = findGerakPreset(name);
-    const steps = preset ? sanitizeSteps(preset.steps) : GESTURE_LIBRARY[name];
-    if (steps && steps.length) {
-      if (!preset && haveMotionSystem && motionRegistry.has(name)) {
-        if (motionRuntime.play(name, { priority: 60 })) return;
+    if (preset) {
+      const steps = sanitizeSteps(preset.steps);
+      if (steps && steps.length) {
+        if (!(haveMotionSystem && playStepsViaRuntime(name, steps)))
+          legacyPlaySteps(steps);
+        return;
       }
-      if (!(haveMotionSystem && playStepsViaRuntime(name, steps)))
-        legacyPlaySteps(steps);
-      return;
     }
 
     if (haveMotionSystem && motionRegistry.has(name))
@@ -7593,7 +7519,7 @@
     },
 
     playGesture,
-    gestureNames: () => Object.keys(GESTURE_LIBRARY),
+      gestureNames: () => [],
 
     playMotion: (id, opts) =>
       haveMotionSystem ? motionRuntime.play(id, opts) : false,
@@ -7670,7 +7596,7 @@
       resolveParamGroup,
       findPreset,
       categories: () => PRESET_CATEGORIES.slice(),
-      builtinGestures: () => Object.keys(GESTURE_LIBRARY),
+      builtinGestures: () => [],
 
       checkGerakName,
       suggestGerakName,
@@ -9153,35 +9079,24 @@
       userNote: typeof sheet.userNote === "string" ? sheet.userNote : "",
 
       gestures: (() => {
-        const list = Object.keys(GESTURE_LIBRARY)
-          .concat(
-            // Klip native per-file (termasuk hasil adopsi .motion3.json yatim):
-            // id yang BENAR-BENAR ada di registry, bukan tebakan "motion_" +
-            // grup dari sheet cache yang bisa basi.
-            haveMotionSystem
-              ? motionRegistry
-                  .list()
-                  .filter(
-                    (a) => a.source === "native" && a.aiEnabled !== false,
-                  )
-                  .map((a) => a.id)
-              : Array.isArray(sheet.motionGroups)
-                ? sheet.motionGroups
-                    .filter((g) => typeof g === "string" && g)
-                    .map((g) => "motion_" + g)
-                : [],
-          )
-          .concat(presetNames('gerak'));
-        if (haveMotionSystem) {
-          for (const a of motionRegistry.list()) {
-            if (
-              a.source === "user" &&
-              a.aiEnabled !== false &&
-              !list.includes(a.id)
-            )
-              list.push(a.id);
-          }
-        }
+        // Tabel gesture bawaan dihapus — gerakan = klip native per-file
+        // (termasuk hasil adopsi .motion3.json yatim) + motion user + preset
+        // 'gerak'. Id yang BENAR-BENAR ada di registry, bukan tebakan.
+        const list = (haveMotionSystem
+          ? motionRegistry
+              .list()
+              .filter(
+                (a) =>
+                  (a.source === "native" || a.source === "user") &&
+                  a.aiEnabled !== false,
+              )
+              .map((a) => a.id)
+          : Array.isArray(sheet.motionGroups)
+            ? sheet.motionGroups
+                .filter((g) => typeof g === "string" && g)
+                .map((g) => "motion_" + g)
+            : []
+        ).concat(presetNames('gerak'));
         return list;
       })(),
 

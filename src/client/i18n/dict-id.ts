@@ -219,10 +219,10 @@ export const DICT_ID: Record<string, string> = {
 
   // ── ms — Motion Studio (pane + popup) ──────────────────────────
   "ms.title": "Motion Studio",
-  "ms.paneHint": "Bikin gerakan sendiri lewat timeline keyframe <b>per parameter model</b> — kepala, tangan, rambut, alis, apa pun yang rig-nya punya. Simpan dengan deskripsi & tag, lalu AI bisa memakainya saat ngobrol. Gerakan bawaan dan motion milik model tetap jalan seperti biasa.",
+  "ms.paneHint": "Bikin gerakan sendiri lewat timeline keyframe <b>per parameter model</b> — kepala, tangan, rambut, alis, apa pun yang rig-nya punya. Simpan dengan deskripsi & tag, lalu AI bisa memakainya saat ngobrol. Motion milik model tetap jalan seperti biasa.",
   "ms.open": "Buka Motion Studio",
   "ms.listTitle": "Daftar Gerakan",
-  "ms.listHint": "Sumber: <b>bawaan</b> = 9 gerakan aplikasi, <b>model</b> = motion dari file model, <b>milikmu</b> = hasil Motion Studio. Hanya milikmu yang bisa diedit/hapus.",
+  "ms.listHint": "Sumber: <b>model</b> = motion dari file model, <b>milikmu</b> = hasil Motion Studio. Hanya milikmu yang bisa diedit/hapus.",
   "ms.sub": "Susun gerakan lewat keyframe. Tekan ▶ untuk melihatnya langsung di model. Saat mengedit, gerak idle dibekukan supaya pose terlihat apa adanya.",
   "ms.libAria": "Daftar gerakan milikmu",
   "ms.newTip": "Gerakan baru",
@@ -277,6 +277,27 @@ export const DICT_ID: Record<string, string> = {
   "ms.chip4": "marah geleng",
   "ms.chip5": "sedih turun",
   "ms.genGo": "Buat",
+  // Lint independen + analisis model dari disk (motion_analysis/motion_validation)
+  "ms.lint.title": "{e} error · {w} peringatan · {n} info",
+  "ms.lint.error": "error",
+  "ms.lint.warn": "peringatan",
+  "ms.lint.info": "info",
+  "ms.physNote": "output physics — jangan dianimasikan langsung; gerakkan penyebabnya (angka badan/kepala) agar berayun alami",
+  "ms.analysis.count": "{n} motion dianalisis · {f} output physics",
+  // Cek visual (critic visual — motion-vision)
+  "ms.verify.button": "Cek Visual",
+  "ms.verify.prompt": "Intent gerakan (apa yang seharusnya terlihat)?",
+  "ms.verify.doing": "Merekam filmstrip & menilai visual (±10–20 detik)…",
+  "ms.verify.done": "Penilaian visual selesai — lihat hasil di bawah",
+  "ms.verify.skipped": "Dilewati: {msg}",
+  "ms.verify.fail": "Cek visual gagal: {msg}",
+  "ms.verify.title": "Hasil cek visual (keyakinan {c})",
+  "ms.verify.playing": "bergerak",
+  "ms.verify.intent": "sesuai intent",
+  "ms.verify.artifacts": "artefak",
+  "ms.verify.notes": "catatan",
+  "ms.verify.yes": "ya",
+  "ms.verify.no": "tidak",
 
   // ── pe — popup editor preset ───────────────────────────────────
   "pe.sub": "Susun pose preset lewat slider. Geser slider → langsung terlihat di model & tersimpan ke draft. Saat mengedit, model dibekukan sepenuhnya (tanpa idle / blink / napas); bekuan lepas setelah Simpan / Kosongkan / Terap / Tutup.",
@@ -322,6 +343,7 @@ export const DICT_ID: Record<string, string> = {
   "conn.role.assistant": "assistant (otak agent & tools)",
   "conn.role.motion": "motion (gerak & ekspresi)",
   "conn.role.sheet": "sheet (analisa parameter)",
+  "conn.role.motionVision": "motion-vision (menilai gambar — wajib model vision)",
   "conn.save": "Simpan",
   "conn.cancel": "Batal",
 

@@ -518,6 +518,25 @@ pub async fn screenshot(format: &str, quality: u8) -> Result<(Vec<u8>, &'static 
     Ok((bytes, if jpeg { "image/jpeg" } else { "image/png" }, w, h, ts))
 }
 
+/// Jalankan ekspresi JS di halaman aktif (Runtime.evaluate, returnByValue +
+/// awaitPromise). Return objek `result` CDP (nilai di `.value`); error JS
+/// jadi Err. Dipakai jalur motion-vision untuk mengendalikan halaman harness.
+pub async fn evaluate(expression: &str) -> Result<Value, String> {
+    let m = mgr().lock().await;
+    let result = m.require_client()?.send(
+        "Runtime.evaluate",
+        json!({ "expression": expression, "returnByValue": true, "awaitPromise": true, "silent": true }),
+        60_000,
+    ).await?;
+    if let Some(desc) = result.pointer("/exceptionDetails/exception/description").and_then(|v| v.as_str()) {
+        return Err(format!("JS error: {desc}"));
+    }
+    if let Some(desc) = result.pointer("/exceptionDetails/text").and_then(|v| v.as_str()) {
+        return Err(format!("JS error: {desc}"));
+    }
+    Ok(result.get("result").cloned().unwrap_or(Value::Null))
+}
+
 pub async fn focus() -> bool {
     let m = mgr().lock().await;
     let pid = match m.process.as_ref().map(|p| p.id()) {

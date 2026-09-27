@@ -150,22 +150,48 @@ KEMBALIKAN HANYA JSON. MULAI dengan {{ dan AKHIRI dengan }}. JANGAN mengulang in
     (200, json!({ "description": description, "tags": tags, "emotionCompatibility": emo, "source": "ai" }).to_string())
 }
 
-/// POST /api/motions/generate — buat motion dari deskripsi user (role "motion")
-/// + echo-retry + sanitize (motion_dsl). Return (status, body JSON). Tidak
-/// menulis ke disk — klien menerima {motion} lalu menyimpan lewat PUT.
-pub async fn generate_motion(config_path: &Path, body: &Value) -> (u16, String) {
-    let desc: String = body.get("prompt").and_then(|v| v.as_str()).unwrap_or("").trim().chars().take(300).collect();
-    if desc.is_empty() {
-        return (400, json!({ "error": "prompt kosong" }).to_string());
+/// Blok konteks model untuk prompt generate — dari hasil analisis disk
+/// (`motion_analysis::analyze`). Angka murni engine; LLM hanya menerima,
+/// tidak pernah mengirim range. None = tak ada konteks berharga (tanpa
+/// peta role atau tanpa data terobservasi).
+fn model_context_block(analysis: &Value) -> Option<String> {
+    if analysis.get("hasReference").and_then(|v| v.as_bool()) != Some(true) {
+        return Some(
+            "Konteks model ini: belum ada motion referensi di disk — pakai range konvensional yang realistis.".into(),
+        );
     }
-    let emotions: Vec<String> = body
-        .get("emotions")
-        .and_then(|v| v.as_array())
-        .filter(|a| !a.is_empty())
-        .map(|a| a.iter().take(12).map(|x| x.as_str().unwrap_or("").to_string()).collect())
-        .unwrap_or_else(|| DEFAULT_EMOTIONS.iter().map(|s| s.to_string()).collect());
+    let roles = analysis.get("roles").and_then(|v| v.as_object())?;
+    if roles.is_empty() {
+        return None;
+    }
+    let mut ranges: Vec<String> = Vec::new();
+    let mut physics: Vec<String> = Vec::new();
+    for (role, r) in roles {
+        let lo = r.get("min").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let hi = r.get("max").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        ranges.push(format!("{role} {lo}..{hi}"));
+        if r.get("physics").and_then(|v| v.as_bool()) == Some(true) {
+            physics.push(role.clone());
+        }
+    }
+    let mut lines = vec![
+        "Konteks model ini (diukur engine dari motion milik model ini):".to_string(),
+        format!("- amplitudo teramati: {}", ranges.join(", ")),
+    ];
+    if !physics.is_empty() {
+        lines.push(format!(
+            "- role terpetakan ke param output physics (jangan dipakai; gerakkan penyebabnya): {}",
+            physics.join(", ")
+        ));
+    }
+    Some(lines.join("\n"))
+}
 
-    let prompt = format!(
+/// Bangun prompt generate. `ctx` (opsional) = blok konteks model yang
+/// disisipkan sebelum bagian Aturan. Tanpa ctx, hasil byte-per-byte sama
+/// dengan prompt lama (backward compat).
+fn build_generate_prompt(desc: &str, emo: &str, ctx: Option<&str>) -> String {
+    let base = format!(
         "Kamu membuat gerakan (motion) untuk karakter Live2D dari deskripsi user.\n\
 Permintaan user: \"{desc}\"\n\n\
 Kamu HANYA boleh memakai nama track berikut. Ini nama PERAN, bukan nama parameter\n\
@@ -190,8 +216,53 @@ Balas JSON persis format ini:\n\
 {{\n  \"id\": \"nama_id_snake_case\",\n  \"name\": \"Nama Singkat\",\n  \"description\": \"satu kalimat bahasa Indonesia\",\n  \"tags\": [\"dua-empat tag\"],\n  \"duration\": 1.4,\n  \"emotionCompatibility\": {{ \"<emosi>\": 0.0-1.0 }},\n  \"tracks\": [\n    {{ \"target\": \"ay\", \"keys\": [{{ \"t\": 0, \"v\": 0 }}, {{ \"t\": 0.4, \"v\": 8 }}, {{ \"t\": 1.4, \"v\": 0 }}] }}\n  ]\n}}\n\
 Emosi yang boleh dipakai HANYA: [{emo}]\n\
 KEMBALIKAN HANYA JSON. MULAI balasanmu langsung dengan {{ dan AKHIRI dengan }} — JANGAN mengulang instruksi ini.",
-        emo = emotions.join(", "),
+        desc = desc,
+        emo = emo,
     );
+    match ctx {
+        None => base,
+        Some(c) => match base.find("\nAturan:\n") {
+            Some(i) => format!("{}\n\n{}\n\n{}", base[..i].trim_end(), c, &base[i + 1..]),
+            None => base,
+        },
+    }
+}
+
+/// POST /api/motions/generate — buat motion dari deskripsi user (role "motion")
+/// + echo-retry + sanitize (motion_dsl). Return (status, body JSON). Tidak
+/// menulis ke disk — klien menerima {motion} lalu menyimpan lewat PUT.
+///
+/// Model-aware (opsional): bila body memuat `model` (nama folder model) dan
+/// `roleMap` (peta role→paramId dari klien), server menganalisis motion
+/// milik model dari disk dan menyisipkan konteks amplitudo/physics ke prompt.
+pub async fn generate_motion(config_path: &Path, body: &Value) -> (u16, String) {
+    let desc: String = body.get("prompt").and_then(|v| v.as_str()).unwrap_or("").trim().chars().take(300).collect();
+    if desc.is_empty() {
+        return (400, json!({ "error": "prompt kosong" }).to_string());
+    }
+    let emotions: Vec<String> = body
+        .get("emotions")
+        .and_then(|v| v.as_array())
+        .filter(|a| !a.is_empty())
+        .map(|a| a.iter().take(12).map(|x| x.as_str().unwrap_or("").to_string()).collect())
+        .unwrap_or_else(|| DEFAULT_EMOTIONS.iter().map(|s| s.to_string()).collect());
+
+    // Konteks model-aware: analisis dari disk (angka hanya dari engine).
+    let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+    let role_map = body.get("roleMap").filter(|v| v.is_object());
+    let analysis = if model.is_empty() {
+        None
+    } else {
+        let data_dir = config_path.parent();
+        let model_dir = data_dir.map(|d| d.join("model"));
+        match (data_dir, model_dir) {
+            (Some(dd), Some(md)) => crate::motion_analysis::analyze(&md, dd, &model, role_map).ok(),
+            _ => None,
+        }
+    };
+    let ctx = analysis.as_ref().and_then(|a| model_context_block(a));
+
+    let prompt = build_generate_prompt(&desc, &emotions.join(", "), ctx.as_deref());
 
     let echoed = |clean: &str| -> bool {
         let low = clean.to_lowercase();
@@ -234,6 +305,12 @@ KEMBALIKAN HANYA JSON. MULAI balasanmu langsung dengan {{ dan AKHIRI dengan }} �
         }
     };
 
+    // Self-fix satu putaran (pola loop agent): validator independen menandai
+    // issue lalu LLM memperbaiki draftnya sendiri, dipilih hanya bila benar-benar
+    // lebih baik. Inilah pembeda hasil Studio (dulu sekali-jalan) vs agent —
+    // angka tetap dari engine, validator advisory, sanitize tetap gerbang akhir.
+    parsed = refine_with_validator(config_path, parsed, analysis.as_ref(), &emotions.join(", ")).await;
+
     // Buang emosi di luar daftar; normalisasi id snake_case.
     let ok_emo: std::collections::HashSet<&str> = emotions.iter().map(String::as_str).collect();
     if let Some(ec) = parsed.get_mut("emotionCompatibility").and_then(|v| v.as_object_mut()) {
@@ -258,6 +335,71 @@ KEMBALIKAN HANYA JSON. MULAI balasanmu langsung dengan {{ dan AKHIRI dengan }} �
     }
 }
 
+/// Jumlah issue signifikan (error + warn) dari laporan validator. Info diabaikan
+/// (quirk minor, bukan cacat gerak).
+fn significant_issues(report: &Value) -> u64 {
+    report.get("errorCount").and_then(|v| v.as_u64()).unwrap_or(0)
+        + report.get("warnCount").and_then(|v| v.as_u64()).unwrap_or(0)
+}
+
+/// Satu putaran self-fix: validator independen (`motion_validation`) menandai
+/// issue → LLM role "motion" memperbaiki draftnya sendiri, meniru loop agent
+/// (analyze→design→validate→self-fix). Draft hasil dipakai HANYA bila jumlah
+/// issue signifikan berkurang; selain itu draft asli dipertahankan. Graceful:
+/// tanpa issue / tanpa koneksi / JSON gagal → kembalikan draft apa adanya.
+async fn refine_with_validator(config_path: &Path, draft: Value, analysis: Option<&Value>, emo: &str) -> Value {
+    let report = crate::motion_validation::validate_asset(&draft, analysis);
+    let before = significant_issues(&report);
+    if before == 0 {
+        return draft;
+    }
+    let lines: Vec<String> = report
+        .get("issues")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter(|i| i["level"] == json!("error") || i["level"] == json!("warn"))
+                .take(12)
+                .map(|i| format!("- [{}] {}", i["code"].as_str().unwrap_or("?"), i["message"].as_str().unwrap_or("")))
+                .collect()
+        })
+        .unwrap_or_default();
+    if lines.is_empty() {
+        return draft;
+    }
+
+    let draft_str: String = serde_json::to_string(&draft).unwrap_or_default().chars().take(2000).collect();
+    let fix_prompt = format!(
+        "Draft motion buatanmu diperiksa validator independen dan ada yang perlu diperbaiki.\n\n\
+Draft sekarang (JSON):\n{draft_str}\n\n\
+Masalah yang ditemukan:\n{issues}\n\n\
+Perbaiki HANYA masalah di atas. Tetap pakai nama track PERAN (ax, ay, bodyX, bodyY, bodyZ, ex, ey, mouthForm) — \
+JANGAN menyebut nama parameter rig. Jaga nilai realistis (±5..15 derajat kepala/badan, ±0.2..0.6 mata) dan \
+PULANG ke 0 di keyframe terakhir tiap track supaya gerakan tidak nyangkut. Emosi yang boleh HANYA: [{emo}].\n\
+Balas HANYA objek JSON motion lengkap (id, name, description, tags, duration, emotionCompatibility, tracks) — \
+mulai dengan {{ dan akhiri dengan }}. JANGAN mengulang instruksi ini.",
+        draft_str = draft_str,
+        issues = lines.join("\n"),
+        emo = emo,
+    );
+
+    let msgs = vec![llm::ChatMessage { role: "user".into(), content: fix_prompt }];
+    let reply = match llm::llm_for_role(config_path, "motion", &msgs, "").await {
+        Ok(ok) => ok.reply,
+        Err(_) => return draft,
+    };
+    let fixed = match jsonx::extract_json_object_loose(&reply) {
+        Some(f) if f.is_object() => f,
+        _ => return draft,
+    };
+    let after = significant_issues(&crate::motion_validation::validate_asset(&fixed, analysis));
+    if after < before {
+        fixed
+    } else {
+        draft
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,7 +419,97 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn prompt_tanpa_konteks_dan_dengan_konteks() {
+        // Tanpa konteks: prompt lama utuh — tanpa blok Konteks, Aturan tetap ada.
+        let p0 = build_generate_prompt("buat angguk", "senang, sedih", None);
+        assert!(p0.starts_with("Kamu membuat gerakan (motion) untuk karakter Live2D dari deskripsi user.\n"));
+        assert!(p0.contains("Permintaan user: \"buat angguk\""));
+        assert!(p0.contains("Emosi yang boleh dipakai HANYA: [senang, sedih]"));
+        assert!(p0.ends_with("JANGAN mengulang instruksi ini."));
+        assert!(!p0.contains("Konteks model"));
+
+        // Dengan konteks: blok disisipkan sebelum "Aturan:", aturan tetap utuh.
+        let ctx = "Konteks model ini (diukur engine dari motion milik model ini):\n- amplitudo teramati: ax -30..20";
+        let p1 = build_generate_prompt("buat angguk", "senang", Some(ctx));
+        let i_ctx = p1.find(ctx).unwrap();
+        let i_aturan = p1.find("\nAturan:\n").unwrap();
+        assert!(i_ctx < i_aturan, "konteks harus sebelum Aturan");
+        assert!(p1.contains("- Maksimal 4 track"));
+        assert!(p1.contains("Konteks model"));
+    }
+
+    #[test]
+    fn konteks_model_dari_analisis() {
+        // Tanpa referensi → catatan fallback.
+        let kosong = json!({ "hasReference": false, "roles": Value::Null });
+        let c0 = model_context_block(&kosong).unwrap();
+        assert!(c0.contains("belum ada motion referensi"));
+
+        // Dengan roleMap terproyeksi → amplitudo + physics.
+        let a = json!({
+            "hasReference": true,
+            "roles": {
+                "ax": { "min": -30.0, "max": 20.0, "base": 0.0, "param": "P1", "physics": false },
+                "ey": { "min": -1.0, "max": 1.0, "base": 0.0, "param": "P2", "physics": true }
+            }
+        });
+        let c1 = model_context_block(&a).unwrap();
+        assert!(c1.contains("amplitudo teramati"));
+        assert!(c1.contains("ax -30..20"));
+        assert!(c1.contains("ey -1..1"));
+        assert!(c1.contains("output physics"));
+        assert!(c1.contains("ey"));
+        assert!(!c1.contains("P1") && !c1.contains("P2"), "nama param mentah tidak boleh bocor ke prompt");
+
+        // Tanpa roles (klien tak kirim roleMap) → tanpa konteks.
+        let a2 = json!({ "hasReference": true, "roles": Value::Null });
+        assert!(model_context_block(&a2).is_none());
+        let a3 = json!({ "hasReference": true, "roles": {} });
+        assert!(model_context_block(&a3).is_none());
+    }
+
     fn now() -> u128 {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
+    }
+
+    #[tokio::test]
+    async fn refine_draft_bersih_dilewati() {
+        // Draft mulai & pulang ke 0, dalam batas role → tanpa issue signifikan →
+        // dikembalikan apa adanya tanpa memanggil LLM.
+        let dir = std::env::temp_dir().join(format!("l2dref-{}-{}", std::process::id(), now()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("config.json");
+        std::fs::write(&f, r#"{"activeId":"m","connections":[{"id":"m","provider":"mock"}]}"#).unwrap();
+        let bersih = json!({
+            "id": "angguk", "duration": 1.4,
+            "tracks": [{ "target": "ay", "keys": [{ "t": 0, "v": 0 }, { "t": 0.4, "v": 8 }, { "t": 1.4, "v": 0 }] }]
+        });
+        let out = refine_with_validator(&f, bersih.clone(), None, "senang").await;
+        assert_eq!(out, bersih, "draft bersih tidak boleh berubah");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn refine_gagal_perbaiki_pertahankan_asli() {
+        // Draft dengan issue (nilai role di luar batas + tak pulang ke 0) → refine
+        // memanggil LLM; mock tak bisa memperbaiki → draft asli dipertahankan
+        // (tidak crash, tidak memburuk).
+        let dir = std::env::temp_dir().join(format!("l2dref2-{}-{}", std::process::id(), now()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("config.json");
+        std::fs::write(&f, r#"{"activeId":"m","connections":[{"id":"m","provider":"mock"}]}"#).unwrap();
+        let kotor = json!({
+            "id": "miring", "duration": 1.0,
+            "tracks": [{ "target": "ax", "keys": [{ "t": 0, "v": 5 }, { "t": 1.0, "v": 45 }] }]
+        });
+        let before = significant_issues(&crate::motion_validation::validate_asset(&kotor, None));
+        assert!(before > 0, "prasyarat: draft harus punya issue");
+        let out = refine_with_validator(&f, kotor.clone(), None, "senang").await;
+        assert!(out.is_object());
+        assert_eq!(out.get("id").and_then(|v| v.as_str()), Some("miring"));
+        let after = significant_issues(&crate::motion_validation::validate_asset(&out, None));
+        assert!(after <= before, "refine tidak boleh memperburuk draft");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

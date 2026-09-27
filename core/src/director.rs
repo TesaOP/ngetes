@@ -10,10 +10,12 @@ use serde_json::{json, Value};
 use crate::{jsonx, llm};
 
 const DEFAULT_EMOTIONS: &[&str] = &["senang", "sedih", "malu", "kaget", "normal"];
-const DEFAULT_GESTURES: &[&str] = &[
-    "nod", "shake", "tilt_curious", "lean_excited", "recoil_surprised",
-    "look_away_shy", "laugh_bounce", "think", "wave_hi",
-];
+/// Default gesture KOSONG — tabel gesture bawaan aplikasi (9 gesture prosedural
+/// GESTURE_LIBRARY) DIHAPUS (keputusan user, 2026-09-27). Gerakan kini hanya
+/// dari klip native model / motion user / preset 'gerak', yang semuanya
+/// diiklankan lewat capabilities. Daftar hantu di sini akan membuat prompt LLM
+/// mengarang gesture yang tak bisa dimainkan.
+const DEFAULT_GESTURES: &[&str] = &[];
 
 /// Buang karakter kontrol (padanan regex TS) + trim + potong.
 fn clean_ctrl(s: &str, cap: usize) -> String {
@@ -80,7 +82,9 @@ pub async fn handle_animate_text(config_path: &Path, body: &Value) -> Value {
         .map(|a| a.iter().filter(|m| m.get("id").and_then(|i| i.as_str()).is_some()).cloned().collect())
         .unwrap_or_default();
 
-    let fallback = || json!({ "segments": [{ "text": text, "emotion": "normal", "gesture": "nod", "intensity": 0.7 }] });
+    // Fallback aman: tanpa gesture (null) — tidak ada lagi gesture bawaan
+    // yang bisa dipakai sebagai default ("nod" lama sudah dihapus).
+    let fallback = || json!({ "segments": [{ "text": text, "emotion": "normal", "gesture": null, "intensity": 0.7 }] });
 
     let note_lines = format_param_notes(&body.get("paramNotes").cloned().unwrap_or(Value::Null));
     let persona_lines = sanitize_persona_text(&body.get("persona").cloned().unwrap_or(Value::Null), 800);
@@ -230,6 +234,8 @@ mod tests {
         let segs = out["segments"].as_array().unwrap();
         assert_eq!(segs.len(), 1);
         assert_eq!(segs[0]["emotion"], "normal");
+        // Gesture bawaan dihapus (2026-09-27): fallback tanpa gesture, bukan "nod".
+        assert!(segs[0]["gesture"].is_null(), "fallback gesture harus null: {}", segs[0]);
         // teks kosong → segments []
         let empty = handle_animate_text(&f, &json!({ "text": "  " })).await;
         assert_eq!(empty["segments"].as_array().unwrap().len(), 0);

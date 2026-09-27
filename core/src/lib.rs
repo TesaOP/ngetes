@@ -21,9 +21,12 @@ pub mod media;
 pub mod mode;
 pub mod model;
 pub mod motion_ai;
+pub mod motion_analysis;
 pub mod motion_dsl;
 pub mod motion_files;
 pub mod motion_taxonomy;
+pub mod motion_validation;
+pub mod motion_vision;
 pub mod motions;
 pub mod paths;
 pub mod pet;
@@ -129,12 +132,15 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/model/analyze-sheet", axum::routing::post(post_analyze_sheet))
         .route("/api/motions/analyze", axum::routing::post(post_motions_analyze))
         .route("/api/motions/generate", axum::routing::post(post_motions_generate))
+        .route("/api/motions/validate", axum::routing::post(post_motions_validate))
+        .route("/api/motions/verify", axum::routing::post(post_motions_verify))
         .route("/api/model/motion-taxonomy", get(get_motion_taxonomy).post(post_motion_taxonomy))
         .route("/api/models", get(get_models))
         .route("/api/model/path", get(get_model_path))
         .route("/api/sheet", get(get_sheet_h).post(post_sheet_h))
         .route("/api/model/expressions", get(get_expressions))
         .route("/api/model/motions", get(get_motions))
+        .route("/api/model/motion-analysis", get(get_motion_analysis))
         .route(
             "/api/model/expressions-adoption",
             get(get_adoption).post(post_adoption),
@@ -222,7 +228,7 @@ async fn post_test(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Re
         return json_status(StatusCode::BAD_REQUEST, json!({ "valid": false, "error": "apiKey belum diisi" }));
     }
     let probe = vec![llm::ChatMessage { role: "user".into(), content: "Reply with just: OK".into() }];
-    match llm::call_llm(&conn, &probe, "").await {
+    match llm::call_llm(&conn, &probe, "", &[]).await {
         Ok(reply) => {
             if let Some(i) = stored_idx {
                 if let Some(o) = conns[i].as_object_mut() {
@@ -351,7 +357,11 @@ async fn post_tts_translate(State(paths): State<AppPaths>, body: axum::body::Byt
 async fn post_assistant_start(body: axum::body::Bytes) -> Response {
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
     let wd = v.get("workDir").and_then(|x| x.as_str()).unwrap_or("");
-    json_status(StatusCode::OK, agent::assistant::start(wd).await)
+    // Konteks tool motion: model aktif + peta role→paramId dari klien
+    // (sumber inferensi role tetap role-mapping.ts; server hanya melipat).
+    let model = v.get("model").and_then(|x| x.as_str()).unwrap_or("");
+    let role_map = v.get("roleMap").cloned().unwrap_or(serde_json::Value::Null);
+    json_status(StatusCode::OK, agent::assistant::start(wd, model, role_map).await)
 }
 
 /// GET /api/assistant/status.
@@ -367,6 +377,10 @@ async fn post_assistant_stop() -> Response {
 /// POST /api/assistant/ask {text} — jalankan tugas agent (loop penuh).
 async fn post_assistant_ask(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
+    // Konteks motion di-refresh tiap ask (model bisa dimuat/ganti setelah panel hidup).
+    let model = v.get("model").and_then(|x| x.as_str()).unwrap_or("");
+    let role_map = v.get("roleMap").cloned().unwrap_or(serde_json::Value::Null);
+    agent::assistant::set_model_context(model, role_map).await;
     let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("");
     let cfg = paths.data_dir.join("config.json");
     let r = agent::assistant::ask(&cfg, &paths.root, text).await;
@@ -388,6 +402,10 @@ async fn post_assistant_ask_stream(State(paths): State<AppPaths>, body: axum::bo
 
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
     let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    // Konteks motion di-refresh tiap ask (model bisa dimuat/ganti setelah panel hidup).
+    let model = v.get("model").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    let role_map = v.get("roleMap").cloned().unwrap_or(serde_json::Value::Null);
+    agent::assistant::set_model_context(&model, role_map).await;
     let cfg = paths.data_dir.join("config.json");
     let root = paths.root.clone();
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -1007,6 +1025,22 @@ async fn get_motions(
     }
 }
 
+/// GET /api/model/motion-analysis?name=X&roles={"ax":"ParamAngleX",...} —
+/// analisis kemampuan motion model dari disk (range observasi, base pose,
+/// output physics). `roles` = peta role→paramId dari klien (role-mapping.ts);
+/// tanpa itu output param-level saja.
+async fn get_motion_analysis(
+    State(paths): State<AppPaths>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Response {
+    let name = q.get("name").map(String::as_str).unwrap_or("");
+    let roles = q.get("roles").and_then(|r| serde_json::from_str::<serde_json::Value>(r).ok());
+    match motion_analysis::analyze(&paths.model_dir, &paths.data_dir, name, roles.as_ref()) {
+        Ok(v) => json_status(StatusCode::OK, v),
+        Err(e) => json_status(StatusCode::NOT_FOUND, json!({ "error": e })),
+    }
+}
+
 /// GET /api/model/expressions-adoption?name=X — ekspresi + flag enabled.
 async fn get_adoption(
     State(paths): State<AppPaths>,
@@ -1158,6 +1192,48 @@ async fn post_motions_generate(State(paths): State<AppPaths>, body: axum::body::
     let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or(json!({}));
     let (status, out) = motion_ai::generate_motion(&paths.data_dir.join("config.json"), &v).await;
     json_raw(status, out)
+}
+
+/// POST /api/motions/validate {model?, roleMap?, motion} — validator
+/// independen (`motion_validation`): laporan issue draft Motion Asset
+/// SEBELUM disimpan (sanitize server tetap gerbang akhir saat Simpan).
+/// `model` + `roleMap` opsional → pemeriksaan semantik vs analisis disk.
+async fn post_motions_validate(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = match serde_json::from_slice(&body).ok() {
+        Some(v) => v,
+        None => return json_status(StatusCode::BAD_REQUEST, json!({ "error": "body JSON rusak" })),
+    };
+    let Some(motion) = v.get("motion") else {
+        return json_status(StatusCode::BAD_REQUEST, json!({ "error": "field motion wajib" }));
+    };
+    let model = v.get("model").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    let role_map = v.get("roleMap").filter(|x| x.is_object());
+    let analysis = if model.is_empty() {
+        None
+    } else {
+        crate::motion_analysis::analyze(&paths.model_dir, &paths.data_dir, &model, role_map).ok()
+    };
+    json_status(StatusCode::OK, motion_validation::validate_asset(motion, analysis.as_ref()))
+}
+
+/// POST /api/motions/verify {model, roleMap?, motion, intent} — critic
+/// visual (`motion_vision`): render filmstrip di harness → LLM role
+/// `motion-vision` menilai → verdict. Tanpa koneksi vision → `{skipped}`.
+async fn post_motions_verify(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = match serde_json::from_slice(&body).ok() {
+        Some(v) => v,
+        None => return json_status(StatusCode::BAD_REQUEST, json!({ "error": "body JSON rusak" })),
+    };
+    let Some(motion) = v.get("motion") else {
+        return json_status(StatusCode::BAD_REQUEST, json!({ "error": "field motion wajib" }));
+    };
+    let model = v.get("model").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    let role_map = v.get("roleMap").cloned().unwrap_or(serde_json::Value::Null);
+    let intent = v.get("intent").and_then(|x| x.as_str()).unwrap_or("");
+    match motion_vision::verify(&paths.data_dir.join("config.json"), &paths.root, &model, &role_map, motion, intent).await {
+        Ok(v) => json_status(StatusCode::OK, v),
+        Err(e) => json_status(StatusCode::INTERNAL_SERVER_ERROR, json!({ "error": e })),
+    }
 }
 
 /// POST /api/motions — buat motion baru (padanan handleMotionsPost TS).

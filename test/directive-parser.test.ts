@@ -142,11 +142,13 @@ describe("segmentTextFallback", () => {
     expect(segs).toHaveLength(1);
   });
 
-  // Regression: fallback v1 selalu memberi gesture (EMOTION_GESTURE_FALLBACK),
-  // supaya segmen tanpa directive tetap menggerakkan karakter.
-  it("assigns a gesture to every segment", () => {
+  // Gesture fallback per-emosi dihapus bersama tabel gesture bawaan:
+  // fallback kini hanya emosi + intensitas — TANPA gesture (tidak boleh
+  // mengarang nama gesture yang tidak ada di registry model).
+  it("assigns NO gesture to fallback segments (builtin table removed)", () => {
     const segs = segmentTextFallback("Aku senang! Lalu aku sedih.");
-    for (const s of segs) expect(s.actions.gesture).toBeTruthy();
+    for (const s of segs) expect(s.actions.gesture).toBeUndefined();
+    for (const s of segs) expect(s.actions.emotion).toBeTruthy();
   });
 
   it("BODY parse coerces NaN to 0 like v1", () => {

@@ -1,9 +1,29 @@
 # RENCANA — Pipeline Motion Studio: Rig Report → Probe → Planner/Compiler/Critic
 
-> **Status: RENCANA BELUM DIIMPLEMENTASI (diarsipkan 2026-09-24).** File ini
-> hasil perencanaan sesi 2026-09-24 — tidak ada kode produksi yang berubah
-> karena rencana ini. Sesi berikutnya boleh mulai dari Fase 1 kalau user
-> melanjutkan; setiap fase menyebut sentuhan kode yang diperlukan.
+> **Status: SEBAGIAN TERIMPLEMENTASI.** Rencana diarsipkan 2026-09-24;
+> dimulai 2026-09-26 dengan urutan adaptif (fondasi + vision dulu, bukan
+> Fase 1 penuh). Yang SUDAH dibangun:
+> - **Fondasi analisis & validasi** (`core/src/motion_analysis.rs` +
+>   `motion_validation.rs` + endpoint `/api/model/motion-analysis` &
+>   `/api/motions/validate`) — meng cover sebagian kebutuhan Fase 1
+>   (statistik gaya native: range observasi, base pose, output physics)
+>   dan Fase 4c (cek bound, end-stuck, physics target) dalam bentuk lint,
+>   bukan critic persentil penuh.
+> - **Image parts di `core/src/llm.rs`** (OpenAI `image_url` / Gemini
+>   `inline_data` / Anthropic image block) + role koneksi **`motion-vision`**
+>   (prasyarat Fase 2d & 4d) — prasyarat Fase 2.
+> - **Fase 4d critic visual** (`core/src/motion_vision.rs` + harness render
+>   `static/harness-motion.html` + `src/client/harness/harness-motion.ts` +
+>   tool agent `motion_verify` + endpoint `POST /api/motions/verify`):
+>   filmstrip 8 frame → VLM menilai playing/matchesIntent/artifacts.
+>   Catatan desain penting yang ditemukan saat implementasi: jendela browser
+>   ter-occlude mematikan rAF & kompositor → capture WAJIB render eksplisit
+>   (`pixiApp.render()` + `renderer.draw()`) lalu `canvas.toDataURL()` sinkron.
+>
+> Yang BELUM: Fase 1 rig report penuh (provenance, hash cache), Fase 2 probe,
+> Fase 3 panel approve, Fase 4a-b planner 2-langkah + compiler, 4c critic
+> persentil penuh, 4e refine loop terpetakan, 4f kebijakan layering, Fase 5
+> ukuran keberhasilan.
 >
 > Dokumen ini **mengikat** begitu implementasi dimulai, mengikuti pola
 > `docs/` lain: kalau dokumen dan kode bertentangan, kode yang benar;

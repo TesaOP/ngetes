@@ -2,11 +2,10 @@
 
 > Audit Phase A/B/C terhadap [`ARSITEKTUR-TARGET.md`](ARSITEKTUR-TARGET.md), dibuat
 > 2026-09-19 di branch `migration/pixi8-cubism`. **Rework perilaku (Fase 2 sampai 6,
-> gap §6-12 / §15-18 / §32-34) sudah tertutup 2026-09-19.** Catatan tiap fase yang
-> sudah selesai tidak lagi disimpan di sini; jejaknya ada di
-> [`STATUS-CUBISM5-EFEK.md`](STATUS-CUBISM5-EFEK.md) (entri Speech boundary sampai
-> Worker task identity). Yang tersisa di bawah ini hanya item terbuka, dengan status
-> diverifikasi terhadap kode saat kondensasi (2026-09-24).
+> gap §6-12 / §15-18 / §32-34) sudah tertutup 2026-09-19.** Yang tersisa di bawah ini
+> hanya item terbuka, dengan status diverifikasi terhadap kode saat kondensasi
+> (2026-09-24). (Handoff sesi lama `STATUS-CUBISM5-EFEK.md` kini lokal/di-gitignore,
+> bukan acuan contributor.)
 
 ## Sisa follow-up
 

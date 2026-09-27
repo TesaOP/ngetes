@@ -111,17 +111,11 @@ export function parseSegments(text: string): ParsedSegment[] {
   return segments;
 }
 
-// Matching gesture for the fallback path (no directives at all from the LLM)
-// — so even the "worst case" still plays a real, recognizable motion instead
-// of just a static pose + idle mouth-flap. Dipakai applyActions() dan
-// segmentTextFallback().
-export const EMOTION_GESTURE_FALLBACK: Record<string, string> = {
-  senang: "lean_excited",
-  sedih: "look_away_shy",
-  malu: "look_away_shy",
-  kaget: "recoil_surprised",
-  normal: "nod",
-};
+// Gesture fallback per-emosi (lean_excited/nod/…) SUDAH DIHAPUS bersama
+// tabel gesture bawaan aplikasi (keputusan user, 2026-09-27): gerakan hanya
+// dari [GESTURE:] eksplisit LLM dengan nama dari capability profile (klip
+// native model / motion user / preset 'gerak'). Jalur fallback kini hanya
+// emosi + intensitas.
 
 /**
  * Guess emotion from text content (fallback when no directives).
@@ -150,8 +144,8 @@ export function guessEmotion(text: string): string {
  *
  * - Directive eksplisit dari LLM ([EMOTION]/[MOTION]/…) dihormati: gabung
  *   semua segmen jadi satu set (scalar terakhir menang).
- * - Teks polos → emosi + gesture generik model-agnostik (guessEmotion +
- *   EMOTION_GESTURE_FALLBACK) — jalur "worst case" yang sama dengan companion.
+ * - Teks polos → emosi generik model-agnostik (guessEmotion); gesture TIDAK
+ *   dipalsukan lagi — tabel gesture bawaan sudah dihapus.
  */
 export function deriveReplyActions(text: string): ParsedActions {
   const raw = String(text || "").trim();
@@ -164,7 +158,6 @@ export function deriveReplyActions(text: string): ParsedActions {
   const emo = guessEmotion(raw);
   return {
     emotion: emo,
-    gesture: EMOTION_GESTURE_FALLBACK[emo] || "nod",
     intensity: emo === "normal" ? 0.5 : 0.85,
   };
 }
@@ -176,14 +169,12 @@ export function segmentTextFallback(text: string): ParsedSegment[] {
   const clauses = text.split(/(?<=[.!?~…\n]+)\s+|(?<=,\s+)(?=[A-Z0-9\u4e00-\u9fff])/g).filter((c) => c.trim().length > 0);
   if (!clauses.length) clauses.push(text);
 
-  return clauses.map((clause, idx) => {
+  return clauses.map((clause) => {
     const emo = guessEmotion(clause);
-    const gest = EMOTION_GESTURE_FALLBACK[emo] || (idx === 0 ? "wave_hi" : "nod");
     return {
       text: clause.trim(),
       actions: {
         emotion: emo,
-        gesture: gest,
         intensity: emo === "normal" ? 0.5 : 0.85,
       },
     };

@@ -532,8 +532,8 @@ export interface ClipPick { verb: string; name: string; }
 
 /**
  * Pick a clip name appropriate for an emotion. Returns null when the model
- * has no compatible clip — the caller should then fall back to the synthetic
- * GESTURE_LIBRARY rather than playing something contradictory.
+ * has no compatible clip — the caller then skips the gesture entirely
+ * (the synthetic GESTURE_LIBRARY fallback no longer exists).
  *
  * @param byVerb   verb -> [clip names]
  * @param emotion  app emotion key ('senang', 'sedih', ...)

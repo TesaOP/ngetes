@@ -95,13 +95,17 @@ MotionRegistry.createRegistry()  // static/js/bundle.js → window.MotionRegistr
 register(asset) · get(id) · has(id) · list() · remove(id, source) · search({tags, emotion})
 ```
 
-Registry menggabungkan TIGA sumber tanpa menyalin datanya:
+Registry menggabungkan DUA sumber tanpa menyalin datanya:
 
-1. **builtin** — 9 gesture prosedural (`registerGestureLibrary`)
-2. **native** — klip `.motion3.json` milik model, **per-klip** (priority 90,
+1. **native** — klip `.motion3.json` milik model, **per-klip** (priority 90,
    via `registerNativeClips`; tiap entri membawa `native:{group,index}` untuk
    playback exact)
-3. **user** — Motion Asset buatan Motion Studio (`replaceUserMotions`)
+2. **user** — Motion Asset buatan Motion Studio / agent (`replaceUserMotions`)
+
+> **Gesture bawaan aplikasi (9 gesture prosedural `GESTURE_LIBRARY`) DIHAPUS**
+> (keputusan user, 2026-09-27): model Live2D tidak bisa memakainya secara
+> bermakna, dan daftarnya justru memenuhi prompt LLM. Gerakan kini seluruhnya
+> dari klip native model + motion user/preset 'gerak'.
 
 Setiap entri: `id, name, description, source, tags, duration,
 emotionCompatibility, intensityRange, cooldown, priority, capabilities`.
@@ -129,10 +133,9 @@ index}` ke `bridge.playNative`, jadi tiap klip teralamat exact.
 
 Taxonomy (`src/client/engine/motion-taxonomy.ts`) tetap mekanisme otoritatif
 penemuan/klasifikasi klip native; native clips masuk registry sebagai entri
-`source:"native"`. Gesture builtin tidak diduplikasi — di-expose lewat registry
-sebagai Motion Asset `source:"builtin"`. Kalau preset user punya nama semantik
-yang sama, berlaku precedence sheet (`user` > `ai`; lihat `SHEET-SYSTEM.md`
-aturan #3) — tidak pernah timpan diam-diam.
+`source:"native"`. Kalau preset user punya nama semantik yang sama, berlaku
+precedence sheet (`user` > `ai`; lihat `SHEET-SYSTEM.md` aturan #3) — tidak
+pernah timpan diam-diam.
 
 # 11. Motion Runtime
 
@@ -215,6 +218,71 @@ malu, kepala menunduk lalu melihat ke samping") → draft DSL semantik →
 Preview → approval → Save → Registry → tersedia untuk LLM. Draft disanitasi
 server (sanitize via `motion-dsl`, clamp bounds, id dinormalisasi).
 
+**Model-aware (revisi 2026-09-26).** Klien mengirim `model` (folder model
+aktif) + `roleMap` (peta role→paramId hasil role-mapping engine). Server
+menganalisis motion milik model dari disk (`motion_analysis`) dan menyisipkan
+konteks ke prompt: amplitudo teramati per role, role yang terpetakan ke param
+output physics (dilarang), atau catatan "belum ada motion referensi". Tanpa
+`model`/`roleMap`, prompt byte-per-byte sama seperti semula (backward compat).
+Angka konteks murni engine (dari disk) — LLM hanya MENERIMA konteks, balasan
+LLM tetap tanpa range, clamp server tetap `FIELD_BOUNDS`.
+
+# 17a. Analisis Model & Validasi Independen (revisi 2026-09-26)
+
+Pola dari referensi live2d-add-motion-sample-web-ui: **loop analisis →
+desain → validasi independen → perbaiki sendiri → simpan**.
+
+- **`motion_analysis`** (`core/src/motion_analysis.rs`) memindai semua
+  `.motion3.json` + `physics3.json` + `cdi3.json` model dari disk:
+  range nilai observasi per param, **base pose** (modus keyframe pertama),
+  dan **output physics3** (★ — destination `PhysicsSettings[].Output[]`).
+  Inferensi role TETAP satu sumber di `role-mapping.ts` (klien); server hanya
+  melipat peta `role→paramId` yang dikirim klien, tidak menebak sendiri.
+  Endpoint: `GET /api/model/motion-analysis?name=X&roles={...}`.
+- **`motion_validation`** (`core/src/motion_validation.rs`) — validator
+  TERPISAH dari generator: struktural (gerbang `motion_dsl::sanitize`),
+  kualitas raw (keyframe di luar durasi/tak terurut/di-clamp dilaporkan,
+  bukan dibuang diam-diam), dan semantik vs analisis (di luar range
+  observasi, target output physics, tidak pulang ke base pose). Advisory —
+  sanitize server tetap gerbang akhir saat Simpan.
+  Endpoint: `POST /api/motions/validate {model?, roleMap?, motion}`.
+- **Tool agent bawaan** (`core/src/agent/motion_tools.rs`):
+  `motion_analyze` (safe) → agent mendesain track role → `motion_validate`
+  (safe, agent mengoreksi issue-nya sendiri) → `motion_save` (mutating,
+  lewat kartu persetujuan). Model aktif + roleMap dikirim panel saat
+  `POST /api/assistant/start` (`Runtime.model`/`Runtime.role_map`).
+- **Aturan kualitas** (dari referensi, mengikat untuk AI authoring): output
+  physics TIDAK PERNAH dianimasikan langsung (gerakkan penyebabnya — angka
+  badan/kepala — lalu fisika mengikutkan); aksi satu-tembakan mulai dari dan
+  PULANG ke base pose; nilai di dalam range terobservasi model.
+
+# 17b. Critic Visual — Jalur Vision (revisi 2026-09-26)
+
+Implementasi Fase 4d `PLAN-MOTION-PIPELINE.md`. Agent/studio bisa meminta
+**penilaian visual** atas draft motion:
+
+- **`motion_vision`** (`core/src/motion_vision.rs`): buka halaman harness
+  (`static/harness-motion.html` + `src/client/harness/harness-motion.ts`,
+  satu jalur render — live2d-view.mjs) di browser terkelola → muat model +
+  asset (migrasi role→param deterministik di harness) → **8 frame** → kirim
+  filmstrip ke LLM role **`motion-vision`** → verdict JSON
+  `{playing, matchesIntent, artifacts[], notes, confidence}`.
+- **Capture deterministik**: jendela ter-occlude mematikan rAF & kompositor
+  (screenshot permukaan CDP = frame basi). Harness karenanya render eksplisit
+  per frame — `pixiApp.render()` (clear) → `renderer.draw()` (update pipeline
+  + gambar Cubism) — lalu baca buffer via `canvas.toDataURL()` **dalam task
+  yang sama** (komposit alpha ke latar gelap dulu; JPEG tanpa alpha).
+- **Role `motion-vision`**: koneksi HARUS ditandai eksplisit
+  (`roles:["motion-vision"]` di panel Koneksi AI); wildcard tidak pernah
+  dipakai untuk gambar (model teks tidak boleh menerima gambar). Tanpa
+  koneksi → verdict `{skipped:true}` + petunjuk (degrade anggun).
+- **Akses**: tool agent `motion_verify` (safe) — loop
+  analyze→design→validate→**verify**→save; endpoint `POST /api/motions/verify`
+  + tombol "Cek Visual" di Motion Studio.
+- **Privasi**: yang dikirim ke VLM = render canvas model Live2D (aset milik
+  user), BUKAN frame webcam — aturan "webcam tak pernah di-upload" tidak
+  tersentuh (amanat PLAN 2d).
+
 # 18–19. LLM Integration & Catalog
 
 Format lama (`{text, emotion, gesture, intensity}`) dan format baru
@@ -283,6 +351,8 @@ GET    /api/motions?model=<key>        GET    /api/motions/<id>
 POST   /api/motions                    PUT    /api/motions/<id>
 DELETE /api/motions/<id>
 POST   /api/motions/analyze            POST   /api/motions/generate
+POST   /api/motions/validate           POST   /api/motions/verify
+GET    /api/model/motion-analysis
 ```
 
 API key tetap hanya di server — jangan pindah ke browser. (Semua endpoint di

@@ -43,3 +43,6 @@ agent-shell/gen/
 *.tmp
 *.log
 .DS_Store
+tmp-hist*.json
+
+docs/STATUS-CUBISM5-EFEK.md

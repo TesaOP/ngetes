@@ -29,6 +29,22 @@ const API = location.origin;
 const assistantApi = createAssistantApi(API);
 let activeDestroy: (() => void) | null = null;
 
+/** Peta role→paramId untuk tool motion (motion_*). Inferensi role tetap
+ *  sumber tunggal di engine (role-mapping.ts) — panel hanya meneruskan
+ *  hasilnya ke server. Kosong bila engine belum siap; server lanjut tanpa
+ *  proyeksi role (lint semantik role terdegradasi anggun). */
+function collectRoleMap(): Record<string, string> {
+  const out: Record<string, string> = {};
+  const roleFor = window.MotionDSL?.ROLE_FOR_FIELD;
+  const roleIdFor = window.__live2dAgent?.roleIdFor;
+  if (!roleFor || !roleIdFor) return out;
+  for (const field of Object.keys(roleFor)) {
+    const id = roleIdFor(roleFor[field]);
+    if (id) out[field] = id;
+  }
+  return out;
+}
+
 type StatusResp = Awaited<ReturnType<typeof assistantApi.status>>;
 
 function getT() {
@@ -264,6 +280,19 @@ export function startAssistantPanel(): () => void {
   }
 
   // ── Aksi panel ──────────────────────────────────────────────────
+  /** Konteks tool motion (motion_*) — dihitung ULANG tiap kirim: model bisa
+   *  dimuat/ganti SETELAH panel hidup, jadi konteks sekali-di-start membeku
+   *  usang (Runtime.model kosong → motion_analyze gagal "model tidak
+   *  diketahui"). */
+  function motionContext(): { model?: string; roleMap?: Record<string, string> } {
+    const out: { model?: string; roleMap?: Record<string, string> } = {};
+    const model = window.__live2dAgent?.modelKey?.();
+    if (model) out.model = model;
+    const roleMap = collectRoleMap();
+    if (Object.keys(roleMap).length) out.roleMap = roleMap;
+    return out;
+  }
+
   function send(text: string): void {
     const txt = String(text || "").trim();
     if (!txt || liveAsk) return;
@@ -275,7 +304,8 @@ export function startAssistantPanel(): () => void {
     }
     transcript.appendUser(txt);
     render();
-    runStream("/api/assistant/ask-stream", { text: txt }, { path: "/api/assistant/ask", body: { text: txt } });
+    const ctx = motionContext();
+    runStream("/api/assistant/ask-stream", { text: txt, ...ctx }, { path: "/api/assistant/ask", body: { text: txt, ...ctx } });
   }
 
   function approve(apId: string, ok: boolean): void {
@@ -389,6 +419,13 @@ export function startAssistantPanel(): () => void {
     drawPages(view.activeTab());
     // Rekonsiliasi approval: kartu hilang hanya lewat sini / resolve lokal.
     const pendingIds = (st.pendingApprovals || []).map((a) => a.id);
+    // Buat kartu izin yang belum ada — ask-stream tak mengirim event SSE
+    // "approval", jadi /status adalah sumber kebenaran yang memunculkan tombol
+    // Allow/Deny (tanpa ini motion_save dkk. macet di "⚠ butuh izin").
+    for (const ap of st.pendingApprovals || []) {
+      if (localApprovals.has(ap.id)) continue; // sedang diselesaikan panel ini
+      transcript.ensureApproval(ap.id, ap.tool, ap.args);
+    }
     const current = transcript.blocks
       .filter((b: Block): b is Extract<Block, { kind: "approval" }> => b.kind === "approval")
       .map((b) => b.apId);
@@ -496,6 +533,9 @@ export function startAssistantPanel(): () => void {
       await postJson(API + "/api/assistant/start", {
         workDir: workdir?.value || undefined,
         persona,
+        // Konteks tool motion (motion_analyze/validate/save).
+        model: window.__live2dAgent?.modelKey?.(),
+        roleMap: collectRoleMap(),
       }, signal);
       if (!lifecycle.alive) return;
       actor.setPersona(persona);

@@ -1,0 +1,38 @@
+<!doctype html>
+<!--
+  harness-motion.html — halaman harness render untuk critic visual
+  (motion_verify / POST /api/motions/verify). BUKAN halaman user: dibuka
+  browser terkelola (CDP) oleh core, diberi perintah lewat
+  window.__motionHarness (load/seek/state), lalu dipotret via
+  Page.captureScreenshot. Satu jalur render: live2d-view.mjs (Pixi 8 +
+  Cubism 5-r.5) — sama dengan panggung utama; tanpa stack render kedua.
+-->
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lumimi motion harness</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #10131a; overflow: hidden; }
+    #live2d-canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+    #harness-status {
+      position: fixed; top: 4px; left: 6px; color: #8fa3b8;
+      font: 12px/1.4 monospace; pointer-events: none; white-space: pre;
+    }
+  </style>
+  <!-- bundle.js menyediakan window.MotionDSL (evaluateAsset/rolesToParamTracks)
+       — runtime yang sama dengan app; tidak memulai UI apa pun. Core Cubism
+       WAJIB dimuat sebelum modul view (jebakan yang sama dengan dist:
+       tanpa Core, Live2DView.init gagal diam-diam). -->
+  <script src="js/live2dcubismcore.min.js"></script>
+  <script src="./js/bundle.js"></script>
+  <script>window.__live2dRendererRequested = true;</script>
+</head>
+<body>
+  <canvas id="live2d-canvas"></canvas>
+  <div id="harness-status">harness: booting…</div>
+  <script type="importmap">{"imports":{"pixi.js":"./js/pixi8.mjs"}}</script>
+  <script type="module" src="./js/live2d-view.mjs"></script>
+  <script type="module" src="./js/harness-motion.mjs"></script>
+</body>
+</html>

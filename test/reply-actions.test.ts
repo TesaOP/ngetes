@@ -13,17 +13,17 @@ describe("deriveReplyActions", () => {
     expect(deriveReplyActions("   ")).toEqual({});
   });
 
-  it("teks polos → emosi + gesture generik (jalur worst-case sama seperti companion)", () => {
+  it("teks polos → emosi saja, TANPA gesture (tabel gesture bawaan dihapus)", () => {
     const a = deriveReplyActions("Makasih banyak donasinya, seru banget!");
     expect(a.emotion).toBe("senang");
-    expect(a.gesture).toBeTruthy();
+    expect(a.gesture).toBeUndefined();
     expect(a.intensity).toBeGreaterThan(0.5);
   });
 
-  it("emosi normal → intensity lebih rendah + gesture tetap ada", () => {
+  it("emosi normal → intensity lebih rendah + tanpa gesture", () => {
     const a = deriveReplyActions("Oke, jadi begitu ceritanya.");
     expect(a.emotion).toBe("normal");
-    expect(a.gesture).toBeTruthy();
+    expect(a.gesture).toBeUndefined();
     expect(a.intensity).toBe(0.5);
   });
 

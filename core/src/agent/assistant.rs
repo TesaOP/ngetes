@@ -38,6 +38,10 @@ pub struct Runtime {
     pub running: bool,
     pub busy: bool,
     pub work_dir: String,
+    /// Model Live2D aktif (nama folder) + peta role→paramId dari klien —
+    /// konteks untuk tool motion (motion_*). Klien mengirimnya saat start.
+    pub model: String,
+    pub role_map: Value,
     pub history: Vec<Value>, // {role, content}
     pub approvals: Vec<Value>, // {id, tool, args, ts}
     plan: Vec<Value>,          // update_plan items
@@ -66,8 +70,11 @@ fn now_ms() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
 }
 
-/// Buang baris directive TOOL: dari teks final (padanan stripToolDirective).
+/// Buang baris directive TOOL: + blok/tag reasoning yang bocor dari teks final
+/// (padanan stripToolDirective). Model reasoning kerap membocorkan `<think>` /
+/// `<tool_call>` sebagai teks — jangan sampai muncul di transkrip user.
 fn strip_tool_directive(text: &str) -> String {
+    let text = loop_::strip_reasoning(text);
     text.lines()
         .filter(|l| {
             let t = l.trim_start();
@@ -79,8 +86,9 @@ fn strip_tool_directive(text: &str) -> String {
         .to_string()
 }
 
-/// Mulai/attach runtime ke workDir. Bus di-reset (sesi baru).
-pub async fn start(work_dir: &str) -> Value {
+/// Mulai/attach runtime ke workDir. Bus di-reset (sesi baru). `model` +
+/// `role_map` opsional: konteks untuk tool motion (motion_*).
+pub async fn start(work_dir: &str, model: &str, role_map: Value) -> Value {
     bus::reset();
     let mut r = rt().lock().await;
     r.running = true;
@@ -89,7 +97,9 @@ pub async fn start(work_dir: &str) -> Value {
     if !work_dir.is_empty() {
         r.work_dir = work_dir.to_string();
     }
-    json!({ "ok": true, "workDir": r.work_dir })
+    r.model = model.trim().to_string();
+    r.role_map = if role_map.is_object() { role_map } else { Value::Null };
+    json!({ "ok": true, "workDir": r.work_dir, "model": r.model })
 }
 
 /// Status untuk panel/probe. activeTask/parkedTasks masih stub (task-identity
@@ -261,11 +271,18 @@ fn lang_of(config_path: &Path) -> String {
 /// Runtime di-lock per-langkah (lepas saat await LLM) supaya status bisa dibaca.
 async fn run_loop(config_path: &Path, root: &Path) -> AskResult {
     let lang = lang_of(config_path);
-    let work_dir = { rt().lock().await.work_dir.clone() };
+    let (work_dir, model_name) = { let r = rt().lock().await; (r.work_dir.clone(), r.model.clone()) };
     let wd = PathBuf::from(&work_dir);
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut final_text = String::new();
     let mut paused = false;
+    // Anti "ngaku simpan tapi tak memanggil tool": bila draft sudah divalidasi
+    // tapi model mencoba mengakhiri tanpa motion_save, ajukan simpan sendiri
+    // (pakai draft yang tervalidasi) lewat kartu izin — tak bergantung model
+    // mengeluarkan ulang JSON besar.
+    let mut motion_validated = false;
+    let mut last_validated_draft: Option<Value> = None;
+    let mut nudged_save = false;
 
     for _turn in 0..MAX_ITERATIONS {
         // Cancel kooperatif: dicek di awal tiap turn (loop lepas lock saat await
@@ -295,7 +312,7 @@ async fn run_loop(config_path: &Path, root: &Path) -> AskResult {
                 }
             }).collect()
         };
-        let system = format!("{}{}", loop_::build_system(&lang, &work_dir), memory::memory_prompt_block(root));
+        let system = format!("{}{}", loop_::build_system(&lang, &work_dir, &model_name), memory::memory_prompt_block(root));
 
         let reply = match llm::llm_for_role(config_path, "assistant", &messages, &system).await {
             Ok(ok) => ok.reply,
@@ -310,6 +327,28 @@ async fn run_loop(config_path: &Path, root: &Path) -> AskResult {
         let detected = loop_::detect_tool_call(&reply);
         let (name, args) = match detected {
             None => {
+                // Model mendeskripsikan "sudah kusimpan" tapi tak pernah memanggil
+                // motion_save. Bila draft sudah tervalidasi, JANGAN cuma berhenti:
+                // ajukan motion_save sendiri (server yang pegang draft valid) lewat
+                // kartu izin. Bounded sekali (nudged_save) agar tak berulang.
+                if motion_validated && !nudged_save && last_validated_draft.is_some() {
+                    nudged_save = true;
+                    let draft = last_validated_draft.clone().unwrap();
+                    let save_args = json!({ "motion": draft });
+                    bus::emit("permission_request", "motion_save");
+                    let id = format!("ap_{}", crate::config::base36_pub(now_ms() as u128));
+                    let pub_args = loop_::public_tool_args("motion_save", &save_args);
+                    let mut r = rt().lock().await;
+                    while r.approvals.len() >= 8 {
+                        r.approvals.remove(0);
+                    }
+                    r.approvals.push(json!({ "id": id, "tool": "motion_save", "args": save_args, "ts": now_ms() }));
+                    push_msg(&mut r, "assistant", &strip_tool_directive(&reply));
+                    push_msg(&mut r, "tool", &format!("MENUNGGU PERSETUJUAN: motion_save {} (id {id})", serde_json::to_string(&pub_args).unwrap_or_default().chars().take(300).collect::<String>()));
+                    paused = true;
+                    final_text = "Draft sudah divalidasi — aku ajukan simpan ke library. Setujui di panel Assistant untuk menyimpannya.".to_string();
+                    break;
+                }
                 final_text = if reply.trim().is_empty() { "(kosong)".into() } else { reply };
                 break;
             }
@@ -388,14 +427,33 @@ async fn run_loop(config_path: &Path, root: &Path) -> AskResult {
             continue;
         }
 
-        // tool safe → eksekusi langsung (browser_* lewat jalur async manager).
+        // tool safe → eksekusi langsung (browser_* lewat jalur async manager,
+        // motion_* lewat modul motion_tools dengan config_path + state model).
         bus::emit("tool_call_start", &name);
         let result = if loop_::is_browser_tool(&name) {
             crate::browser::agent_exec(root, &name, &args).await
+        } else if loop_::is_motion_tool(&name) {
+            let (model, role_map) = {
+                let r = rt().lock().await;
+                (r.model.clone(), r.role_map.clone())
+            };
+            crate::agent::motion_tools::exec(config_path, root, &name, &args, &model, &role_map).await
         } else {
             loop_::exec_tool(root, &wd, &name, &args)
         };
         bus::emit("tool_call_end", &name);
+        // Tandai + tangkap draft bila validasi lolos (report validator, bukan
+        // ERROR) — dipakai untuk mengajukan motion_save bila model berhenti di
+        // narasi. Hanya draft dengan tracks yang layak disimpan.
+        if name == "motion_validate" && !result.starts_with("ERROR") {
+            motion_validated = true;
+            if let Some(m) = args.get("motion") {
+                let has_tracks = m.get("tracks").and_then(|t| t.as_array()).map(|a| !a.is_empty()).unwrap_or(false);
+                if has_tracks {
+                    last_validated_draft = Some(m.clone());
+                }
+            }
+        }
         let mut r = rt().lock().await;
         push_msg(&mut r, "assistant", &strip_tool_directive(&reply));
         push_msg(&mut r, "tool", &format!("[{name}] {}", clip_tool(&result)));
@@ -466,6 +524,19 @@ fn record_undo(r: &mut Runtime, rel: String, abs: PathBuf, prev: Option<String>)
             let drop = r.notes_files.len() - MAX_NOTES;
             r.notes_files.drain(0..drop);
         }
+    }
+}
+
+/// Perbarui konteks tool motion tanpa mereset sesi (dipanggil dari ask/
+/// ask-stream: model bisa dimuat/ganti SETELAH panel hidup — konteks yang
+/// hanya dikirim saat start membeku usang).
+pub async fn set_model_context(model: &str, role_map: Value) {
+    let mut r = rt().lock().await;
+    if !model.trim().is_empty() {
+        r.model = model.trim().to_string();
+    }
+    if role_map.is_object() {
+        r.role_map = role_map;
     }
 }
 
@@ -559,6 +630,12 @@ pub async fn approve(config_path: &Path, root: &Path, id: &str, approve_it: bool
         bus::emit("tool_call_start", &name);
         let result = if loop_::is_browser_tool(&name) {
             crate::browser::agent_exec(root, &name, &args).await
+        } else if loop_::is_motion_tool(&name) {
+            let (model, role_map) = {
+                let r = rt().lock().await;
+                (r.model.clone(), r.role_map.clone())
+            };
+            crate::agent::motion_tools::exec(config_path, root, &name, &args, &model, &role_map).await
         } else {
             loop_::exec_tool(root, &wd, &name, &args)
         };
@@ -601,7 +678,7 @@ mod tests {
         // mock LLM (echo) tak emit "TOOL:" → loop langsung final.
         let dir = tmp_dir("as");
         let f = mock_config(&dir);
-        start("/tmp/work").await;
+        start("/tmp/work", "", Value::Null).await;
         let res = ask(&f, &dir, "halo agent").await;
         assert!(res.ok);
         assert!(!res.paused);
@@ -652,7 +729,7 @@ mod tests {
         // rekaman + revert memulihkan kondisi asli.
         let _g = bus::BUS_TEST_LOCK.lock().unwrap();
         let wd = tmp_dir("undo");
-        start(&wd.to_string_lossy()).await;
+        start(&wd.to_string_lossy(), "", Value::Null).await;
 
         // (1) edit_file file lama → kind modified; revert memulihkan.
         std::fs::create_dir_all(wd.join("src")).unwrap();
@@ -710,7 +787,7 @@ mod tests {
         // state paling awal, bukan state antara.
         let _g = bus::BUS_TEST_LOCK.lock().unwrap();
         let wd = tmp_dir("unedup");
-        start(&wd.to_string_lossy()).await;
+        start(&wd.to_string_lossy(), "", Value::Null).await;
         std::fs::write(wd.join("e.txt"), "asli-e").unwrap();
         run_approved_tool(&wd, "write_file", json!({ "path": "e.txt", "content": "v1" })).await;
         run_approved_tool(&wd, "write_file", json!({ "path": "e.txt", "content": "v2" })).await;
@@ -728,7 +805,7 @@ mod tests {
         // Cap MAX_UNDO (20, kontrak MODES.md): rekaman terlama dibuang.
         let _g = bus::BUS_TEST_LOCK.lock().unwrap();
         let wd = tmp_dir("uncap");
-        start(&wd.to_string_lossy()).await;
+        start(&wd.to_string_lossy(), "", Value::Null).await;
         for i in 0..25 {
             run_approved_tool(&wd, "write_file", json!({ "path": format!("cap/f{i}.txt"), "content": format!("x{i}") })).await;
         }
@@ -749,7 +826,7 @@ mod tests {
         let _g = bus::BUS_TEST_LOCK.lock().unwrap();
         let wd = tmp_dir("canc");
         let cfg = mock_config(&wd);
-        start(&wd.to_string_lossy()).await;
+        start(&wd.to_string_lossy(), "", Value::Null).await;
 
         // (1) flag sisa dibuang ask baru — jawaban bukan "Dibatalkan".
         { rt().lock().await.cancel = true; }

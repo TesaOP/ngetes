@@ -73,4 +73,27 @@ if (!view.success) {
   process.exit(1);
 }
 
-console.log("✓ Client bundle built → static/js/bundle.js + static/js/i18n.js + static/js/live2d-view.mjs (TS is now the live client source-of-truth)");
+// Entry keempat: driver harness render critic visual (motion_verify /
+// PLAN-MOTION-PIPELINE 4d). Halaman harness-motion.html memuat bundle.js
+// (MotionDSL) + live2d-view.mjs + file ini; dikendalikan core via CDP.
+const harness = await Bun.build({
+  entrypoints: ["./src/client/harness/harness-motion.ts"],
+  outdir: "./static/js",
+  naming: "harness-motion.mjs",
+  target: "browser",
+  format: "esm",
+  splitting: false,
+  minify: false,
+  sourcemap: "none",
+  external: ["pixi.js"],
+});
+
+if (!harness.success) {
+  console.error("harness-motion build failed:");
+  for (const msg of harness.logs) {
+    console.error(msg);
+  }
+  process.exit(1);
+}
+
+console.log("✓ Client bundle built → static/js/bundle.js + static/js/i18n.js + static/js/live2d-view.mjs + static/js/harness-motion.mjs (TS is now the live client source-of-truth)");

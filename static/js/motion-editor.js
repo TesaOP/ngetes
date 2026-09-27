@@ -51,6 +51,7 @@
     clipboardKey: null,   // { v, easing } untuk copy/paste antar track
     search: '',
     groupFilter: '',
+    analysis: null,       // hasil /api/model/motion-analysis (angka engine dari disk)
   };
 
   function blankDraft() {
@@ -75,6 +76,71 @@
     el.textContent = msg || '';
     el.classList.remove('ok', 'err');
     if (kind) el.classList.add(kind);
+  }
+
+  // ── Analisis model dari disk (motion_analysis di core) ────────────
+  // Sumber angka = engine (Rust memindai motion + physics3 milik model).
+  // Dipakai untuk: konteks prompt generate, badge ★ physics, dan lint.
+  function roleMapForModel() {
+    const dsl = DSL();
+    const l2d = L2D();
+    const out = {};
+    if (!dsl || !dsl.ROLE_FOR_FIELD || !l2d || !l2d.roleIdFor) return out;
+    for (const field in dsl.ROLE_FOR_FIELD) {
+      const id = l2d.roleIdFor(dsl.ROLE_FOR_FIELD[field]);
+      if (id) out[field] = id;
+    }
+    return out;
+  }
+
+  async function fetchAnalysis() {
+    state.analysis = null;
+    try {
+      const roles = encodeURIComponent(JSON.stringify(roleMapForModel()));
+      const r = await fetch(apiBase() + '/api/model/motion-analysis?name='
+        + encodeURIComponent(modelKey()) + '&roles=' + roles);
+      if (r.ok) state.analysis = await r.json();
+    } catch (e) { /* advisory: gagal → lanjut tanpa badge/lint semantik */ }
+  }
+
+  // Lint independen: validasi draft SEBELUM disimpan (validator terpisah
+  // dari generator di core). Advisory — tidak memblokir Simpan.
+  async function runLint() {
+    const host = $('#ms-lint');
+    if (!host) return;
+    const d = state.draft;
+    if (!d || !d.tracks || !d.tracks.length) {
+      host.classList.add('hidden'); host.innerHTML = ''; return;
+    }
+    try {
+      const r = await fetch(apiBase() + '/api/motions/validate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: modelKey(), roleMap: roleMapForModel(), motion: d }),
+      });
+      if (!r.ok) { host.classList.add('hidden'); return; }
+      renderLint(await r.json());
+    } catch (e) { host.classList.add('hidden'); }
+  }
+
+  function renderLint(rep) {
+    const host = $('#ms-lint');
+    if (!host) return;
+    const issues = Array.isArray(rep.issues) ? rep.issues : [];
+    if (!issues.length) { host.classList.add('hidden'); host.innerHTML = ''; return; }
+    const esc = (s) => String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const rows = issues.slice(0, 12).map((i) =>
+      '<div class="ms-lint-item"><span class="lv ' + esc(i.level) + '">'
+      + esc(__t('ms.lint.' + i.level)) + '</span><span class="msg">'
+      + esc(i.message) + '</span></div>'
+    ).join('');
+    const more = issues.length > 12
+      ? '<div class="ms-lint-item"><span class="msg">…+' + (issues.length - 12) + '</span></div>'
+      : '';
+    host.innerHTML = '<div class="ms-lint-title">'
+      + esc(__t('ms.lint.title', { e: rep.errorCount || 0, w: rep.warnCount || 0, n: rep.infoCount || 0 }))
+      + '</div>' + rows + more;
+    host.classList.remove('hidden');
   }
 
   // ── Undo/redo: snapshot draft utuh (SPEC §25) ────────────────────
@@ -274,14 +340,20 @@
     // dari pada ratusan DOM node per keystroke pencarian (aturan performa lama
     // "slice(0,200)" dihapus; rig ratusan param kini tampil penuh). Klik
     // ditangani terpusat agar ribuan baris tidak butuh listener masing-masing.
+    // ★ = output physics3 (dianalisis dari disk): diputar oleh simulasi
+    // fisika, menulis nilai langsung hanya akan dilawan physics.
+    const physSet = state.analysis && Array.isArray(state.analysis.physicsOutputs)
+      ? new Set(state.analysis.physicsOutputs) : null;
     const rows = filtered.map(p => {
       const active = !!trackFor(p.id, false);
+      const phys = physSet ? physSet.has(p.id) : false;
       const nm = (p.label && p.label !== p.id) ? esc(p.label + '  (' + p.id + ')') : esc(p.id);
       return '<button type="button" class="ms-param-item' + (active ? ' added' : '') + '"'
         + ' data-param="' + esc(p.id) + '"'
         + ' title="' + esc(p.id + '  (' + p.min + ' … ' + p.max + ', default ' + p.def + ')'
+          + (phys ? '\n★ ' + __t('ms.physNote') : '')
           + (p.userNote ? '\n' + p.userNote : '')) + '">'
-        + '<span class="ms-param-name">' + nm + '</span>'
+        + '<span class="ms-param-name">' + nm + (phys ? '<span class="ms-phys">★</span>' : '') + '</span>'
         + '<span class="ms-param-group">' + esc(p.group || '') + '</span>'
         + '</button>';
     }).join('');
@@ -298,7 +370,13 @@
     }
 
     if (countEl) {
-      countEl.textContent = filtered.length + ' dari ' + state.params.length + ' parameter';
+      let txt = filtered.length + ' dari ' + state.params.length + ' parameter';
+      // Ringkasan analisis: konteks kualitas data di balik lint/konteks AI.
+      if (state.analysis && state.analysis.hasReference) {
+        const nPhys = Array.isArray(state.analysis.physicsOutputs) ? state.analysis.physicsOutputs.length : 0;
+        txt += ' · ' + __t('ms.analysis.count', { n: state.analysis.motionCount, f: nPhys });
+      }
+      countEl.textContent = txt;
     }
   }
 
@@ -828,6 +906,7 @@
     state.dirty = false;
     renderAll();
     applyScrubPose();
+    runLint();
   }
 
   function collectMeta() {
@@ -1098,6 +1177,9 @@
     // pertama sampai ada sesuatu yang lain memuat sheet.
     await refreshEmotions();
     refreshParams();
+    // Analisis model (range observasi + physics) SEBELUM render panel
+    // parameter supaya badge ★ langsung muncul pada pembukaan pertama.
+    await fetchAnalysis();
     await fetchUserMotions();
     loadDraft(state.userMotions.length ? state.userMotions[0].id : '');
     renderRegistryList();
@@ -1181,7 +1263,14 @@
     try {
       const r = await fetch(apiBase() + '/api/motions/generate', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: prompt.trim(), emotions: state.emotions }),
+        body: JSON.stringify({
+          prompt: prompt.trim(),
+          emotions: state.emotions,
+          // Konteks model: server menganalisis motion model ini dari disk
+          // dan menyisipkan amplitudo per role + daftar physics ke prompt.
+          model: modelKey(),
+          roleMap: roleMapForModel(),
+        }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
@@ -1198,6 +1287,7 @@
       state.selected = null;
       state.dirty = true;
       renderAll(); applyScrubPose();
+      runLint();
       // langsung preview: user lihat gerakannya seketika
       try { playPreview(); } catch (e) {}
       setStatus(__t('ms.generated', { name: gen.name || 'draft', n: (gen.tracks || []).length }), 'ok');
@@ -1205,6 +1295,52 @@
     } catch (e) {
       setStatus(__t('ms.genFail', { msg: e.message }), 'err');
     }
+  }
+
+  // ── 👁 Cek Visual (critic visual — PLAN-MOTION-PIPELINE 4d) ────────
+  // Render filmstrip di harness + VLM role motion-vision menilai. Tanpa
+  // koneksi vision → skipped dengan petunjuk mengaktifkan.
+  async function verifyWithAI() {
+    const d = state.draft;
+    if (!d || !d.tracks.some(t => t.keys && t.keys.length)) {
+      setStatus(__t('ms.needKeyframeAnalyze'), 'err'); return;
+    }
+    const intent = prompt(__t('ms.verify.prompt'), d.description || d.name || '');
+    if (intent == null) return; // dibatalkan user
+    setStatus(__t('ms.verify.doing'));
+    try {
+      const r = await fetch(apiBase() + '/api/motions/verify', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: modelKey(), roleMap: roleMapForModel(), motion: d,
+          intent: (intent || '').trim() || (d.description || d.name || ''),
+        }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (data.skipped) { setStatus(__t('ms.verify.skipped', { msg: data.reason || '' }), 'err'); return; }
+      if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      renderVisualVerdict(data);
+      setStatus(__t('ms.verify.done'), 'ok');
+    } catch (e) {
+      setStatus(__t('ms.verify.fail', { msg: e.message }), 'err');
+    }
+  }
+
+  function renderVisualVerdict(v) {
+    const host = $('#ms-lint');
+    if (!host) return;
+    const esc = (s) => String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const row = (cls, label, msg) =>
+      '<div class="ms-lint-item"><span class="lv ' + cls + '">' + esc(label) + '</span><span class="msg">' + esc(msg) + '</span></div>';
+    const conf = (v.confidence != null) ? Math.round(v.confidence * 100) + '%' : '?';
+    const rows = ['<div class="ms-lint-title">' + esc(__t('ms.verify.title', { c: conf })) + '</div>'];
+    rows.push(row(v.playing ? 'info' : 'err', __t('ms.verify.playing'), v.playing ? __t('ms.verify.yes') : __t('ms.verify.no')));
+    rows.push(row(v.matchesIntent ? 'info' : 'warn', __t('ms.verify.intent'), v.matchesIntent ? __t('ms.verify.yes') : __t('ms.verify.no')));
+    for (const a of (v.artifacts || [])) rows.push(row('warn', __t('ms.verify.artifacts'), a));
+    if (v.notes) rows.push(row('info', __t('ms.verify.notes'), v.notes));
+    host.innerHTML = rows.join('');
+    host.classList.remove('hidden');
   }
 
   // ── Wiring ───────────────────────────────────────────────────────
@@ -1399,6 +1535,7 @@
 
     on('#ms-save', 'click', saveDraft);
     on('#ms-analyze', 'click', analyzeWithAI);
+    on('#ms-verify', 'click', verifyWithAI);
     on('#ms-generate', 'click', () => toggleGenBox());
     on('#ms-gen-go', 'click', () => generateFromText());
     on('#ms-gen-input', 'keydown', (ev) => { if (ev.key === 'Enter') generateFromText(); });

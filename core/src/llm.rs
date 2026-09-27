@@ -26,6 +26,19 @@ impl ChatMessage {
     }
 }
 
+/// Satu gambar untuk pesan multimodal (critic visual / probe — PLAN
+/// PLAN-MOTION-PIPELINE 2d/4d). `data` = base64 TANPA prefix `data:`.
+#[derive(Clone)]
+pub struct LlmImage {
+    pub mime: String,
+    pub data: String,
+}
+
+/// Role koneksi untuk pemanggilan ber-gambar. Harus ditandai EKSPLISIT di
+/// koneksi (wildcard tidak dipakai) agar gambar tidak pernah terkirim ke
+/// model teks. Model di koneksi itu sendiri harus mendukung input gambar.
+pub const ROLE_MOTION_VISION: &str = "motion-vision";
+
 fn default_model(provider: &str) -> &'static str {
     match provider {
         "gemini" => "gemini-2.0-flash",
@@ -52,6 +65,20 @@ fn clean_key(k: &str) -> String {
 pub struct LlmError {
     pub status: u16,
     pub message: String,
+}
+
+/// Error transient jaringan (bukan kuota/auth): koneksi putus, timeout, atau
+/// gateway 5xx. Layak DICOBA-ULANG di koneksi yang sama tanpa cooldown panjang —
+/// satu blip `error sending request` jangan sampai membunuh loop motion multi-langkah.
+pub fn is_transient(status: u16, text: &str) -> bool {
+    let lower = text.to_lowercase();
+    matches!(status, 0 | 408 | 502 | 503 | 504 | 522 | 524)
+        || lower.contains("error sending request")
+        || lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("connection reset")
+        || lower.contains("connection closed")
+        || lower.contains("dns")
 }
 
 /// Klasifikasi error → (fallback?, cooldown_ms). Padanan ERROR_RULES/classifyError.
@@ -95,8 +122,68 @@ fn build_chat_messages(messages: &[ChatMessage], system: &str) -> Vec<Value> {
     out
 }
 
+/// Bangun konten pesan openai-shape: string bila tanpa gambar (byte-identical
+/// dengan jalur teks), array content-part bila ada gambar.
+pub(crate) fn openai_content(content: &str, images: &[LlmImage]) -> Value {
+    if images.is_empty() {
+        return json!(content);
+    }
+    let mut parts = vec![json!({ "type": "text", "text": content })];
+    for img in images {
+        parts.push(json!({
+            "type": "image_url",
+            "image_url": { "url": format!("data:{};base64,{}", img.mime, img.data) }
+        }));
+    }
+    Value::Array(parts)
+}
+
+/// Bangun parts gemini-shape untuk pesan terakhir (teks + inline_data).
+pub(crate) fn gemini_parts(content: &str, images: &[LlmImage]) -> Value {
+    let mut parts = vec![json!({ "text": content })];
+    for img in images {
+        parts.push(json!({ "inline_data": { "mime_type": img.mime, "data": img.data } }));
+    }
+    Value::Array(parts)
+}
+
+/// Bangun konten anthropic-shape: string bila tanpa gambar, block array bila ada.
+pub(crate) fn anthropic_content(content: &str, images: &[LlmImage]) -> Value {
+    if images.is_empty() {
+        return json!(content);
+    }
+    let mut blocks = vec![json!({ "type": "text", "text": content })];
+    for img in images {
+        blocks.push(json!({
+            "type": "image",
+            "source": { "type": "base64", "media_type": img.mime, "data": img.data }
+        }));
+    }
+    Value::Array(blocks)
+}
+
+/// Sisipkan gambar ke pesan `user` TERAKHIR dari daftar pesan yang sudah
+/// jadi Value (`{role, content}`). Menyediakan closure pembentuk konten agar
+/// satu implementasi dipakai tiga provider.
+fn attach_images(msgs: &mut [Value], images: &[LlmImage], shape: &str) {
+    if images.is_empty() {
+        return;
+    }
+    let Some(last) = msgs.iter_mut().rev().find(|m| m.get("role").and_then(|v| v.as_str()) == Some("user")) else {
+        return;
+    };
+    let content = last.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    last["content"] = match shape {
+        "gemini" => gemini_parts(&content, images),
+        "anthropic" => anthropic_content(&content, images),
+        _ => openai_content(&content, images),
+    };
+}
+
 /// Panggil satu koneksi LLM (non-stream). Return teks balasan atau LlmError.
-pub async fn call_llm(conn: &Value, messages: &[ChatMessage], client_system: &str) -> Result<String, LlmError> {
+/// `images` (opsional) ditempel ke pesan user terakhir — kosong = jalur teks
+/// murni byte-identical dengan sebelumnya.
+pub async fn call_llm(conn: &Value, messages: &[ChatMessage], client_system: &str, images: &[LlmImage]) -> Result<String, LlmError> {
     let provider = conn.get("provider").and_then(|v| v.as_str()).unwrap_or("openai-compatible").to_lowercase();
     let api_key = clean_key(conn.get("apiKey").and_then(|v| v.as_str()).unwrap_or(""));
     let model = {
@@ -113,8 +200,10 @@ pub async fn call_llm(conn: &Value, messages: &[ChatMessage], client_system: &st
     if provider == "mock" {
         let last = messages.iter().rev().find(|m| m.role == "user").map(|m| m.content.clone()).unwrap_or_default();
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        // Gambar ikut dilaporkan supaya jalur vision bisa diuji tanpa jaringan.
+        let note = if images.is_empty() { String::new() } else { format!(" [{} gambar diterima]", images.len()) };
         return Ok(format!(
-            "Halo! Kamu bilang: \"{last}\". (Mode mock — isi apiKey di config.json untuk LLM sungguhan.)"
+            "Halo! Kamu bilang: \"{last}\".{note} (Mode mock — isi apiKey di config.json untuk LLM sungguhan.)"
         ));
     }
 
@@ -135,9 +224,11 @@ pub async fn call_llm(conn: &Value, messages: &[ChatMessage], client_system: &st
                 b
             }
         };
+        let mut msgs_val = build_chat_messages(messages, &sys);
+        attach_images(&mut msgs_val, images, "openai");
         let body = json!({
             "model": model,
-            "messages": build_chat_messages(messages, &sys),
+            "messages": msgs_val,
             "temperature": temp,
             "max_tokens": max_t,
             "stream": false
@@ -155,8 +246,19 @@ pub async fn call_llm(conn: &Value, messages: &[ChatMessage], client_system: &st
             return Err(LlmError { status, message: text.chars().take(300).collect() });
         }
         let j: Value = serde_json::from_str(&text).map_err(|_| LlmError { status, message: format!("respon bukan JSON: {}", text.chars().take(200).collect::<String>()) })?;
-        let content = j.pointer("/choices/0/message/content").and_then(|v| v.as_str()).unwrap_or("");
-        if content.is_empty() {
+        let msg = j.pointer("/choices/0/message");
+        let mut content = msg.and_then(|m| m.get("content")).and_then(|v| v.as_str()).unwrap_or("");
+        // Model reasoning: sebagian provider menaruh teks di reasoning_content/
+        // reasoning dan membiarkan content kosong (budget output habis untuk
+        // berpikir). Tanpa fallback ini, loop agent melihat balasan hampa →
+        // "(kosong)"/berhenti. Fallback HANYA saat content kosong.
+        if content.trim().is_empty() {
+            content = msg
+                .and_then(|m| m.get("reasoning_content").or_else(|| m.get("reasoning")))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+        }
+        if content.trim().is_empty() {
             return Err(LlmError { status, message: format!("{provider} kosong: {}", text.chars().take(200).collect::<String>()) });
         }
         return Ok(content.trim().to_string());
@@ -164,10 +266,11 @@ pub async fn call_llm(conn: &Value, messages: &[ChatMessage], client_system: &st
 
     if provider == "gemini" {
         let url = format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}");
-        let contents: Vec<Value> = messages.iter().filter(|m| m.role != "system").map(|m| {
+        let mut contents: Vec<Value> = messages.iter().filter(|m| m.role != "system").map(|m| {
             let role = if m.role == "user" { "user" } else { "model" };
             json!({ "role": role, "parts": [{ "text": m.content }] })
         }).collect();
+        attach_images(&mut contents, images, "gemini");
         let mut body = json!({
             "contents": contents,
             "generationConfig": { "temperature": temp, "maxOutputTokens": max_t, "candidateCount": 1 }
@@ -191,7 +294,8 @@ pub async fn call_llm(conn: &Value, messages: &[ChatMessage], client_system: &st
     }
 
     if provider == "anthropic" {
-        let msgs: Vec<Value> = messages.iter().filter(|m| m.role != "system").map(|m| json!({ "role": m.role, "content": m.content })).collect();
+        let mut msgs: Vec<Value> = messages.iter().filter(|m| m.role != "system").map(|m| json!({ "role": m.role, "content": m.content })).collect();
+        attach_images(&mut msgs, images, "anthropic");
         let mut body = json!({ "model": model, "messages": msgs, "max_tokens": max_t.min(4096), "temperature": temp });
         if !sys.is_empty() {
             body["system"] = json!(sys);
@@ -235,7 +339,7 @@ pub async fn call_llm_stream(
     let provider = conn.get("provider").and_then(|v| v.as_str()).unwrap_or("openai-compatible").to_lowercase();
     if provider != "openai-compatible" && provider != "groq" && provider != "openai" {
         // provider tanpa jalur stream → satu delta.
-        let full = call_llm(conn, messages, client_system).await?;
+        let full = call_llm(conn, messages, client_system, &[]).await?;
         let _ = tx.send(full.clone());
         return Ok(full);
     }
@@ -291,7 +395,11 @@ pub async fn call_llm_stream(
     let mut buf = String::new();
     let mut raw = String::new();
     let mut full = String::new();
-    let mut handle_line = |line: &str, full: &mut String| {
+    // Akumulator reasoning terpisah: dipakai HANYA bila content stream kosong
+    // (model reasoning yang menaruh semua di reasoning_content) supaya balasan
+    // tak hampa.
+    let mut reasoning = String::new();
+    let handle_line = |line: &str, full: &mut String, reasoning: &mut String| {
         let t = line.trim_start();
         if let Some(rest) = t.strip_prefix("data:") {
             let payload = rest.trim();
@@ -308,6 +416,14 @@ pub async fn call_llm_stream(
                     full.push_str(piece);
                     let _ = tx.send(piece.to_string());
                 }
+                let think = obj
+                    .pointer("/choices/0/delta/reasoning_content")
+                    .or_else(|| obj.pointer("/choices/0/delta/reasoning"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if !think.is_empty() {
+                    reasoning.push_str(think);
+                }
             }
         }
     };
@@ -319,11 +435,11 @@ pub async fn call_llm_stream(
         while let Some(idx) = buf.find('\n') {
             let line: String = buf[..idx].trim_end_matches('\r').to_string();
             buf = buf[idx + 1..].to_string();
-            handle_line(&line, &mut full);
+            handle_line(&line, &mut full, &mut reasoning);
         }
     }
     if !buf.trim().is_empty() {
-        handle_line(&buf.clone(), &mut full);
+        handle_line(&buf.clone(), &mut full, &mut reasoning);
     }
     // relay aneh: minta stream, balas satu JSON utuh non-SSE.
     if full.trim().is_empty() {
@@ -338,6 +454,12 @@ pub async fn call_llm_stream(
                 let _ = tx.send(text.to_string());
             }
         }
+    }
+    // Content kosong tapi ada reasoning → pakai reasoning sebagai balasan
+    // (lebih baik daripada hampa; loop agent bisa membaca tool call di dalamnya).
+    if full.trim().is_empty() && !reasoning.trim().is_empty() {
+        full.push_str(reasoning.trim());
+        let _ = tx.send(reasoning.trim().to_string());
     }
     if full.trim().is_empty() {
         return Err(LlmError { status, message: format!("{provider} stream kosong") });
@@ -378,6 +500,7 @@ pub fn order_for_role(role: &str, conns: &[Value]) -> Vec<usize> {
 }
 
 /// Hasil pemanggilan LLM: teks + id koneksi terpakai.
+#[derive(Debug)]
 pub struct LlmOk {
     pub reply: String,
     pub used: String,
@@ -425,7 +548,24 @@ pub async fn llm_for_role(
                 continue;
             }
         }
-        match call_llm(&conns[i], messages, client_system).await {
+        // Coba koneksi ini; ulang beberapa kali untuk error transient jaringan
+        // (koneksi putus/timeout) sebelum pindah — supaya blip tunggal tak
+        // membunuh loop multi-langkah. Error non-transient (auth/kuota) langsung.
+        let mut attempt = 0u32;
+        let outcome = loop {
+            match call_llm(&conns[i], messages, client_system, &[]).await {
+                Ok(reply) => break Ok(reply),
+                Err(e) => {
+                    if is_transient(e.status, &e.message) && attempt < 2 {
+                        attempt += 1;
+                        tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64)).await;
+                        continue;
+                    }
+                    break Err(e);
+                }
+            }
+        };
+        match outcome {
             Ok(reply) => {
                 let id = conns[i].get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 if let Some(o) = conns[i].as_object_mut() {
@@ -442,11 +582,72 @@ pub async fn llm_for_role(
                 if let Some(o) = conns[i].as_object_mut() {
                     o.insert("testStatus".into(), json!("error"));
                     o.insert("lastError".into(), json!(e.message));
-                    if fallback {
+                    // Error transient (jaringan) TIDAK di-cooldown panjang: ask
+                    // berikutnya boleh langsung coba lagi.
+                    if fallback && !is_transient(e.status, &e.message) {
                         o.insert("rateLimitedUntil".into(), json!(iso_from_ms(now_ms + cooldown as u128)));
                     }
                 }
                 // lanjut ke kandidat berikutnya bila fallback.
+            }
+        }
+    }
+    let _ = config::save_connections(config_path, conns, json!(active_id));
+    Err((502, last_err))
+}
+
+/// Panggil LLM dengan gambar (multimodal, role `motion-vision`). HANYA
+/// koneksi bertanda EKSPLISIT `roles:["motion-vision"]` yang dipakai —
+/// wildcard sengaja di-skip supaya gambar tidak pernah terkirim ke model
+/// teks. Fallback + cooldown + persist status sama dengan `llm_for_role`.
+pub async fn llm_for_vision(
+    config_path: &Path,
+    system: &str,
+    text: &str,
+    images: &[LlmImage],
+) -> Result<LlmOk, (u16, String)> {
+    let cfg = config::load(config_path);
+    let mut conns: Vec<Value> = cfg.get("connections").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let active_id = cfg.get("activeId").and_then(|v| v.as_str()).map(String::from);
+
+    let order: Vec<usize> = (0..conns.len()).filter(|&i| {
+        enabled(&conns[i])
+            && config::normalize_roles(&conns[i].get("roles").cloned().unwrap_or(Value::Null)).iter().any(|r| r == ROLE_MOTION_VISION)
+    }).collect();
+    if order.is_empty() {
+        return Err((400, "belum ada koneksi dengan role motion-vision — tandai satu koneksi di panel ⚙️ (modelnya harus mendukung input gambar)".into()));
+    }
+
+    let msgs = vec![ChatMessage { role: "user".into(), content: text.to_string() }];
+    let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+    let mut last_err = String::from("Semua connection vision gagal");
+    for &i in &order {
+        if let Some(until) = conns[i].get("rateLimitedUntil").and_then(|v| v.as_str()) {
+            if parse_iso_ms(until).map(|t| t > now_ms).unwrap_or(false) {
+                continue;
+            }
+        }
+        match call_llm(&conns[i], &msgs, system, images).await {
+            Ok(reply) => {
+                let id = conns[i].get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                if let Some(o) = conns[i].as_object_mut() {
+                    o.insert("testStatus".into(), json!("success"));
+                    o.insert("lastError".into(), json!(""));
+                    o.insert("rateLimitedUntil".into(), Value::Null);
+                }
+                let _ = config::save_connections(config_path, conns, json!(active_id));
+                return Ok(LlmOk { reply, used: id });
+            }
+            Err(e) => {
+                let (fallback, cooldown) = classify_error(e.status, &e.message);
+                last_err = format!("LLM vision error: {}", e.message);
+                if let Some(o) = conns[i].as_object_mut() {
+                    o.insert("testStatus".into(), json!("error"));
+                    o.insert("lastError".into(), json!(e.message));
+                    if fallback {
+                        o.insert("rateLimitedUntil".into(), json!(iso_from_ms(now_ms + cooldown as u128)));
+                    }
+                }
             }
         }
     }
@@ -480,6 +681,18 @@ mod tests {
     }
 
     #[test]
+    fn transient_terdeteksi() {
+        // Blip jaringan → transient (dicoba-ulang, tanpa cooldown panjang).
+        assert!(is_transient(0, "error sending request for url (https://x/v1/chat/completions)"));
+        assert!(is_transient(503, "service unavailable"));
+        assert!(is_transient(0, "operation timed out"));
+        // Auth/kuota → BUKAN transient (jangan diulang buta).
+        assert!(!is_transient(401, "unauthorized"));
+        assert!(!is_transient(429, "rate limit"));
+        assert!(!is_transient(400, "bad request"));
+    }
+
+    #[test]
     fn role_routing_eksplisit_dulu() {
         let conns = vec![
             json!({ "id": "a", "roles": [] }),                 // wildcard
@@ -497,7 +710,7 @@ mod tests {
     async fn mock_provider_balas() {
         let conn = json!({ "id": "m", "provider": "mock" });
         let msgs = vec![ChatMessage { role: "user".into(), content: "tes".into() }];
-        let r = call_llm(&conn, &msgs, "").await.unwrap();
+        let r = call_llm(&conn, &msgs, "", &[]).await.unwrap();
         assert!(r.contains("tes"));
         assert!(r.contains("mock"));
     }
@@ -512,6 +725,71 @@ mod tests {
         let ok = llm_for_role(&f, "chat", &msgs, "").await.unwrap();
         assert_eq!(ok.used, "m");
         assert!(ok.reply.contains("halo"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn payload_gambar_bentuk_benar() {
+        let img = LlmImage { mime: "image/jpeg".into(), data: "QUJD".into() };
+        let imgs = vec![img.clone()];
+
+        // openai: teks murni → string; dengan gambar → array content-part.
+        assert_eq!(openai_content("hai", &[]), json!("hai"));
+        let c = openai_content("hai", &imgs);
+        assert_eq!(c[0]["type"], "text");
+        assert_eq!(c[1]["type"], "image_url");
+        assert_eq!(c[1]["image_url"]["url"], "data:image/jpeg;base64,QUJD");
+
+        // gemini: inline_data; anthropic: source base64.
+        let g = gemini_parts("hai", &imgs);
+        assert_eq!(g[1]["inline_data"]["mime_type"], "image/jpeg");
+        let a = anthropic_content("hai", &imgs);
+        assert_eq!(a[1]["source"]["media_type"], "image/jpeg");
+
+        // attach_images: hanya pesan user TERAKHIR, tanpa gambar tak berubah.
+        let mut msgs = vec![
+            json!({ "role": "user", "content": "a" }),
+            json!({ "role": "assistant", "content": "b" }),
+            json!({ "role": "user", "content": "c" }),
+        ];
+        attach_images(&mut msgs, &imgs, "openai");
+        assert_eq!(msgs[0]["content"], json!("a"));
+        assert_eq!(msgs[2]["content"][0]["text"], "c");
+        let mut tanpa = vec![json!({ "role": "user", "content": "a" })];
+        attach_images(&mut tanpa, &[], "openai");
+        assert_eq!(tanpa[0]["content"], json!("a"));
+    }
+
+    #[tokio::test]
+    async fn vision_tolak_tanpa_koneksi_eksplisit() {
+        let dir = std::env::temp_dir().join(format!("l2dllmv0-{}-{}", std::process::id(), now()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("config.json");
+        // wildcard saja → vision MENOLAK (gambar tak boleh ke model teks).
+        std::fs::write(&f, r#"{"activeId":"m","connections":[{"id":"m","provider":"mock"}]}"#).unwrap();
+        let err = llm_for_vision(&f, "", "lihat", &[]).await.unwrap_err();
+        assert_eq!(err.0, 400);
+        assert!(err.1.contains("motion-vision"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn vision_pakai_koneksi_bertanda() {
+        let dir = std::env::temp_dir().join(format!("l2dllmv-{}-{}", std::process::id(), now()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("config.json");
+        std::fs::write(
+            &f,
+            r#"{"activeId":"teks","connections":[
+                {"id":"teks","provider":"mock"},
+                {"id":"mata","provider":"mock","roles":["motion-vision"]}
+            ]}"#,
+        )
+        .unwrap();
+        let img = LlmImage { mime: "image/jpeg".into(), data: "QUJD".into() };
+        let ok = llm_for_vision(&f, "kamu penilai", "nilai ini", &[img]).await.unwrap();
+        assert_eq!(ok.used, "mata");
+        assert!(ok.reply.contains("[1 gambar diterima]"), "{}", ok.reply);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

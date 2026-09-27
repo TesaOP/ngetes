@@ -313,6 +313,20 @@ export class Transcript {
     );
   }
 
+  /**
+   * Pastikan kartu izin untuk apId ada (dibuat dari /status.pendingApprovals —
+   * sumber kebenaran). Jalur ask-stream tak mengirim event SSE "approval", jadi
+   * tanpa ini tombol Allow/Deny tak pernah muncul dan tugas mutating (mis.
+   * motion_save) macet di "⚠ butuh izin". Idempoten by apId.
+   */
+  ensureApproval(apId: string, tool: string, args: any): boolean {
+    if (!apId) return false;
+    const exists = this.blocks.some((b) => b.kind === "approval" && b.apId === apId);
+    if (exists) return false;
+    this.push({ kind: "approval", apId, tool, args: args ?? null });
+    return true;
+  }
+
   /** Tandai kartu izin yang disetujui: blok hilang, kartu tool jadi jangkar. */
   resolveApprovalVisual(apId: string, byOtherClient: boolean): void {
     const blk = this.blocks.find((b) => b.kind === "approval" && b.apId === apId);
