@@ -322,7 +322,7 @@ export const DICT_ID: Record<string, string> = {
   // ── conn — modal editor koneksi AI ─────────────────────────────
   "conn.title": "Connection",
   "conn.name": "Name",
-  "conn.namePh": "mis. dahl inference",
+  "conn.namePh": "mis. koneksi utama",
   "conn.prov.openaiCompat": "OpenAI-Compatible (router)",
   "conn.prov.systemone": "SystemOne — Jev / Laya (mesin keputusan)",
   "conn.prov.gemini": "Gemini",

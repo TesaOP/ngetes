@@ -314,7 +314,7 @@ export const DICT_EN: Record<string, string> = {
   // ── conn — AI connection editor modal ──────────────────────────
   "conn.title": "Connection",
   "conn.name": "Name",
-  "conn.namePh": "e.g. dahl inference",
+  "conn.namePh": "e.g. main connection",
   "conn.prov.openaiCompat": "OpenAI-Compatible (router)",
   "conn.prov.systemone": "SystemOne — Jev / Laya (decision engine)",
   "conn.prov.gemini": "Gemini",

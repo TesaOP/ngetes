@@ -3606,9 +3606,9 @@
       if (base)
         base.placeholder = isSystemOne
           ? "kosong = https://api.typesafe.ai · Laya lokal: http://127.0.0.1:8000"
-          : "https://inference.dahl.global/v1";
+          : "https://api.example.com/v1";
       if (model)
-        model.placeholder = isSystemOne ? "jev-latest" : "MiniMaxAI/MiniMax-M2.7";
+        model.placeholder = isSystemOne ? "jev-latest" : "gpt-4o-mini";
     }
     $("#m-provider").addEventListener("change", syncProviderFields);
     function closeModal() {
