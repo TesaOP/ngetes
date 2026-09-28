@@ -716,6 +716,7 @@
         <label><span data-i18n="cfg.provider">Provider</span>
           <select id="m-provider">
             <option value="openai-compatible" data-i18n="conn.prov.openaiCompat">OpenAI-Compatible (router)</option>
+            <option value="systemone" data-i18n="conn.prov.systemone">SystemOne — Jev / Laya (mesin keputusan)</option>
             <option value="gemini" data-i18n="conn.prov.gemini">Gemini</option>
             <option value="groq" data-i18n="conn.prov.groq">Groq</option>
             <option value="openai" data-i18n="conn.prov.openai">OpenAI</option>
@@ -732,18 +733,18 @@
         <label><span data-i18n="cfg.modelLabel">Model</span>
           <input type="text" id="m-model" placeholder="MiniMaxAI/MiniMax-M2.7" />
         </label>
-        <label><span data-i18n="conn.systemPrompt">System Prompt</span>
+        <label id="m-row-system"><span data-i18n="conn.systemPrompt">System Prompt</span>
           <span class="form-hint" data-i18n="conn.systemHint">Instruksi teknis untuk sambungan INI (semua peran yang memakainya) — mis. gaya jawaban, format, bahasa. Persona karakter jangan di sini: pakai Catatan Karakter (tab Model) yang per-model.</span>
           <textarea id="m-system" rows="2" data-i18n-ph="conn.systemPh" placeholder="mis. Jawab singkat dalam bahasa Indonesia."></textarea>
         </label>
-        <label><span data-i18n="conn.maxTokTitle">Max Tokens &amp; Temperature</span>
+        <label id="m-row-tokens"><span data-i18n="conn.maxTokTitle">Max Tokens &amp; Temperature</span>
           <span class="form-hint" data-i18n="conn.maxTokHint">Kosong = default (2048 &amp; 0.8). Model reasoning butuh lebih besar (mis. 8192) supaya jawaban tak terpotong sebelum reasoning-nya selesai.</span>
           <span class="cfg-pair">
             <input type="number" id="m-maxtokens" min="64" max="200000" step="1" placeholder="2048" />
             <input type="number" id="m-temp" min="0" max="2" step="0.1" placeholder="0.8" />
           </span>
         </label>
-        <label class="cfg-check">
+        <label class="cfg-check" id="m-row-stream">
           <input type="checkbox" id="m-stream" /> <span data-i18n="conn.stream">Stream mode — untuk gateway yang memotong generasi lambat</span>
         </label>
         <label><span data-i18n="conn.roles">Peran (roles)</span>
@@ -755,6 +756,7 @@
           <label class="cfg-check"><input type="checkbox" value="motion" /> <span data-i18n="conn.role.motion">motion (gerak &amp; ekspresi)</span></label>
           <label class="cfg-check"><input type="checkbox" value="sheet" /> <span data-i18n="conn.role.sheet">sheet (analisa parameter)</span></label>
           <label class="cfg-check"><input type="checkbox" value="motion-vision" /> <span data-i18n="conn.role.motionVision">motion-vision (menilai gambar — wajib model vision)</span></label>
+          <label class="cfg-check"><input type="checkbox" value="behavior" /> <span data-i18n="conn.role.behavior">behavior (keputusan perilaku saat idle)</span></label>
         </div>
       </div>
       <div class="modal-actions">

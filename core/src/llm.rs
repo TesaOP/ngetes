@@ -180,6 +180,53 @@ fn attach_images(msgs: &mut [Value], images: &[LlmImage], shape: &str) {
     };
 }
 
+/// Panggil endpoint SystemOne (Jev cloud / Laya lokal — keduanya kompatibel):
+/// POST {base}/v1/systemone dengan {state, model, questions}. BUKAN endpoint
+/// chat — mesin keputusan mengembalikan jawaban tertipe per kunci pertanyaan
+/// (noul/choice/score) + confidence. baseUrl koneksi (fallback: api.typesafe.ai)
+/// — untuk Laya lokal isi mis. http://127.0.0.1:8000. apiKey boleh kosong untuk
+/// server lokal.
+pub async fn call_systemone(conn: &Value, state: &Value, questions: &Value) -> Result<Value, LlmError> {
+    let api_key = clean_key(conn.get("apiKey").and_then(|v| v.as_str()).unwrap_or(""));
+    let base = {
+        let b = conn.get("baseUrl").and_then(|v| v.as_str()).unwrap_or("").trim().trim_end_matches('/').to_string();
+        if b.is_empty() { "https://api.typesafe.ai".to_string() } else { b }
+    };
+    let model = {
+        let m = conn.get("model").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+        if m.is_empty() { "jev-latest".to_string() } else { m }
+    };
+    let body = json!({ "state": state, "model": model, "questions": questions });
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(DEFAULT_TIMEOUT_S))
+        .build()
+        .map_err(|e| LlmError { status: 0, message: e.to_string() })?;
+    let mut req = client
+        .post(format!("{base}/v1/systemone"))
+        .header("Content-Type", "application/json");
+    if !api_key.is_empty() {
+        req = req.header("Authorization", format!("Bearer {api_key}"));
+    }
+    let resp = req.json(&body).send().await.map_err(|e| LlmError { status: 0, message: e.to_string() })?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await.unwrap_or_default();
+    if status >= 400 {
+        return Err(LlmError { status, message: text.chars().take(300).collect() });
+    }
+    serde_json::from_str(&text).map_err(|_| LlmError {
+        status,
+        message: format!("respon bukan JSON: {}", text.chars().take(200).collect::<String>()),
+    })
+}
+
+/// Probe koneksi SystemOne untuk tombol "Test" — pertanyaan noul trivial.
+/// Return nama model yang menjawab (mis. "jev-1.13.0").
+pub async fn systemone_probe(conn: &Value) -> Result<String, LlmError> {
+    let q = json!({ "sanity": { "type": "noul", "instructions": "Sinyal uji koneksi. Jawab ya." } });
+    let j = call_systemone(conn, &json!("ping"), &q).await?;
+    Ok(j.get("model").and_then(|v| v.as_str()).unwrap_or("ok").to_string())
+}
+
 /// Panggil satu koneksi LLM (non-stream). Return teks balasan atau LlmError.
 /// `images` (opsional) ditempel ke pesan user terakhir — kosong = jalur teks
 /// murni byte-identical dengan sebelumnya.
@@ -497,6 +544,21 @@ pub fn order_for_role(role: &str, conns: &[Value]) -> Vec<usize> {
         }
     }
     out
+}
+
+/// True bila ADA koneksi enabled dengan `role` DITANDAI EKSPLISIT (bukan
+/// wildcard). Dipakai role yang tak boleh membajak koneksi chat umum karena
+/// jalannya periodik/berbiaya (mis. "behavior" yang tick tiap beberapa detik,
+/// "motion-vision" yang butuh model gambar). Tanpa penanda eksplisit,
+/// pemanggil memilih fallback lokal ketimbang memakai koneksi aktif diam-diam.
+pub fn has_explicit_role(config_path: &Path, role: &str) -> bool {
+    let cfg = config::load(config_path);
+    let conns = cfg.get("connections").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    conns.iter().filter(|c| enabled(c)).any(|c| {
+        config::normalize_roles(&c.get("roles").cloned().unwrap_or(Value::Null))
+            .iter()
+            .any(|r| r == role)
+    })
 }
 
 /// Hasil pemanggilan LLM: teks + id koneksi terpakai.

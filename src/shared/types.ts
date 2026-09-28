@@ -37,6 +37,10 @@ export type LLMProvider =
   | "gemini"
   | "groq"
   | "anthropic"
+  // Mesin KEPUTUSAN terstruktur (Jev cloud / Laya lokal) — bukan provider teks.
+  // Dipakai koneksi role "behavior": POST {baseUrl}/v1/systemone. Tak punya
+  // /chat/completions; jangan dipilih untuk role chat/motion/sheet/assistant.
+  | "systemone"
   | "mock";
 
 export interface Config {
@@ -225,6 +229,12 @@ export interface ParsedActions {
   gesture?: string;
   motion?: string;
   intensity?: number;
+  // Param mentah model yang disetel director untuk ekspresi lebih menjiwai
+  // (id NYATA milik model → nilai sudah tervalidasi & di-clamp ke range oleh
+  // server). Ditulis lewat applyParamDrive dan dilepas saat balasan selesai.
+  paramDrive?: Record<string, number>;
+  // Perkiraan durasi ucapan segment (ms) — dipakai sebagai fitToMs motion.
+  durationMs?: number;
 }
 
 export interface ParsedSegment {

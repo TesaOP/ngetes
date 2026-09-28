@@ -11,6 +11,7 @@
 //! Backend penuh: /api/* + aset statis (arsip Bun src/server dihapus Batch A).
 
 pub mod agent;
+pub mod behavior;
 pub mod browser;
 pub mod config;
 pub mod director;
@@ -128,6 +129,7 @@ pub fn router(paths: AppPaths) -> Router {
         .route("/api/assistant/sessions/switch", axum::routing::post(post_sessions_switch))
         .route("/api/assistant/sessions/delete", axum::routing::post(post_sessions_delete))
         .route("/api/animate-text", axum::routing::post(post_animate_text))
+        .route("/api/behavior/decide", axum::routing::post(post_behavior_decide))
         .route("/api/model/classify-params", axum::routing::post(post_classify_params))
         .route("/api/model/analyze-sheet", axum::routing::post(post_analyze_sheet))
         .route("/api/motions/analyze", axum::routing::post(post_motions_analyze))
@@ -224,11 +226,24 @@ async fn post_test(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Re
     }
     let provider = conn.get("provider").and_then(|x| x.as_str()).unwrap_or("openai-compatible").to_lowercase();
     let key = conn.get("apiKey").and_then(|x| x.as_str()).unwrap_or("");
-    if provider != "mock" && (key.is_empty() || key.starts_with("MASUKKAN")) {
+    // SystemOne lokal (Laya self-host) sah tanpa apiKey; cloud Jev tetap wajib.
+    let base_url = conn.get("baseUrl").and_then(|x| x.as_str()).unwrap_or("").to_lowercase();
+    let base_local = base_url.contains("localhost") || base_url.contains("127.0.0.1");
+    let need_key = provider != "mock"
+        && !(provider == "systemone" && base_local)
+        && (key.is_empty() || key.starts_with("MASUKKAN"));
+    if need_key {
         return json_status(StatusCode::BAD_REQUEST, json!({ "valid": false, "error": "apiKey belum diisi" }));
     }
     let probe = vec![llm::ChatMessage { role: "user".into(), content: "Reply with just: OK".into() }];
-    match llm::call_llm(&conn, &probe, "", &[]).await {
+    // Provider SystemOne tidak punya /chat/completions — probe-nya pertanyaan
+    // keputusan trivial (state + noul), bukan pesan chat.
+    let probe_res = if provider == "systemone" {
+        llm::systemone_probe(&conn).await
+    } else {
+        llm::call_llm(&conn, &probe, "", &[]).await
+    };
+    match probe_res {
         Ok(reply) => {
             if let Some(i) = stored_idx {
                 if let Some(o) = conns[i].as_object_mut() {
@@ -928,6 +943,16 @@ async fn post_animate_text(State(paths): State<AppPaths>, body: axum::body::Byte
         None => return json_status(StatusCode::BAD_REQUEST, json!({ "error": "body JSON rusak" })),
     };
     let out = director::handle_animate_text(&paths.data_dir.join("config.json"), &v).await;
+    json_status(StatusCode::OK, out)
+}
+
+/// POST /api/behavior/decide — keputusan perilaku idle tertipe (role "behavior").
+async fn post_behavior_decide(State(paths): State<AppPaths>, body: axum::body::Bytes) -> Response {
+    let v: serde_json::Value = match serde_json::from_slice(&body).ok() {
+        Some(v) => v,
+        None => return json_status(StatusCode::BAD_REQUEST, json!({ "error": "body JSON rusak" })),
+    };
+    let out = behavior::handle_decide(&paths.data_dir.join("config.json"), &v).await;
     json_status(StatusCode::OK, out)
 }
 

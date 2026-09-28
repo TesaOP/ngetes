@@ -10,7 +10,8 @@ use std::path::Path;
 use serde_json::{json, Value};
 
 /// Role LLM yang dikenal (padanan LLM_ROLES di llm-client.ts).
-const LLM_ROLES: &[&str] = &["chat", "motion", "sheet", "assistant", "motion-vision"];
+const LLM_ROLES: &[&str] =
+    &["chat", "motion", "sheet", "assistant", "motion-vision", "behavior"];
 
 /// DEFAULT_CONFIG — cermin `src/shared/config.ts` (untuk backfill section baru).
 pub fn default_config() -> Value {

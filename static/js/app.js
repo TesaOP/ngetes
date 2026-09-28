@@ -138,6 +138,10 @@
 
     lookFrame: { eyeX: 0, eyeY: 0, w: 1, h: 1 },
     idleMotionTimer: null,
+    idleBootAt: 0,
+    lastIdleActionAt: 0,
+    idleCycleIdx: 0,
+    idleGazeIdx: 0,
     activeEmotion: "normal",
     activeProperty: "default",
     supportedEmotions: {},
@@ -664,9 +668,13 @@
         state.activeEmotion = "normal";
         state.activeProperty = "default";
         if (state.idleMotionTimer) {
-          clearInterval(state.idleMotionTimer);
+          clearTimeout(state.idleMotionTimer);
           state.idleMotionTimer = null;
         }
+        state.idleBootAt = 0;
+        state.lastIdleActionAt = 0;
+        state.idleCycleIdx = 0;
+        state.idleGazeIdx = 0;
         state.lookFrame = { eyeX: 0, eyeY: 0, w: 1, h: 1 };
 
         state.caps = {};
@@ -1049,35 +1057,181 @@
     state.idleRAF = requestAnimationFrame(tick);
   }
 
-  function startIdleMotion() {
-    if (state.idleMotionTimer) clearInterval(state.idleMotionTimer);
-    const m = state.model;
-    if (!m) return;
-    const im = m.internalModel && m.internalModel.motionManager;
-    if (!im) return;
-    const groups =
-      (im.definitions && Object.keys(im.definitions)) ||
-      (m.motions && Object.keys(m.motions)) ||
-      [];
-    if (!groups.length) return;
-    const playRandom = () => {
-      if (!state.model || !state.idleEnabled) return;
+  // ── Perilaku idle: keputusan tertipe, bukan motion acak ─────────────────
+  // Dulu idle memutar grup motion ACAK tiap 7 detik (termasuk klip yang bukan
+  // idle seperti 'sing'/'scared') sehingga karakter terasa tanpa maksud.
+  // Sekarang tiap beberapa detik karakter MEMUTUSKAN satu perilaku mikro lewat
+  // role LLM "behavior" (/api/behavior/decide) — tervalidasi ke kemampuan nyata
+  // model (Model-Agnostic). Tanpa koneksi role "behavior", server membalas
+  // 'settle' dan karakter tenang menghadap user, tidak pernah acak.
+  const IDLE_SAFE_VERBS = new Set([
+    "neutral",
+    "nod",
+    "tilt",
+    "lookaway",
+    "think",
+    "sleep",
+  ]);
 
-      if (state.aiLock) return;
-      if (clipIsPlaying()) return;
+  // Klip yang layak diputar saat idle. HANYA taxonomy dari server (punya
+  // confidence + evidence) yang boleh menyumbang; mode name-only tak bisa
+  // membedakan idle vs bukan, jadi idle tetap gaze-only supaya klip tak dikenal
+  // (default 'neutral' confidence 0.15) tidak diputar sembarangan.
+  function idleSafeClips() {
+    const T = state.motionTaxonomy;
+    if (!T || T.nameOnly || !T.clipMeta) return [];
+    const out = [];
+    for (const name in T.clipMeta) {
+      const m = T.clipMeta[name] || {};
+      if (!IDLE_SAFE_VERBS.has(m.verb)) continue;
+      if (m.evidence === "no-signal") continue;
+      if (typeof m.confidence === "number" && m.confidence < 0.3) continue;
+      out.push({ id: name, description: m.verb });
+    }
+    return out;
+  }
 
-      if (playEmotionClip(state.activeEmotion || "normal")) return;
-
-      try {
-        const g = groups[Math.floor(Math.random() * groups.length)];
-
-        state.model.motion(g, -1, 1);
-      } catch (e) {
-        /* ignore */
+  function playIdleClip(id) {
+    const T = state.motionTaxonomy;
+    const meta = T && T.clipMeta ? T.clipMeta[id] : null;
+    if (!meta || !state.model) return false;
+    try {
+      if (meta.group && typeof meta.index === "number" && meta.index >= 0) {
+        state.model.motion(meta.group, meta.index, 1);
+      } else {
+        state.model.motion(meta.group || id, -1, 1);
       }
+    } catch (e) {
+      return false;
+    }
+    const dur =
+      (meta.duration && meta.duration > 0 ? meta.duration * 1000 : 2200) + 250;
+    state.clipStartedAt = performance.now();
+    state.clipUntil = state.clipStartedAt + dur;
+    state.clipName = id;
+    return true;
+  }
+
+  async function decideBehavior() {
+    const clips = idleSafeClips();
+    const emotions = Object.keys(state.supportedEmotions || {});
+    const actions = clips.length
+      ? ["settle", "gaze-shift", "micro-fidget", "idle-clip"]
+      : ["settle", "gaze-shift", "micro-fidget"];
+    const anchor = state.lookUserAt || state.idleBootAt || Date.now();
+    const body = {
+      state: {
+        idleMs: Date.now() - anchor,
+        lastActionMs: Date.now() - (state.lastIdleActionAt || anchor),
+        mood: state.activeEmotion || "normal",
+      },
+      capabilities: {
+        emotions,
+        actions,
+        gazes: Object.keys(GAZE_INTENTS),
+        motions: clips,
+      },
+      persona: (currentModelConfig() || {}).persona || "",
+      characterName: characterName(),
     };
-    playRandom();
-    state.idleMotionTimer = setInterval(playRandom, 7000);
+    try {
+      const r = await fetch(API + "/api/behavior/decide", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) return { engine: false, decision: null };
+      const data = await r.json();
+      return {
+        engine: !!(data && data.engine),
+        decision: (data && data.decision) || null,
+      };
+    } catch (e) {
+      // Server tak terjangkau → perlakukan seperti tanpa mesin: siklus lokal.
+      return { engine: false, decision: null };
+    }
+  }
+
+  function applyBehaviorDecision(d) {
+    if (!state.model || !state.idleEnabled || state.aiLock || clipIsPlaying())
+      return;
+    state.lastIdleActionAt = Date.now();
+    const gazeKind = d && d.gaze && GAZE_INTENTS[d.gaze] ? d.gaze : null;
+    const hold =
+      d && Number.isFinite(d.holdMs) ? clamp(d.holdMs, 800, 8000) : undefined;
+
+    if (d && d.action === "idle-clip") {
+      if (d.motion && playIdleClip(d.motion)) return;
+      if (playEmotionClip(d.emotion || state.activeEmotion || "normal")) return;
+      // Tak ada klip cocok → jatuh ke gaze di bawah.
+    }
+    if (d && d.action === "settle") {
+      setGazeIntent("face-user", { hold: hold || 2500 });
+      return;
+    }
+    // gaze-shift / micro-fidget / fallback → alih pandang yang disengaja.
+    setGazeIntent(gazeKind || pickGazeIntent(), hold ? { hold } : undefined);
+    if (d && d.action === "micro-fidget")
+      state.impulse = Math.min(0.6, (state.impulse || 0) + 0.12);
+  }
+
+  // Fallback saat TIDAK ada mesin keputusan (Laya/Jev/koneksi role "behavior"):
+  // bergilir PASTI (deterministik, bukan acak) melewati klip idle-safe. Bila
+  // model tak punya klip idle-safe (mis. taxonomy name-only), bergilir gaze.
+  // Mengembalikan perkiraan durasi tahan (ms) untuk penjadwalan tick berikutnya.
+  function cycleIdleFallback() {
+    if (!state.model || !state.idleEnabled || state.aiLock || clipIsPlaying())
+      return 2500;
+    state.lastIdleActionAt = Date.now();
+    const clips = idleSafeClips();
+    if (clips.length) {
+      const i = (state.idleCycleIdx || 0) % clips.length;
+      state.idleCycleIdx = i + 1;
+      if (playIdleClip(clips[i].id)) {
+        const meta =
+          (state.motionTaxonomy &&
+            state.motionTaxonomy.clipMeta &&
+            state.motionTaxonomy.clipMeta[clips[i].id]) ||
+          {};
+        return meta.duration && meta.duration > 0 ? meta.duration * 1000 : 2500;
+      }
+    }
+    const kinds = Object.keys(GAZE_INTENTS);
+    const gi = (state.idleGazeIdx || 0) % kinds.length;
+    state.idleGazeIdx = gi + 1;
+    setGazeIntent(kinds[gi]);
+    return 2500;
+  }
+
+  function startIdleMotion() {
+    if (state.idleMotionTimer) clearTimeout(state.idleMotionTimer);
+    if (!state.idleBootAt) state.idleBootAt = Date.now();
+    const tick = async () => {
+      state.idleMotionTimer = null;
+      let holdMs = 2500;
+      if (
+        state.model &&
+        state.idleEnabled &&
+        !state.aiLock &&
+        !clipIsPlaying()
+      ) {
+        const res = await decideBehavior();
+        if (res.engine && res.decision) {
+          applyBehaviorDecision(res.decision);
+          if (Number.isFinite(res.decision.holdMs))
+            holdMs = clamp(res.decision.holdMs, 800, 8000);
+        } else {
+          // Tanpa mesin keputusan → siklus motion deterministik.
+          holdMs = cycleIdleFallback();
+        }
+      }
+      if (!state.model) return; // model dilepas selama await → hentikan loop
+      const rest = 6000 + Math.random() * 7000; // jeda antar-keputusan (jitter)
+      state.idleMotionTimer = setTimeout(tick, holdMs + rest);
+    };
+    // Beri jeda awal supaya taxonomy sempat termuat (loadMotionTaxonomy async);
+    // keputusan pertama lalu berjalan dengan pool klip yang sudah siap.
+    state.idleMotionTimer = setTimeout(tick, 1500);
   }
 
   function wireInteractions() {
@@ -3434,8 +3588,29 @@
       $("#m-temp").value = c && c.temperature != null ? c.temperature : "";
       $("#m-stream").checked = !!(c && c.stream);
       rolesToForm(c ? c.roles : []);
+      syncProviderFields();
       modal.classList.remove("hidden");
     }
+
+    // Provider "systemone" (Jev/Laya) = mesin KEPUTUSAN, bukan model teks: tak
+    // memakai System Prompt / Max Tokens-Temperature / Stream. Sembunyikan biar
+    // form tak menyesatkan; placeholder Base URL & Model diberi contoh Laya lokal.
+    function syncProviderFields() {
+      const isSystemOne = $("#m-provider").value === "systemone";
+      for (const id of ["#m-row-system", "#m-row-tokens", "#m-row-stream"]) {
+        const el = $(id);
+        if (el) el.classList.toggle("hidden", isSystemOne);
+      }
+      const base = $("#m-baseurl");
+      const model = $("#m-model");
+      if (base)
+        base.placeholder = isSystemOne
+          ? "kosong = https://api.typesafe.ai · Laya lokal: http://127.0.0.1:8000"
+          : "https://inference.dahl.global/v1";
+      if (model)
+        model.placeholder = isSystemOne ? "jev-latest" : "MiniMaxAI/MiniMax-M2.7";
+    }
+    $("#m-provider").addEventListener("change", syncProviderFields);
     function closeModal() {
       modal.classList.add("hidden");
       editingId = null;

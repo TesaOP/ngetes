@@ -324,6 +324,7 @@ export const DICT_ID: Record<string, string> = {
   "conn.name": "Name",
   "conn.namePh": "mis. dahl inference",
   "conn.prov.openaiCompat": "OpenAI-Compatible (router)",
+  "conn.prov.systemone": "SystemOne — Jev / Laya (mesin keputusan)",
   "conn.prov.gemini": "Gemini",
   "conn.prov.groq": "Groq",
   "conn.prov.openai": "OpenAI",
@@ -344,6 +345,7 @@ export const DICT_ID: Record<string, string> = {
   "conn.role.motion": "motion (gerak & ekspresi)",
   "conn.role.sheet": "sheet (analisa parameter)",
   "conn.role.motionVision": "motion-vision (menilai gambar — wajib model vision)",
+  "conn.role.behavior": "behavior (keputusan perilaku saat idle)",
   "conn.save": "Simpan",
   "conn.cancel": "Batal",
 
