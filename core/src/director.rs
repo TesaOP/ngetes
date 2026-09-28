@@ -34,6 +34,44 @@ pub fn sanitize_persona_text(raw: &Value, cap: usize) -> String {
     raw.as_str().map(|s| clean_ctrl(s, cap)).unwrap_or_default()
 }
 
+/// Validasi param drive satu segment terhadap konteks param model. Hanya id
+/// yang ADA di `params_ctx` yang lolos; nilai non-finite dibuang; sisanya
+/// di-clamp ke [min,max] param itu (range dari engine/sheet, bukan tebakan LLM)
+/// — anti gagal-senyap. Menerima `params` sebagai objek {id:val} atau array
+/// [{id,value}]. Tak ada yang lolos → Value::Null.
+pub fn validate_param_drive(raw: Option<&Value>, params_ctx: &[Value]) -> Value {
+    let raw = match raw {
+        Some(v) => v,
+        None => return Value::Null,
+    };
+    let mut out = serde_json::Map::new();
+    for pc in params_ctx {
+        let Some(id) = pc.get("id").and_then(|v| v.as_str()) else { continue };
+        let val = match raw {
+            Value::Object(m) => m.get(id).and_then(|v| v.as_f64()),
+            Value::Array(a) => a
+                .iter()
+                .find(|e| e.get("id").and_then(|v| v.as_str()) == Some(id))
+                .and_then(|e| e.get("value").and_then(|v| v.as_f64())),
+            _ => None,
+        };
+        let Some(v) = val else { continue };
+        if !v.is_finite() {
+            continue;
+        }
+        let cv = match (pc.get("min").and_then(|x| x.as_f64()), pc.get("max").and_then(|x| x.as_f64())) {
+            (Some(a), Some(b)) => v.clamp(a.min(b), a.max(b)),
+            _ => v,
+        };
+        out.insert(id.to_string(), json!(cv));
+    }
+    if out.is_empty() {
+        Value::Null
+    } else {
+        Value::Object(out)
+    }
+}
+
 /// Padanan formatParamNotes: {id:penjelasan} → baris "- \"id\": penjelasan".
 pub fn format_param_notes(raw: &Value) -> String {
     let obj = match raw.as_object() {
@@ -82,6 +120,18 @@ pub async fn handle_animate_text(config_path: &Path, body: &Value) -> Value {
         .map(|a| a.iter().filter(|m| m.get("id").and_then(|i| i.as_str()).is_some()).cloned().collect())
         .unwrap_or_default();
 
+    // Param mentah model (opsional): {id, note?, min?, max?}. Dikirim klien dari
+    // sheet/analisis disk — id NYATA milik model + penjelasan yang user
+    // konfigurasi + range TERUKUR (bukan tebakan LLM). Director boleh menyetel
+    // beberapa demi ekspresi lebih menjiwai; nilai keluarannya divalidasi &
+    // di-clamp ke [min,max] per param (lihat loop segment) sebelum diteruskan,
+    // jadi nilai di luar range tak pernah lolos ke model (anti gagal-senyap).
+    let params_ctx: Vec<Value> = caps
+        .get("params")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter(|p| p.get("id").and_then(|i| i.as_str()).is_some()).cloned().collect())
+        .unwrap_or_default();
+
     // Fallback aman: tanpa gesture (null) — tidak ada lagi gesture bawaan
     // yang bisa dipakai sebagai default ("nod" lama sudah dihapus).
     let fallback = || json!({ "segments": [{ "text": text, "emotion": "normal", "gesture": null, "intensity": 0.7 }] });
@@ -109,19 +159,52 @@ pub async fn handle_animate_text(config_path: &Path, body: &Value) -> Value {
     let persona_block = if persona_lines.is_empty() { String::new() } else { format!("\nKEPRIBADIAN KARAKTER (ditulis user — pilih emosi, gesture, dan intensity yang konsisten dengan kepribadian ini, jangan generik):\n{persona_lines}\n") };
     let motion_field = if !motions.is_empty() { "\n   - \"motion\": id gerakan user bila ada yang sangat pas (atau null)" } else { "" };
 
+    // Blok param mentah + field skema. Penjelasan yang user konfigurasi ikut
+    // jadi dasar keputusan; range dicantumkan supaya nilai yang dipilih sah.
+    // Model "minim aset ekspresi" (tanpa emosi bawaan/.exp3/gesture/klip) →
+    // param-drive WAJIB: itu satu-satunya sumber kehidupan wajah/badan setelah
+    // pose emosi hardcode dicabut (§106).
+    let assets_poor = caps.get("expressionAssetsPoor").and_then(|v| v.as_bool()).unwrap_or(false);
+    let param_block = if !params_ctx.is_empty() {
+        let lines = params_ctx.iter().take(16).filter_map(|p| {
+            let id = p.get("id").and_then(|v| v.as_str())?;
+            let note = p.get("note").and_then(|v| v.as_str()).map(|s| clean_ctrl(s, 80)).filter(|s| !s.is_empty());
+            let range = match (p.get("min").and_then(|v| v.as_f64()), p.get("max").and_then(|v| v.as_f64())) {
+                (Some(a), Some(b)) => format!(" [rentang {a}..{b}]"),
+                _ => String::new(),
+            };
+            let desc = note.map(|n| format!(": {n}")).unwrap_or_default();
+            Some(format!("- {id}{range}{desc}"))
+        }).collect::<Vec<_>>().join("\n");
+        let lead = if assets_poor {
+            "\nPARAMETER MENTAH MODEL — MODEL INI MINIM ASET EKSPRESI, jadi WAJIB kamu pakai untuk menghidupkan wajah/badan tiap segmen yang ekspresif (tanpa ini karakter datar):"
+        } else {
+            "\nPARAMETER MENTAH MODEL (opsional, untuk ekspresi lebih menjiwai — hormati penjelasan di atas):"
+        };
+        let tail = if assets_poor {
+            "Setel LEWAT field \"params\": {\"<id persis>\": <nilai DI DALAM rentang>} di SETIAP segmen ekspresif; gerakkan mata/alis/mulut/kepala sesuai emosi. Jangan mengarang id di luar daftar."
+        } else {
+            "Boleh setel LEWAT field \"params\": {\"<id persis>\": <nilai DI DALAM rentang>}. Hanya setel yang benar-benar menambah nyawa; kosongkan bila tak perlu. Jangan mengarang id di luar daftar."
+        };
+        format!("{lead}\n{lines}\n{tail}\n")
+    } else {
+        String::new()
+    };
+    let param_field = if !params_ctx.is_empty() { "\n   - \"params\": objek {\"id\": nilai} dari daftar param mentah (atau hilangkan)\n   - \"durationMs\": perkiraan berapa lama segment ini diucapkan, mempengaruhi durasi motion (atau hilangkan)" } else { "" };
+
     let prompt = format!(
         "Kamu adalah animation director untuk karakter Live2D Anime yang hidup dan ekspresif.\n\
 Karakter baru saja berbicara teks berikut:\n\"{text}\"\n{name_line}\
 Daftar Emosi yang didukung model: [{emo}]\n\
 Daftar Gesture yang tersedia: [{ges}]\n\
-{motion_block}{note_block}{persona_block}\
+{motion_block}{param_block}{note_block}{persona_block}\
 TUGAS:\n\
 1. Pecah teks di atas menjadi beberapa segment (per klausa atau per kalimat) agar karakter bergerak seirama omongannya secara hidup (jangan diam selama bicara!).\n\
 2. Sebelum menentukan emotion/gesture, analisis dulu makna & nada tiap segment secara independen.\n\
 3. Untuk setiap segment, tentukan:\n\
    - \"text\": teks klausa/kalimat tersebut (harus sama persis dengan teks asli bila digabung kembali)\n\
    - \"emotion\": emosi yang SANGAT SESUAI (dari daftar). Emosi WAJIB berubah mengikuti pergeseran nada teks.\n\
-   - \"gesture\": nama gesture yang pas (atau null jika netral){motion_field}\n\
+   - \"gesture\": nama gesture yang pas (atau null jika netral){motion_field}{param_field}\n\
    - \"intensity\": angka 0.3 s/d 1.0 — sesuaikan naik-turun.\n\n\
 ATURAN PENTING:\n\
 - Nilai HARUS berdasarkan analisis makna teks asli, BUKAN meniru contoh format di bawah.\n\
@@ -159,12 +242,20 @@ Skema (bukan contoh isi — hanya struktur):\n\
         let emotion = s.get("emotion").and_then(|v| v.as_str()).filter(|e| ok_emotion.contains(e)).unwrap_or("normal");
         let gesture = s.get("gesture").and_then(|v| v.as_str()).filter(|g| ok_gesture.contains(g));
         let motion = s.get("motion").and_then(|v| v.as_str()).filter(|m| ok_motion.contains(*m));
+        let param_drive = validate_param_drive(s.get("params"), &params_ctx);
+        let duration_ms = s
+            .get("durationMs")
+            .and_then(|v| v.as_f64())
+            .filter(|x| x.is_finite())
+            .map(|x| x.clamp(300.0, 8000.0).round());
         segments.push(json!({
             "text": t,
             "emotion": emotion,
             "gesture": gesture,
             "motion": motion,
-            "intensity": inten
+            "intensity": inten,
+            "paramDrive": param_drive,
+            "durationMs": duration_ms
         }));
     }
     if segments.is_empty() {
@@ -244,5 +335,32 @@ mod tests {
 
     fn now() -> u128 {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
+    }
+
+    #[test]
+    fn param_drive_validasi_clamp_dan_drop() {
+        let ctx = vec![
+            json!({ "id": "ParamBrowLY", "min": -1.0, "max": 1.0 }),
+            json!({ "id": "ParamEyeOpen", "min": 0.0, "max": 100.0 }),
+        ];
+        // Objek {id:val}: id dikenal lolos & di-clamp; id asing dibuang.
+        let d = validate_param_drive(
+            Some(&json!({ "ParamBrowLY": 5.0, "ParamEyeOpen": 40, "Param91": 3 })),
+            &ctx,
+        );
+        assert_eq!(d["ParamBrowLY"], 1.0); // clamp ke max
+        assert_eq!(d["ParamEyeOpen"], 40.0);
+        assert!(d.get("Param91").is_none(), "id di luar konteks harus dibuang: {d}");
+
+        // Bentuk array [{id,value}] juga diterima.
+        let a = validate_param_drive(
+            Some(&json!([{ "id": "ParamEyeOpen", "value": -20 }])),
+            &ctx,
+        );
+        assert_eq!(a["ParamEyeOpen"], 0.0); // clamp ke min
+
+        // Non-finite / tak ada params → Null.
+        assert!(validate_param_drive(None, &ctx).is_null());
+        assert!(validate_param_drive(Some(&json!({ "ParamBrowLY": "x" })), &ctx).is_null());
     }
 }

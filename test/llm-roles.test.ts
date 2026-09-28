@@ -27,8 +27,8 @@ const conn = (id: string, roles?: string[]) =>
   ({ id, name: id, provider: "mock", apiKey: "mock", roles } as any);
 
 describe("normalizeRoles / connHasRole", () => {
-  test("role kanonik: chat, motion, sheet, assistant, motion-vision", () => {
-    expect(LLM_ROLES).toEqual(["chat", "motion", "sheet", "assistant", "motion-vision"]);
+  test("role kanonik: chat, motion, sheet, assistant, motion-vision, behavior", () => {
+    expect(LLM_ROLES).toEqual(["chat", "motion", "sheet", "assistant", "motion-vision", "behavior"]);
   });
 
   test("absen / kosong / invalid → wildcard (semua role)", () => {
@@ -122,13 +122,17 @@ describe("prompt-split: prompt pembicara lean, kosakata + aksesoris tetap", () =
     expect(prompt).toContain("dia pemalu");
   });
 
-  test("kosakata emosi & gesture tetap ada", () => {
-    expect(prompt).toContain("senang");
-    expect(prompt).toContain("nod");
+  test("PURE-TEXT: prompt pembicara tak lagi menyuntik directive/kosakata ekspresi", () => {
+    // Topologi §104: Animation Director pemilik ekspresi tunggal. Chat LLM cukup
+    // menulis teks — daftar emosi/gesture + format [EMOTION:]/[GESTURE:] dicabut.
+    expect(prompt).not.toContain("[EMOTION:");
+    expect(prompt).not.toContain("[GESTURE:");
+    expect(prompt).not.toContain("FORMAT DIRECTIVE");
+    expect(prompt).not.toContain("nod"); // nama gesture tak lagi di prompt
   });
 
-  test("ACC SAFEGUARD: daftar aksesoris (id param) TETAP ada untuk [ACC:]", () => {
-    expect(prompt).toContain("ParamCheek");
+  test("aksesoris (id param) tak lagi di prompt pembicara (director yang urus)", () => {
+    expect(prompt).not.toContain("ParamCheek");
   });
 
   test("prompt materialnya jauh lebih ramping (<4000 char)", () => {
